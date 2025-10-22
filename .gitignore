@@ -42,3 +42,6 @@ Thumbs.db
 .rexlit/
 data/
 *.ics
+.venv/
+.coverage
+.pytest_cache/
