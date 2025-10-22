@@ -103,20 +103,33 @@ def ingest_run(
     # Initialize audit ledger
     ledger = AuditLedger(settings.get_audit_path()) if settings.audit_enabled else None
 
-    # Discover and ingest documents
+    # Discover and ingest documents using streaming pattern
     typer.secho(f"Discovering documents in {path}...", fg=typer.colors.BLUE)
-    documents = discover_documents(path, recursive=recursive)
 
-    typer.secho(f"Found {len(documents)} documents", fg=typer.colors.GREEN)
+    # Collect documents for processing
+    import json
 
-    # Extract metadata and write manifest
+    document_count = 0
+    sha256_hashes = []
+
+    # Clear manifest file if it exists
     if manifest:
-        import json
+        open(manifest, "w").close()
 
-        with open(manifest, "w") as f:
-            for doc in documents:
-                f.write(json.dumps(doc.model_dump(mode="json")) + "\n")
+    # Process documents as stream
+    for doc_meta in discover_documents(path, recursive=recursive):
+        document_count += 1
+        sha256_hashes.append(doc_meta.sha256)
 
+        # Write to manifest if requested
+        if manifest:
+            # Open in append mode for streaming writes
+            with open(manifest, "a") as f:
+                f.write(json.dumps(doc_meta.model_dump(mode="json")) + "\n")
+
+    typer.secho(f"Found {document_count} documents", fg=typer.colors.GREEN)
+
+    if manifest:
         typer.secho(f"Manifest written to {manifest}", fg=typer.colors.GREEN)
 
     # Log to audit ledger
@@ -124,7 +137,7 @@ def ingest_run(
         ledger.log(
             operation="ingest",
             inputs=[str(path)],
-            outputs=[doc["sha256"] for doc in documents],
+            outputs=sha256_hashes,
             args={"watch": watch, "recursive": recursive},
         )
 

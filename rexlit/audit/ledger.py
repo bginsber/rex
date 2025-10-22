@@ -1,6 +1,7 @@
 """Append-only audit ledger with deterministic hashing for chain-of-custody."""
 
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ class AuditEntry(BaseModel):
     """Single audit ledger entry.
 
     All entries are immutable and include cryptographic hashes for verification.
+    Entries are linked in a hash chain to ensure tamper-evidence.
     """
 
     timestamp: str = Field(
@@ -41,9 +43,13 @@ class AuditEntry(BaseModel):
         default_factory=dict,
         description="Tool versions used in operation",
     )
+    previous_hash: str = Field(
+        default="0" * 64,
+        description="SHA-256 hash of previous entry (chain link). Genesis entry has 64 zeros.",
+    )
     entry_hash: str | None = Field(
         default=None,
-        description="SHA-256 hash of entry content (excluding this field)",
+        description="SHA-256 hash of entry content including previous_hash (excluding this field)",
     )
 
     def compute_hash(self) -> str:
@@ -68,7 +74,8 @@ class AuditLedger:
 
     All operations are logged with timestamps, inputs, outputs, and cryptographic hashes.
     The ledger is stored as JSONL (one JSON object per line) for easy parsing and
-    append-only semantics.
+    append-only semantics. Entries are linked in a blockchain-style hash chain for
+    tamper-evidence.
     """
 
     def __init__(self, ledger_path: Path) -> None:
@@ -79,6 +86,21 @@ class AuditLedger:
         """
         self.ledger_path = ledger_path
         self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        self._last_hash = self._get_last_hash()
+
+    def _get_last_hash(self) -> str:
+        """Get hash of last entry for chaining.
+
+        Returns:
+            Hash of last entry, or genesis hash (64 zeros) if ledger is empty
+        """
+        try:
+            entries = self.read_all()
+            if entries:
+                return entries[-1].entry_hash or ("0" * 64)
+        except Exception:
+            pass
+        return "0" * 64  # Genesis hash
 
     def log(
         self,
@@ -106,7 +128,7 @@ class AuditLedger:
         if "rexlit" not in versions:
             versions["rexlit"] = __version__
 
-        # Create entry
+        # Create entry with hash chain link
         entry = AuditEntry(
             timestamp=datetime.now(UTC).isoformat(),
             operation=operation,
@@ -114,11 +136,20 @@ class AuditLedger:
             outputs=outputs or [],
             args=args or {},
             versions=versions,
+            previous_hash=self._last_hash,  # Chain to previous entry
         )
 
-        # Append to ledger
+        # Compute hash (includes previous_hash for chain integrity)
+        entry.entry_hash = entry.compute_hash()
+
+        # Append to ledger with fsync for legal defensibility
         with open(self.ledger_path, "a") as f:
             f.write(entry.model_dump_json() + "\n")
+            f.flush()  # Flush Python buffer to OS
+            os.fsync(f.fileno())  # Force OS buffer to disk
+
+        # Update last hash for next entry
+        self._last_hash = entry.entry_hash
 
         return entry
 
@@ -151,23 +182,51 @@ class AuditLedger:
 
         return entries
 
-    def verify(self) -> bool:
-        """Verify integrity of all entries in the ledger.
+    def verify(self) -> tuple[bool, str | None]:
+        """Verify integrity of hash chain in the ledger.
 
         Returns:
-            True if all entries have valid hashes, False otherwise
+            Tuple of (is_valid, error_message). error_message is None if valid.
         """
         try:
             entries = self.read_all()
-        except (FileNotFoundError, ValueError):
-            return False
+        except FileNotFoundError:
+            return True, None  # Empty ledger is valid
+        except ValueError as e:
+            return False, f"Ledger parsing error: {e}"
 
-        for entry in entries:
+        if not entries:
+            return True, None  # Empty ledger is valid
+
+        # Verify first entry has genesis previous_hash
+        if entries[0].previous_hash != "0" * 64:
+            return (
+                False,
+                f"First entry has invalid previous_hash (expected genesis hash '{'0' * 64}', got '{entries[0].previous_hash}')",
+            )
+
+        # Verify each entry's hash chain
+        for i, entry in enumerate(entries):
+            # Check individual hash
             expected_hash = entry.compute_hash()
             if entry.entry_hash != expected_hash:
-                return False
+                return (
+                    False,
+                    f"Entry {i} has invalid hash (expected '{expected_hash}', got '{entry.entry_hash}')",
+                )
 
-        return True
+            # Check chain link (for all entries after the first)
+            if i > 0:
+                prev_entry = entries[i - 1]
+                if entry.previous_hash != prev_entry.entry_hash:
+                    return (
+                        False,
+                        f"Entry {i} breaks hash chain (previous_hash='{entry.previous_hash}' does not match "
+                        f"previous entry's hash='{prev_entry.entry_hash}'). This indicates missing, "
+                        f"deleted, or reordered entries.",
+                    )
+
+        return True, None
 
     def get_by_operation(self, operation: str) -> list[AuditEntry]:
         """Get all entries for a specific operation.

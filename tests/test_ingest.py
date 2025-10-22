@@ -39,7 +39,7 @@ def test_discover_document(sample_text_file: Path):
     """Test discovering a single document."""
     metadata = discover_document(sample_text_file)
 
-    assert metadata.path == str(sample_text_file.absolute())
+    assert metadata.path == str(sample_text_file.resolve())
     assert len(metadata.sha256) == 64
     assert metadata.size > 0
     assert metadata.extension == ".txt"
@@ -48,26 +48,26 @@ def test_discover_document(sample_text_file: Path):
 
 def test_discover_documents_single_file(sample_text_file: Path):
     """Test discovering a single file."""
-    documents = discover_documents(sample_text_file)
+    documents = list(discover_documents(sample_text_file))
 
     assert len(documents) == 1
-    assert documents[0].path == str(sample_text_file.absolute())
+    assert documents[0].path == str(sample_text_file.resolve())
 
 
 def test_discover_documents_directory(sample_files: list[Path]):
     """Test discovering documents in a directory."""
     root = sample_files[0].parent
-    documents = discover_documents(root)
+    documents = list(discover_documents(root))
 
     assert len(documents) == len(sample_files)
     paths = {doc.path for doc in documents}
-    expected_paths = {str(f.absolute()) for f in sample_files}
+    expected_paths = {str(f.resolve()) for f in sample_files}
     assert paths == expected_paths
 
 
 def test_discover_documents_recursive(nested_files: Path):
     """Test recursive document discovery."""
-    documents = discover_documents(nested_files, recursive=True)
+    documents = list(discover_documents(nested_files, recursive=True))
 
     assert len(documents) == 3
 
@@ -84,12 +84,12 @@ def test_discover_documents_with_filter(temp_dir: Path):
     (temp_dir / "doc3.pdf").write_text("PDF file")
 
     # Include only .txt files
-    documents = discover_documents(temp_dir, include_extensions={".txt"})
+    documents = list(discover_documents(temp_dir, include_extensions={".txt"}))
     assert len(documents) == 1
     assert documents[0].extension == ".txt"
 
     # Exclude .md files
-    documents = discover_documents(temp_dir, exclude_extensions={".md"})
+    documents = list(discover_documents(temp_dir, exclude_extensions={".md"}))
     assert len(documents) == 2
     extensions = {doc.extension for doc in documents}
     assert ".md" not in extensions
@@ -98,7 +98,8 @@ def test_discover_documents_with_filter(temp_dir: Path):
 def test_discover_documents_not_found():
     """Test discovering documents from non-existent path."""
     with pytest.raises(FileNotFoundError):
-        discover_documents(Path("/nonexistent/path"))
+        # Iterator needs to be evaluated to raise the error
+        list(discover_documents(Path("/nonexistent/path")))
 
 
 def test_extract_text_file(sample_text_file: Path):

@@ -1,6 +1,8 @@
 """Document discovery and metadata extraction."""
 
+import logging
 import mimetypes
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 
@@ -8,6 +10,8 @@ from pydantic import BaseModel, Field
 
 from rexlit.utils.hashing import compute_sha256_file
 from rexlit.utils.paths import find_files
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentMetadata(BaseModel):
@@ -107,11 +111,16 @@ def extract_custodian(file_path: Path) -> str | None:
     return None
 
 
-def discover_document(file_path: Path) -> DocumentMetadata:
+def discover_document(
+    file_path: Path,
+    allowed_root: Path | None = None,
+) -> DocumentMetadata:
     """Discover and extract metadata for a single document.
 
     Args:
         file_path: Path to document
+        allowed_root: Optional root directory to enforce path boundary validation.
+                     If provided, ensures discovered files are within this directory.
 
     Returns:
         Document metadata
@@ -119,34 +128,49 @@ def discover_document(file_path: Path) -> DocumentMetadata:
     Raises:
         FileNotFoundError: If file does not exist
         PermissionError: If file cannot be read
+        ValueError: If path traversal attempt detected or not a file
     """
     if not file_path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
 
-    if not file_path.is_file():
-        raise ValueError(f"Not a file: {file_path}")
+    # SECURITY: Resolve symlinks and validate path is within allowed root
+    resolved_path = file_path.resolve()
 
-    # Get file stats
-    stat = file_path.stat()
+    if allowed_root:
+        allowed_root_resolved = allowed_root.resolve()
+        try:
+            resolved_path.relative_to(allowed_root_resolved)
+        except ValueError as e:
+            raise ValueError(
+                f"Security: Path traversal detected. "
+                f"File {file_path} resolves to {resolved_path} "
+                f"which is outside allowed root {allowed_root_resolved}"
+            ) from None
+
+    if not resolved_path.is_file():
+        raise ValueError(f"Not a file: {resolved_path}")
+
+    # Get file stats - use resolved_path for all operations
+    stat = resolved_path.stat()
     mtime = datetime.fromtimestamp(stat.st_mtime).isoformat()
 
     # Compute hash
-    sha256 = compute_sha256_file(file_path)
+    sha256 = compute_sha256_file(resolved_path)
 
     # Detect MIME type
-    mime_type = detect_mime_type(file_path)
+    mime_type = detect_mime_type(resolved_path)
 
     # Get extension
-    extension = file_path.suffix
+    extension = resolved_path.suffix
 
     # Classify document type
     doctype = classify_doctype(mime_type, extension)
 
     # Extract custodian
-    custodian = extract_custodian(file_path)
+    custodian = extract_custodian(resolved_path)
 
     return DocumentMetadata(
-        path=str(file_path.absolute()),
+        path=str(resolved_path.absolute()),
         sha256=sha256,
         size=stat.st_size,
         mime_type=mime_type,
@@ -162,8 +186,12 @@ def discover_documents(
     recursive: bool = True,
     include_extensions: set[str] | None = None,
     exclude_extensions: set[str] | None = None,
-) -> list[DocumentMetadata]:
+) -> Iterator[DocumentMetadata]:
     """Discover documents in directory and extract metadata.
+
+    This function streams document discovery results using a generator pattern,
+    enabling constant memory usage regardless of document count. Processing
+    can begin immediately without waiting for full discovery to complete.
 
     Args:
         root: Root directory or single file path
@@ -171,8 +199,8 @@ def discover_documents(
         include_extensions: Only include these extensions (e.g., {'.pdf', '.docx'})
         exclude_extensions: Exclude these extensions
 
-    Returns:
-        List of document metadata
+    Yields:
+        DocumentMetadata objects as they are discovered
 
     Raises:
         FileNotFoundError: If root path does not exist
@@ -180,29 +208,34 @@ def discover_documents(
     if not root.exists():
         raise FileNotFoundError(f"Path not found: {root}")
 
+    # SECURITY: Establish security boundary for path validation
+    allowed_root = root.resolve() if root.is_dir() else None
+
     # Handle single file
     if root.is_file():
-        return [discover_document(root)]
+        yield discover_document(root, allowed_root=None)
+        return
 
-    # Discover all files
-    files = find_files(root, recursive=recursive)
+    # Stream files as they're discovered
+    for file_path in find_files(root, recursive=recursive):
+        # Filter by extensions
+        if include_extensions and file_path.suffix.lower() not in include_extensions:
+            continue
+        if exclude_extensions and file_path.suffix.lower() in exclude_extensions:
+            continue
 
-    # Filter by extensions
-    if include_extensions:
-        files = [f for f in files if f.suffix.lower() in include_extensions]
-
-    if exclude_extensions:
-        files = [f for f in files if f.suffix.lower() not in exclude_extensions]
-
-    # Extract metadata
-    documents = []
-    for file_path in files:
         try:
-            metadata = discover_document(file_path)
-            documents.append(metadata)
-        except (FileNotFoundError, PermissionError, ValueError) as e:
+            metadata = discover_document(file_path, allowed_root=allowed_root)
+            yield metadata
+        except ValueError as e:
+            # SECURITY: Log path traversal attempts
+            if "Path traversal" in str(e):
+                logger.warning(f"SECURITY: {e}")
+                print(f"SECURITY WARNING: {e}")
+            else:
+                print(f"Warning: Skipping {file_path}: {e}")
+            continue
+        except (FileNotFoundError, PermissionError) as e:
             # Skip files that can't be read
             print(f"Warning: Skipping {file_path}: {e}")
             continue
-
-    return documents

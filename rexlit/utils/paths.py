@@ -63,11 +63,17 @@ def find_files(
 ) -> list[Path]:
     """Find files matching pattern in directory.
 
+    SECURITY: By default, symlinks are not followed to prevent path traversal attacks.
+    When follow_symlinks=True, symlinks are resolved but should still be validated
+    against security boundaries by the caller.
+
     Args:
         root: Root directory to search
         pattern: Glob pattern to match (default: all files)
         recursive: Search recursively (default: True)
-        follow_symlinks: Follow symbolic links (default: False)
+        follow_symlinks: Follow symbolic links (default: False).
+                        WARNING: Only enable if paths will be validated against
+                        security boundaries by the caller.
 
     Returns:
         List of matching file paths
@@ -82,9 +88,12 @@ def find_files(
 
     files = []
     for path in matches:
-        # Skip symlinks unless explicitly following
+        # SECURITY: Skip symlinks unless explicitly following
+        # This prevents traversal via malicious symlinks
         if path.is_symlink() and not follow_symlinks:
             continue
+
+        # Only include actual files (not directories or other special files)
         if path.is_file():
             files.append(path)
 
