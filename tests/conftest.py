@@ -1,6 +1,9 @@
 """Pytest configuration and fixtures."""
 
+import gc
+import shutil
 import tempfile
+import time
 from collections.abc import Generator
 from pathlib import Path
 
@@ -10,8 +13,16 @@ import pytest
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     """Create a temporary directory for tests."""
-    with tempfile.TemporaryDirectory() as tmpdir:
+    tmpdir = tempfile.mkdtemp()
+    try:
         yield Path(tmpdir)
+    finally:
+        # Force garbage collection to release any file handles
+        gc.collect()
+        # Small delay to allow OS to release file locks
+        time.sleep(0.1)
+        # Retry cleanup with ignore_errors for better cross-platform support
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 @pytest.fixture
