@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://rexlit.io/schemas/near_dupes@1.json",
+  "title": "RexLit Near Duplicates v1",
+  "description": "Schema for near-duplicate detection results",
+  "type": "object",
+  "required": [
+    "schema_id",
+    "schema_version",
+    "document_id",
+    "cluster_id",
+    "similarity"
+  ],
+  "properties": {
+    "schema_id": {
+      "type": "string",
+      "const": "near_dupes",
+      "description": "Schema identifier"
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version"
+    },
+    "producer": {
+      "type": "string",
+      "description": "Producer identifier (e.g., 'rexlit-0.1.0')"
+    },
+    "produced_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when entry was produced"
+    },
+    "document_id": {
+      "type": "string",
+      "description": "Document identifier"
+    },
+    "cluster_id": {
+      "type": "string",
+      "description": "Duplicate cluster identifier"
+    },
+    "similarity": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Similarity score (0-1)"
+    },
+    "representative": {
+      "type": "boolean",
+      "description": "Whether this is the cluster representative"
+    },
+    "method": {
+      "type": "string",
+      "enum": ["minhash", "simhash", "exact"],
+      "description": "Deduplication method used"
+    }
+  }
+}

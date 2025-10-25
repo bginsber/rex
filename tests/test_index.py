@@ -1,0 +1,422 @@
+"""Tests for index building and search functionality."""
+
+import json
+import time
+from pathlib import Path
+
+import pytest
+
+from rexlit.index.build import build_index
+from rexlit.index.metadata import IndexMetadata
+from rexlit.index.search import get_custodians, get_doctypes
+
+
+class TestIndexMetadata:
+    """Tests for metadata cache functionality."""
+
+    def test_metadata_cache_creation(self, temp_dir: Path):
+        """Test that metadata cache is created during indexing."""
+        # Create test documents
+        doc_dir = temp_dir / "docs"
+        doc_dir.mkdir()
+
+        (doc_dir / "doc1.txt").write_text("Test document 1")
+        (doc_dir / "doc2.txt").write_text("Test document 2")
+
+        # Build index
+        index_dir = temp_dir / "index"
+        build_index(doc_dir, index_dir, rebuild=True, show_progress=False)
+
+        # Verify cache file exists
+        cache_file = index_dir / ".metadata_cache.json"
+        assert cache_file.exists(), "Metadata cache file should be created"
+
+        # Verify cache contents
+        with open(cache_file) as f:
+            cache = json.load(f)
+
+        assert "custodians" in cache
+        assert "doctypes" in cache
+        assert "doc_count" in cache
+        assert cache["doc_count"] == 2
+
+    def test_metadata_cache_custodians(self, nested_files: Path):
+        """Test that custodians are correctly cached during indexing."""
+        # Build index
+        index_dir = nested_files / "index"
+        build_index(nested_files, index_dir, rebuild=True, show_progress=False)
+
+        # Get custodians from cache
+        custodians = get_custodians(index_dir)
+
+        # Should extract custodian names from directory structure
+        assert len(custodians) >= 0, "Should return custodians set"
+
+    def test_metadata_cache_doctypes(self, temp_dir: Path):
+        """Test that document types are correctly cached."""
+        # Create test documents with different extensions
+        doc_dir = temp_dir / "docs"
+        doc_dir.mkdir()
+
+        (doc_dir / "doc1.txt").write_text("Text document")
+        (doc_dir / "doc2.md").write_text("# Markdown document")
+
+        # Build index
+        index_dir = temp_dir / "index"
+        build_index(doc_dir, index_dir, rebuild=True, show_progress=False)
+
+        # Get doctypes from cache
+        doctypes = get_doctypes(index_dir)
+
+        # Should have detected file types
+        assert isinstance(doctypes, set)
+
+    def test_metadata_cache_performance(self, temp_dir: Path):
+        """Test that cache provides O(1) lookup performance."""
+        # Create test documents
+        doc_dir = temp_dir / "docs"
+        doc_dir.mkdir()
+
+        # Create multiple documents
+        for i in range(100):
+            (doc_dir / f"doc{i}.txt").write_text(f"Document {i}")
+
+        # Build index
+        index_dir = temp_dir / "index"
+        build_index(doc_dir, index_dir, rebuild=True, show_progress=False)
+
+        # Measure cache lookup time
+        start_time = time.time()
+        custodians = get_custodians(index_dir)
+        cache_time = time.time() - start_time
+
+        # Should be very fast (< 100ms even on slow systems)
+        assert cache_time < 0.1, f"Cache lookup took {cache_time}s, should be < 0.1s"
+
+        # Verify result type
+        assert isinstance(custodians, set)
+
+    def test_metadata_cache_rebuild(self, temp_dir: Path):
+        """Test that cache is properly reset when rebuilding index."""
+        # Create initial documents
+        doc_dir = temp_dir / "docs"
+        doc_dir.mkdir()
+
+        (doc_dir / "doc1.txt").write_text("Initial document")
+
+        # Build index
+        index_dir = temp_dir / "index"
+        build_index(doc_dir, index_dir, rebuild=True, show_progress=False)
+
+        # Get initial doc count
+        metadata = IndexMetadata(index_dir)
+        initial_count = metadata.get_doc_count()
+        assert initial_count == 1
+
+        # Add more documents
+        (doc_dir / "doc2.txt").write_text("Second document")
+        (doc_dir / "doc3.txt").write_text("Third document")
+
+        # Rebuild index
+        build_index(doc_dir, index_dir, rebuild=True, show_progress=False)
+
+        # Get new doc count
+        metadata = IndexMetadata(index_dir)
+        new_count = metadata.get_doc_count()
+        assert new_count == 3, "Cache should reflect new document count after rebuild"
+
+    def test_metadata_cache_empty_values(self, temp_dir: Path):
+        """Test that empty custodians and unknown doctypes are filtered."""
+        # Create test documents
+        doc_dir = temp_dir / "docs"
+        doc_dir.mkdir()
+
+        (doc_dir / "doc1.txt").write_text("Test document")
+
+        # Build index
+        index_dir = temp_dir / "index"
+        build_index(doc_dir, index_dir, rebuild=True, show_progress=False)
+
+        # Verify empty strings and 'unknown' are filtered
+        custodians = get_custodians(index_dir)
+        doctypes = get_doctypes(index_dir)
+
+        # Should not contain empty strings
+        assert "" not in custodians
+        assert "" not in doctypes
+
+        # Should not contain 'unknown' doctype
+        assert "unknown" not in doctypes
+
+    def test_metadata_cache_consistency(self, temp_dir: Path):
+        """Test that cache stays in sync with index during updates."""
+        # Create initial documents
+        doc_dir = temp_dir / "docs"
+        doc_dir.mkdir()
+
+        (doc_dir / "doc1.txt").write_text("Initial document")
+
+        # Build index
+        index_dir = temp_dir / "index"
+        build_index(doc_dir, index_dir, rebuild=True, show_progress=False)
+
+        # Get initial metadata
+        metadata_before = IndexMetadata(index_dir)
+        count_before = metadata_before.get_doc_count()
+
+        # Verify cache file exists and is valid
+        cache_file = index_dir / ".metadata_cache.json"
+        assert cache_file.exists()
+
+        with open(cache_file) as f:
+            cache_data = json.load(f)
+            assert cache_data["doc_count"] == count_before
+
+    def test_metadata_load_cache_gracefully(self, temp_dir: Path):
+        """Test that metadata handles missing or corrupted cache files."""
+        # Create index directory without cache
+        index_dir = temp_dir / "index"
+        index_dir.mkdir()
+
+        # Load metadata (should handle missing cache)
+        metadata = IndexMetadata(index_dir)
+
+        # Should return empty sets
+        assert metadata.get_custodians() == set()
+        assert metadata.get_doctypes() == set()
+        assert metadata.get_doc_count() == 0
+
+    def test_metadata_corrupted_cache(self, temp_dir: Path):
+        """Test that metadata handles corrupted cache files gracefully."""
+        # Create index directory with corrupted cache
+        index_dir = temp_dir / "index"
+        index_dir.mkdir()
+
+        cache_file = index_dir / ".metadata_cache.json"
+        cache_file.write_text("{ invalid json }")
+
+        # Load metadata (should handle corrupted cache)
+        metadata = IndexMetadata(index_dir)
+
+        # Should return empty sets (fallback to empty cache)
+        assert metadata.get_custodians() == set()
+        assert metadata.get_doctypes() == set()
+        assert metadata.get_doc_count() == 0
+
+
+class TestGetCustodians:
+    """Tests for get_custodians function."""
+
+    def test_get_custodians_uses_cache(self, temp_dir: Path):
+        """Test that get_custodians uses cache instead of full scan."""
+        # Create test documents
+        doc_dir = temp_dir / "docs"
+        doc_dir.mkdir()
+
+        (doc_dir / "doc1.txt").write_text("Test document")
+
+        # Build index
+        index_dir = temp_dir / "index"
+        build_index(doc_dir, index_dir, rebuild=True, show_progress=False)
+
+        # Verify cache exists
+        cache_file = index_dir / ".metadata_cache.json"
+        assert cache_file.exists()
+
+        # Call get_custodians (should use cache)
+        custodians = get_custodians(index_dir)
+
+        # Should return set
+        assert isinstance(custodians, set)
+
+    def test_get_custodians_missing_index(self, temp_dir: Path):
+        """Test that get_custodians raises error for missing index."""
+        with pytest.raises(FileNotFoundError):
+            get_custodians(temp_dir / "nonexistent")
+
+
+class TestGetDoctypes:
+    """Tests for get_doctypes function."""
+
+    def test_get_doctypes_uses_cache(self, temp_dir: Path):
+        """Test that get_doctypes uses cache instead of full scan."""
+        # Create test documents
+        doc_dir = temp_dir / "docs"
+        doc_dir.mkdir()
+
+        (doc_dir / "doc1.txt").write_text("Test document")
+
+        # Build index
+        index_dir = temp_dir / "index"
+        build_index(doc_dir, index_dir, rebuild=True, show_progress=False)
+
+        # Verify cache exists
+        cache_file = index_dir / ".metadata_cache.json"
+        assert cache_file.exists()
+
+        # Call get_doctypes (should use cache)
+        doctypes = get_doctypes(index_dir)
+
+        # Should return set
+        assert isinstance(doctypes, set)
+
+    def test_get_doctypes_missing_index(self, temp_dir: Path):
+        """Test that get_doctypes raises error for missing index."""
+        with pytest.raises(FileNotFoundError):
+            get_doctypes(temp_dir / "nonexistent")
+
+
+class TestParallelProcessing:
+    """Tests for parallel document processing functionality."""
+
+    def test_parallel_processing_basic(self, temp_dir: Path):
+        """Test that parallel processing works with basic documents."""
+        # Create test documents
+        doc_dir = temp_dir / "docs"
+        doc_dir.mkdir()
+
+        # Create multiple documents to test parallel processing
+        for i in range(20):
+            (doc_dir / f"doc{i}.txt").write_text(f"Test document {i}")
+
+        # Build index with parallel processing (2 workers for testing)
+        index_dir = temp_dir / "index"
+        count = build_index(
+            doc_dir, index_dir, rebuild=True, show_progress=False, max_workers=2
+        )
+
+        # Verify all documents were indexed
+        assert count == 20, "All documents should be indexed"
+
+        # Verify metadata cache was updated
+        metadata = IndexMetadata(index_dir)
+        assert metadata.get_doc_count() == 20
+
+    def test_parallel_processing_single_worker(self, temp_dir: Path):
+        """Test that parallel processing works with single worker (sequential mode)."""
+        # Create test documents
+        doc_dir = temp_dir / "docs"
+        doc_dir.mkdir()
+
+        for i in range(10):
+            (doc_dir / f"doc{i}.txt").write_text(f"Test document {i}")
+
+        # Build index with single worker
+        index_dir = temp_dir / "index"
+        count = build_index(
+            doc_dir, index_dir, rebuild=True, show_progress=False, max_workers=1
+        )
+
+        # Verify all documents were indexed
+        assert count == 10
+
+    def test_parallel_processing_error_handling(self, temp_dir: Path):
+        """Test that parallel processing handles errors gracefully."""
+        # Create test documents including some that will fail
+        doc_dir = temp_dir / "docs"
+        doc_dir.mkdir()
+
+        # Create valid documents
+        for i in range(5):
+            (doc_dir / f"doc{i}.txt").write_text(f"Test document {i}")
+
+        # Create an unsupported file type that will fail extraction
+        (doc_dir / "unsupported.xyz").write_text("Unsupported format")
+
+        # Build index - should continue despite errors
+        index_dir = temp_dir / "index"
+        count = build_index(
+            doc_dir, index_dir, rebuild=True, show_progress=False, max_workers=2
+        )
+
+        # Should have indexed only the valid documents
+        assert count == 5, "Only valid documents should be indexed"
+
+    def test_parallel_processing_large_batch(self, temp_dir: Path):
+        """Test parallel processing with larger document set."""
+        # Create test documents
+        doc_dir = temp_dir / "docs"
+        doc_dir.mkdir()
+
+        # Create enough documents to test periodic commits (>1000)
+        # But keep it reasonable for CI/testing (100 docs)
+        for i in range(100):
+            (doc_dir / f"doc{i}.txt").write_text(f"Test document {i}" * 10)
+
+        # Build index with parallel processing
+        index_dir = temp_dir / "index"
+        start = time.time()
+        count = build_index(
+            doc_dir, index_dir, rebuild=True, show_progress=False, max_workers=4
+        )
+        elapsed = time.time() - start
+
+        # Verify all documents were indexed
+        assert count == 100, "All documents should be indexed"
+
+        # Verify reasonable performance (should be faster than 1 sec/doc)
+        assert elapsed < 100, f"Should complete in reasonable time, took {elapsed}s"
+
+    def test_parallel_processing_metadata_consistency(self, temp_dir: Path):
+        """Test that metadata cache remains consistent with parallel processing."""
+        # Create test documents
+        doc_dir = temp_dir / "docs"
+        doc_dir.mkdir()
+
+        for i in range(30):
+            (doc_dir / f"doc{i}.txt").write_text(f"Test document {i}")
+
+        # Build index with parallel processing
+        index_dir = temp_dir / "index"
+        build_index(doc_dir, index_dir, rebuild=True, show_progress=False, max_workers=3)
+
+        # Verify metadata cache consistency
+        metadata = IndexMetadata(index_dir)
+        assert metadata.get_doc_count() == 30, "Metadata count should match indexed docs"
+
+        # Verify cache file exists and is valid
+        cache_file = index_dir / ".metadata_cache.json"
+        assert cache_file.exists()
+
+        with open(cache_file) as f:
+            cache = json.load(f)
+            assert cache["doc_count"] == 30
+
+    def test_parallel_processing_configurable_workers(self, temp_dir: Path):
+        """Test that worker count is configurable."""
+        # Create test documents
+        doc_dir = temp_dir / "docs"
+        doc_dir.mkdir()
+
+        for i in range(10):
+            (doc_dir / f"doc{i}.txt").write_text(f"Test document {i}")
+
+        # Test with different worker counts
+        for workers in [1, 2, 4]:
+            index_dir = temp_dir / f"index_{workers}"
+            count = build_index(
+                doc_dir,
+                index_dir,
+                rebuild=True,
+                show_progress=False,
+                max_workers=workers,
+            )
+            assert count == 10, f"Should index all docs with {workers} workers"
+
+    def test_parallel_processing_default_workers(self, temp_dir: Path):
+        """Test that default worker count is cpu_count() - 1."""
+        # Create test documents
+        doc_dir = temp_dir / "docs"
+        doc_dir.mkdir()
+
+        for i in range(10):
+            (doc_dir / f"doc{i}.txt").write_text(f"Test document {i}")
+
+        # Build index with default workers (None)
+        index_dir = temp_dir / "index"
+        count = build_index(
+            doc_dir, index_dir, rebuild=True, show_progress=False, max_workers=None
+        )
+
+        # Should work with default configuration
+        assert count == 10

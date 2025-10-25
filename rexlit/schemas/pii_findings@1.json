@@ -1,0 +1,82 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://rexlit.io/schemas/pii_findings@1.json",
+  "title": "RexLit PII Findings v1",
+  "description": "Schema for PII detection findings",
+  "type": "object",
+  "required": [
+    "schema_id",
+    "schema_version",
+    "document_id",
+    "entity_type",
+    "text",
+    "score",
+    "start",
+    "end"
+  ],
+  "properties": {
+    "schema_id": {
+      "type": "string",
+      "const": "pii_findings",
+      "description": "Schema identifier"
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version"
+    },
+    "producer": {
+      "type": "string",
+      "description": "Producer identifier (e.g., 'rexlit-0.1.0')"
+    },
+    "produced_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when finding was produced"
+    },
+    "document_id": {
+      "type": "string",
+      "description": "Document identifier"
+    },
+    "entity_type": {
+      "type": "string",
+      "enum": ["SSN", "EMAIL", "PHONE", "CREDIT_CARD", "ADDRESS", "NAME", "DATE", "CUSTOM"],
+      "description": "Type of PII entity detected"
+    },
+    "text": {
+      "type": "string",
+      "description": "Detected PII text"
+    },
+    "score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Confidence score (0-1)"
+    },
+    "start": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Start position in text"
+    },
+    "end": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "End position in text"
+    },
+    "page": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Page number (if applicable)"
+    },
+    "coordinates": {
+      "type": ["object", "null"],
+      "description": "Bounding box coordinates for redaction",
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "width": { "type": "number" },
+        "height": { "type": "number" }
+      }
+    }
+  }
+}

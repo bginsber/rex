@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://rexlit.io/schemas/rexpack@1.json",
+  "title": "RexLit Production Package Manifest v1",
+  "description": "Schema for production package manifests",
+  "type": "object",
+  "required": [
+    "schema_id",
+    "schema_version",
+    "pack_id",
+    "created_at",
+    "document_count",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_id": {
+      "type": "string",
+      "const": "rexpack",
+      "description": "Schema identifier"
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version"
+    },
+    "producer": {
+      "type": "string",
+      "description": "Producer identifier (e.g., 'rexlit-0.1.0')"
+    },
+    "produced_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when pack was produced"
+    },
+    "pack_id": {
+      "type": "string",
+      "description": "Unique pack identifier"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Pack creation timestamp"
+    },
+    "document_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of documents in pack"
+    },
+    "total_pages": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total page count"
+    },
+    "bates_range": {
+      "type": ["object", "null"],
+      "properties": {
+        "start": { "type": "string" },
+        "end": { "type": "string" }
+      },
+      "description": "Bates number range"
+    },
+    "redaction_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of redactions applied"
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "type", "sha256"],
+        "properties": {
+          "path": { "type": "string" },
+          "type": { "type": "string" },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "size": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "description": "List of artifacts in pack"
+    },
+    "load_file": {
+      "type": ["object", "null"],
+      "properties": {
+        "path": { "type": "string" },
+        "format": { "type": "string", "enum": ["dat", "opticon", "lfp"] }
+      },
+      "description": "Load file information"
+    }
+  }
+}
