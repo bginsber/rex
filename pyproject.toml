@@ -50,6 +50,7 @@ dev = [
     "ruff>=0.6.0",
     "black>=24.8.0",
     "types-pyyaml>=6.0.12",
+    "import-linter>=2.0",
 ]
 ocr-paddle = [
     "paddleocr>=2.8.0",
@@ -151,3 +152,47 @@ ignore = [
 line-length = 100
 target-version = ["py311"]
 include = '\.pyi?$'
+
+[tool.importlinter]
+root_package = "rexlit"
+
+[[tool.importlinter.contracts]]
+name = "CLI depends only on app and bootstrap"
+type = "forbidden"
+source_modules = ["rexlit.cli"]
+forbidden_modules = [
+    "rexlit.audit.ledger",
+    "rexlit.ingest",
+    "rexlit.index",
+    "rexlit.ocr",
+    "rexlit.pdf",
+    "rexlit.rules",
+    "rexlit.ediscovery",
+]
+ignore_imports = []
+
+[[tool.importlinter.contracts]]
+name = "Domain packages cannot import adapters or CLI"
+type = "forbidden"
+source_modules = [
+    "rexlit.audit",
+    "rexlit.ingest",
+    "rexlit.index",
+    "rexlit.pdf",
+    "rexlit.ocr",
+    "rexlit.rules",
+    "rexlit.ediscovery",
+]
+forbidden_modules = [
+    "rexlit.cli",
+]
+ignore_imports = []
+
+[[tool.importlinter.contracts]]
+name = "Application layer depends only on ports"
+type = "layers"
+layers = [
+    "rexlit.cli",
+    "rexlit.app",
+    "rexlit.app.ports",
+]

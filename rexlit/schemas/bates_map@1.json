@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://rexlit.io/schemas/bates_map@1.json",
+  "title": "RexLit Bates Number Mapping v1",
+  "description": "Schema for Bates number allocation registry",
+  "type": "object",
+  "required": [
+    "schema_id",
+    "schema_version",
+    "document_id",
+    "bates_start",
+    "bates_end",
+    "page_count"
+  ],
+  "properties": {
+    "schema_id": {
+      "type": "string",
+      "const": "bates_map",
+      "description": "Schema identifier"
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version"
+    },
+    "producer": {
+      "type": "string",
+      "description": "Producer identifier (e.g., 'rexlit-0.1.0')"
+    },
+    "produced_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when entry was produced"
+    },
+    "document_id": {
+      "type": "string",
+      "description": "Document identifier (path or hash)"
+    },
+    "bates_start": {
+      "type": "string",
+      "description": "Starting Bates number"
+    },
+    "bates_end": {
+      "type": "string",
+      "description": "Ending Bates number"
+    },
+    "page_count": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of pages"
+    },
+    "prefix": {
+      "type": "string",
+      "description": "Bates number prefix"
+    },
+    "assigned_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When Bates numbers were assigned"
+    }
+  }
+}
