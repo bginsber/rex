@@ -22,6 +22,10 @@ __all__ = [
     "RedactionPlannerPort",
     "RedactionApplierPort",
     "PackPort",
+    "EmbeddingResult",
+    "EmbeddingPort",
+    "VectorHit",
+    "VectorStorePort",
 ]
 
 from rexlit.app.ports.ledger import AuditRecord, LedgerPort
@@ -36,3 +40,5 @@ from rexlit.app.ports.dedupe import DeduperPort
 from rexlit.app.ports.bates import BatesAssignment, BatesPlan, BatesPlannerPort
 from rexlit.app.ports.redaction import RedactionPlannerPort, RedactionApplierPort
 from rexlit.app.ports.pack import PackPort
+from rexlit.app.ports.embedding import EmbeddingResult, EmbeddingPort
+from rexlit.app.ports.vector_store import VectorHit, VectorStorePort
