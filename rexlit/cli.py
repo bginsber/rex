@@ -1,6 +1,5 @@
 """RexLit CLI application with Typer."""
 
-import os
 from pathlib import Path
 from typing import Annotated
 
@@ -9,6 +8,7 @@ import typer
 from rexlit import __version__
 from rexlit.bootstrap import bootstrap_application
 from rexlit.config import Settings, get_settings, set_settings
+from rexlit.utils.offline import OfflineModeGate
 
 app = typer.Typer(
     name="rexlit",
@@ -25,24 +25,14 @@ def version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
-def require_online(settings: Settings, online_flag: bool, feature_name: str) -> None:
-    """Check if online mode is enabled, exit if not.
+def require_online(gate: OfflineModeGate, feature_name: str) -> None:
+    """Enforce that ``feature_name`` may only run in online mode."""
 
-    Args:
-        settings: Current settings instance
-        online_flag: Value of --online CLI flag
-        feature_name: Name of feature requiring online mode
-    """
-    is_online = settings.online or bool(os.getenv("REXLIT_ONLINE")) or online_flag
-
-    if not is_online:
-        typer.secho(
-            f"\n{feature_name} requires online mode.\n"
-            f"Enable with: --online flag or REXLIT_ONLINE=1\n"
-            f"Aborting.",
-            fg=typer.colors.YELLOW,
-        )
-        raise typer.Exit(code=2)
+    try:
+        gate.require(feature_name)
+    except RuntimeError as exc:
+        typer.secho(f"\n{exc}\nAborting.", fg=typer.colors.YELLOW)
+        raise typer.Exit(code=2) from exc
 
 
 @app.callback()
@@ -168,7 +158,7 @@ def index_build(
     index_dir = settings.get_index_dir()
 
     if dense:
-        require_online(settings, False, "Dense indexing")
+        require_online(container.offline_gate, "Dense indexing")
 
     try:
         count = container.index_port.build(
@@ -248,7 +238,7 @@ def index_search(
         raise typer.Exit(code=1)
 
     if mode_normalized in {"dense", "hybrid"}:
-        require_online(settings, False, f"{mode_normalized} search")
+        require_online(container.offline_gate, f"{mode_normalized} search")
 
     try:
         results = container.index_port.search(
@@ -317,8 +307,14 @@ def ocr_run(
     """Run OCR on documents."""
     settings = get_settings()
 
+    if online and not settings.online:
+        settings.online = True
+        set_settings(settings)
+
+    gate = OfflineModeGate.from_settings(settings)
+
     if provider == "deepseek":
-        require_online(settings, online, "DeepSeek OCR")
+        require_online(gate, "DeepSeek OCR")
 
     typer.secho(f"OCR not yet implemented (provider: {provider})", fg=typer.colors.YELLOW)
 

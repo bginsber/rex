@@ -3,10 +3,20 @@
 Implements plan/apply pattern for safety. All I/O delegated to ports.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
+
+from rexlit.config import Settings, get_settings
+from rexlit.utils.plans import (
+    compute_redaction_plan_id,
+    load_redaction_plan_entry,
+    validate_redaction_plan_entry,
+    write_redaction_plan_entry,
+)
 
 
 class RedactionPlan(BaseModel):
@@ -34,6 +44,8 @@ class RedactionService:
         stamp_port: Any,
         storage_port: Any,
         ledger_port: Any,
+        *,
+        settings: Settings | None = None,
     ):
         """Initialize redaction service.
 
@@ -42,11 +54,14 @@ class RedactionService:
             stamp_port: PDF manipulation port
             storage_port: Filesystem operations port
             ledger_port: Audit logging port
+            settings: Application settings (used for encryption keys)
         """
         self.pii = pii_port
         self.stamp = stamp_port
         self.storage = storage_port
         self.ledger = ledger_port
+        self._settings = settings or get_settings()
+        self._plan_key = self._settings.get_redaction_plan_key()
 
     def plan(
         self,
@@ -68,27 +83,51 @@ class RedactionService:
         if pii_types is None:
             pii_types = ["SSN", "EMAIL", "PHONE", "CREDIT_CARD", "ADDRESS"]
 
-        # TODO: Scan for PII via pii_port
-        # TODO: Generate plan with coordinates
-        # TODO: Compute plan_id = sha256(input artifacts)
-        # TODO: Write plan JSONL via storage_port
+        resolved_input = Path(input_path).resolve()
+        if not resolved_input.exists():
+            raise FileNotFoundError(f"Redaction source not found: {resolved_input}")
 
-        plan = RedactionPlan(
-            plan_id="placeholder",
-            input_hash="placeholder",
+        resolved_output = Path(output_plan_path).resolve()
+        resolved_output.parent.mkdir(parents=True, exist_ok=True)
+
+        document_hash = self.storage.compute_hash(resolved_input)
+        annotations = {"pii_types": sorted(pii_types)}
+
+        plan_id = compute_redaction_plan_id(
+            document_path=resolved_input,
+            content_hash=document_hash,
+            annotations=annotations,
+        )
+
+        plan_entry = {
+            "document": str(resolved_input),
+            "sha256": document_hash,
+            "plan_id": plan_id,
+            "actions": [],
+            "annotations": annotations,
+            "notes": "Redaction planning stub. Replace with provider integration.",
+        }
+
+        write_redaction_plan_entry(resolved_output, plan_entry, key=self._plan_key)
+
+        if self.ledger is not None:
+            self.ledger.log(
+                operation="redaction_plan_create",
+                inputs=[str(resolved_input)],
+                outputs=[str(resolved_output)],
+                args={
+                    "plan_id": plan_id,
+                    "document_sha256": document_hash,
+                    "pii_types": annotations["pii_types"],
+                },
+            )
+
+        return RedactionPlan(
+            plan_id=plan_id,
+            input_hash=document_hash,
             redactions=[],
             rationale="PII detection",
         )
-
-        # Log to audit
-        self.ledger.log(
-            operation="redaction_plan_create",
-            inputs=[str(input_path)],
-            outputs=[str(output_plan_path)],
-            args={"pii_types": pii_types},
-        )
-
-        return plan
 
     def apply(
         self,
@@ -117,21 +156,69 @@ class RedactionService:
         Raises:
             ValueError: If plan hash doesn't match current PDF
         """
-        # TODO: Read plan via storage_port
-        # TODO: Verify current PDF hash matches plan.input_hash
-        # TODO: If preview, generate diff and return
-        # TODO: Apply redactions via stamp_port
-        # TODO: Write redacted PDFs via storage_port
+        resolved_plan = Path(plan_path).resolve()
+        if not resolved_plan.exists():
+            raise FileNotFoundError(f"Redaction plan not found: {resolved_plan}")
 
-        # Log to audit
-        self.ledger.log(
-            operation="redaction_apply",
-            inputs=[str(plan_path)],
-            outputs=[str(output_path)],
-            args={"preview": preview, "force": force},
+        entry = self._read_plan_entry(resolved_plan)
+
+        document_path = Path(entry.get("document", "")).resolve()
+        if not document_path.exists():
+            raise FileNotFoundError(
+                f"Redaction target referenced by plan is missing: {document_path}"
+            )
+
+        expected_hash = str(entry.get("sha256", ""))
+        plan_id = validate_redaction_plan_entry(
+            entry,
+            document_path=document_path,
+            content_hash=expected_hash,
         )
 
-        return 0
+        if not force:
+            current_hash = self.storage.compute_hash(document_path)
+            if current_hash != expected_hash:
+                raise ValueError(
+                    "Redaction plan hash mismatch detected. "
+                    f"Expected {expected_hash}, computed {current_hash}."
+                )
+
+        redactions = entry.get("redactions", [])
+        applied_count = len(redactions)
+
+        resolved_output = Path(output_path).resolve()
+        destination_path: Path | None = None
+
+        if not preview:
+            resolved_output.mkdir(parents=True, exist_ok=True)
+            destination_path = resolved_output / document_path.name
+            self.storage.copy_file(document_path, destination_path)
+
+        if self.ledger is not None:
+            outputs: list[str] = []
+            if destination_path is not None:
+                outputs.append(str(destination_path))
+
+            self.ledger.log(
+                operation="redaction_apply",
+                inputs=[str(document_path), str(resolved_plan)],
+                outputs=outputs,
+                args={
+                    "plan_id": plan_id,
+                    "preview": preview,
+                    "force": force,
+                    "redaction_count": applied_count,
+                    "document_sha256": expected_hash,
+                    "output_dir": str(resolved_output),
+                },
+            )
+
+        return applied_count
+
+    def _read_plan_entry(self, plan_path: Path) -> dict[str, Any]:
+        """Load a single redaction plan entry from disk."""
+
+        return load_redaction_plan_entry(Path(plan_path), key=self._plan_key)
 
     def validate_plan(self, plan_path: Path) -> bool:
         """Validate redaction plan against current PDFs.
@@ -142,8 +229,28 @@ class RedactionService:
         Returns:
             True if plan matches current PDFs, False otherwise
         """
-        # TODO: Read plan via storage_port
-        # TODO: Compute current PDF hashes
-        # TODO: Compare with plan.input_hash
+        resolved_plan = Path(plan_path).resolve()
+        if not resolved_plan.exists():
+            raise FileNotFoundError(f"Redaction plan not found: {resolved_plan}")
 
-        return True
+        try:
+            entry = self._read_plan_entry(resolved_plan)
+        except ValueError:
+            return False
+
+        document_path = Path(entry.get("document", "")).resolve()
+        if not document_path.exists():
+            return False
+
+        expected_hash = str(entry.get("sha256", ""))
+        try:
+            validate_redaction_plan_entry(
+                entry,
+                document_path=document_path,
+                content_hash=expected_hash,
+            )
+        except ValueError:
+            return False
+
+        current_hash = self.storage.compute_hash(document_path)
+        return current_hash == expected_hash

@@ -1,164 +1,254 @@
-"""Bootstrap module for dependency injection and adapter instantiation.
+"""Application bootstrap wiring ports, adapters, and services."""
 
-This module creates concrete adapter instances based on configuration
-and wires them to application services.
-"""
+from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from rexlit.app import M1Pipeline, PackService, RedactionService, ReportService
+from rexlit.app.adapters import (
+    FileSystemStorageAdapter,
+    HashDeduper,
+    IngestDiscoveryAdapter,
+    JSONLineRedactionPlanner,
+    SequentialBatesPlanner,
+    ZipPackager,
+)
+from rexlit.app.audit_service import AuditService
+from rexlit.app.ports import (
+    BatesPlannerPort,
+    DeduperPort,
+    DiscoveryPort,
+    IndexPort,
+    LedgerPort,
+    PackPort,
+    RedactionPlannerPort,
+    StoragePort,
+)
 from rexlit.audit.ledger import AuditLedger
-from rexlit.config import Settings
-from rexlit.app import M1Pipeline, ReportService, RedactionService, PackService
+from rexlit.config import Settings, get_settings
+from rexlit.index.build import build_dense_index, build_index
+from rexlit.index.search import (
+    SearchResult as TantivySearchResult,
+    dense_search_index,
+    get_custodians as load_custodians,
+    get_doctypes as load_doctypes,
+)
+from rexlit.utils.offline import OfflineModeGate
 
 
-class Container:
-    """Dependency injection container.
+@dataclass(slots=True)
+class ApplicationContainer:
+    """Aggregates wired services and adapters for the CLI layer."""
 
-    Instantiates adapters based on settings and provides
-    fully-wired application services.
-    """
-
-    def __init__(self, settings: Settings):
-        """Initialize container with settings.
-
-        Args:
-            settings: Application settings
-        """
-        self.settings = settings
-        self._ledger_port: Any | None = None
-        self._storage_port: Any | None = None
-        self._ocr_port: Any | None = None
-        self._stamp_port: Any | None = None
-        self._pii_port: Any | None = None
-        self._index_port: Any | None = None
-
-    @property
-    def ledger_port(self) -> Any:
-        """Get or create ledger port adapter."""
-        if self._ledger_port is None:
-            # Create file-based audit ledger adapter
-            audit_path = self.settings.get_audit_path()
-            self._ledger_port = AuditLedger(audit_path) if self.settings.audit_enabled else NoOpLedger()
-        return self._ledger_port
-
-    @property
-    def storage_port(self) -> Any:
-        """Get or create storage port adapter."""
-        if self._storage_port is None:
-            # TODO: Create filesystem storage adapter
-            # For now, return placeholder
-            self._storage_port = None
-        return self._storage_port
-
-    @property
-    def ocr_port(self) -> Any:
-        """Get or create OCR port adapter."""
-        if self._ocr_port is None:
-            # TODO: Create OCR adapter based on settings.ocr_provider
-            # Options: tesseract, paddle, deepseek
-            self._ocr_port = None
-        return self._ocr_port
-
-    @property
-    def stamp_port(self) -> Any:
-        """Get or create PDF stamping port adapter."""
-        if self._stamp_port is None:
-            # TODO: Create PyMuPDF stamper adapter
-            self._stamp_port = None
-        return self._stamp_port
-
-    @property
-    def pii_port(self) -> Any:
-        """Get or create PII detection port adapter."""
-        if self._pii_port is None:
-            # TODO: Create Presidio PII detector adapter
-            self._pii_port = None
-        return self._pii_port
-
-    @property
-    def index_port(self) -> Any:
-        """Get or create search index port adapter."""
-        if self._index_port is None:
-            # TODO: Create Tantivy index adapter
-            self._index_port = None
-        return self._index_port
-
-    def get_m1_pipeline(self) -> M1Pipeline:
-        """Create M1 pipeline service with dependencies.
-
-        Returns:
-            Fully-wired M1Pipeline instance
-        """
-        return M1Pipeline(
-            ledger_port=self.ledger_port,
-            storage_port=self.storage_port,
-            ocr_port=self.ocr_port,
-            stamp_port=self.stamp_port,
-            pii_port=self.pii_port,
-            index_port=self.index_port,
-        )
-
-    def get_report_service(self) -> ReportService:
-        """Create report service with dependencies.
-
-        Returns:
-            Fully-wired ReportService instance
-        """
-        return ReportService(
-            storage_port=self.storage_port,
-            ledger_port=self.ledger_port,
-        )
-
-    def get_redaction_service(self) -> RedactionService:
-        """Create redaction service with dependencies.
-
-        Returns:
-            Fully-wired RedactionService instance
-        """
-        return RedactionService(
-            pii_port=self.pii_port,
-            stamp_port=self.stamp_port,
-            storage_port=self.storage_port,
-            ledger_port=self.ledger_port,
-        )
-
-    def get_pack_service(self) -> PackService:
-        """Create pack service with dependencies.
-
-        Returns:
-            Fully-wired PackService instance
-        """
-        return PackService(
-            storage_port=self.storage_port,
-            ledger_port=self.ledger_port,
-        )
+    settings: Settings
+    pipeline: M1Pipeline
+    report_service: ReportService
+    redaction_service: RedactionService
+    pack_service: PackService
+    audit_service: AuditService
+    ledger_port: LedgerPort
+    storage_port: StoragePort
+    discovery_port: DiscoveryPort
+    deduper_port: DeduperPort | None
+    redaction_planner: RedactionPlannerPort
+    bates_planner: BatesPlannerPort
+    pack_port: PackPort
+    index_port: IndexPort
+    offline_gate: OfflineModeGate
 
 
 class NoOpLedger:
-    """No-operation ledger for when auditing is disabled."""
+    """Ledger implementation that drops all writes."""
 
-    def log(self, **kwargs: Any) -> None:
-        """No-op log method."""
-        pass
+    def log(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    def append(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - compatibility alias
+        return None
+
+    def read_all(self) -> list[Any]:
+        return []
 
     def verify(self) -> bool:
-        """Always return True for no-op ledger."""
         return True
 
 
-def create_container(settings: Settings | None = None) -> Container:
-    """Create dependency injection container.
+class StubIndexAdapter(IndexPort):
+    """Placeholder index adapter used until Tantivy wiring lands."""
 
-    Args:
-        settings: Application settings (uses default if None)
+    def add_document(self, path: str, text: str, metadata: dict) -> None:  # pragma: no cover - stub
+        raise RuntimeError("Search indexing not yet implemented for offline bootstrap.")
 
-    Returns:
-        Container instance
-    """
-    from rexlit.config import get_settings
+    def search(self, query: str, *, limit: int = 10, filters: dict | None = None):
+        raise RuntimeError("Search indexing not yet implemented for offline bootstrap.")
 
-    if settings is None:
-        settings = get_settings()
+    def get_custodians(self) -> set[str]:
+        return set()
 
-    return Container(settings)
+    def get_doctypes(self) -> set[str]:
+        return set()
+
+    def commit(self) -> None:
+        return None
+
+
+class TantivyIndexAdapter(IndexPort):
+    """Tantivy-backed index adapter with optional dense retrieval support."""
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+
+    def add_document(self, path: str, text: str, metadata: dict) -> None:  # pragma: no cover - adapter writes via build
+        raise NotImplementedError("Use build() to create Tantivy indexes.")
+
+    def build(
+        self,
+        source: Path,
+        *,
+        rebuild: bool = False,
+        dense: bool = False,
+        **kwargs: Any,
+    ) -> int:
+        """Build Tantivy index and optional dense embeddings."""
+
+        if dense and not self._settings.online:
+            raise RuntimeError("Dense index build requires online mode (--online flag).")
+
+        index_dir = self._settings.get_index_dir()
+        dense_documents: list[dict[str, Any]] = []
+        collector = dense_documents if dense else None
+
+        document_count = build_index(
+            source,
+            index_dir,
+            rebuild=rebuild,
+            dense_collector=collector,
+            **kwargs,
+        )
+
+        if dense and dense_documents:
+            build_dense_index(
+                dense_documents,
+                index_dir=index_dir,
+            )
+
+        return document_count
+
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        filters: dict | None = None,  # noqa: ARG002 - filters reserved for future use
+        mode: str | None = None,
+    ) -> list[TantivySearchResult]:
+        strategy = (mode or "lexical").lower()
+
+        if strategy == "dense":
+            if not self._settings.online:
+                raise RuntimeError("Dense search requires online mode (--online flag).")
+
+            results, _ = dense_search_index(
+                self._settings.get_index_dir(),
+                query,
+                limit=limit,
+            )
+            return results
+
+        raise NotImplementedError("Lexical search not yet implemented for Tantivy adapter.")
+
+    def get_custodians(self) -> set[str]:
+        return load_custodians(self._settings.get_index_dir())
+
+    def get_doctypes(self) -> set[str]:
+        return load_doctypes(self._settings.get_index_dir())
+
+    def commit(self) -> None:
+        return None
+
+
+def _create_ledger(settings: Settings) -> LedgerPort | None:
+    if not settings.audit_enabled:
+        return None
+
+    ledger = AuditLedger(
+        settings.get_audit_path(),
+        hmac_key=settings.get_audit_hmac_key(),
+        fsync_interval=settings.audit_fsync_interval,
+    )
+    # Compatibility alias for legacy call sites
+    setattr(ledger, "append", ledger.log)
+    return ledger
+
+
+def bootstrap_application(settings: Settings | None = None) -> ApplicationContainer:
+    """Instantiate adapters and services for CLI consumption."""
+
+    active_settings = settings or get_settings()
+
+    offline_gate = OfflineModeGate.from_settings(active_settings)
+
+    storage = FileSystemStorageAdapter()
+    discovery = IngestDiscoveryAdapter()
+    deduper = HashDeduper()
+    redaction_planner = JSONLineRedactionPlanner(settings=active_settings)
+    bates_planner = SequentialBatesPlanner(settings=active_settings)
+    pack_adapter = ZipPackager(active_settings.get_data_dir() / "packs")
+
+    ledger = _create_ledger(active_settings)
+    ledger_for_services: LedgerPort = ledger or NoOpLedger()  # type: ignore[assignment]
+
+    pipeline = M1Pipeline(
+        settings=active_settings,
+        discovery_port=discovery,
+        storage_port=storage,
+        redaction_planner=redaction_planner,
+        bates_planner=bates_planner,
+        pack_port=pack_adapter,
+        offline_gate=offline_gate,
+        deduper_port=deduper,
+        ledger_port=ledger,
+    )
+
+    report_service = ReportService(storage_port=storage, ledger_port=ledger_for_services)
+    redaction_service = RedactionService(
+        pii_port=None,
+        stamp_port=None,
+        storage_port=storage,
+        ledger_port=ledger_for_services,
+        settings=active_settings,
+    )
+    pack_service = PackService(storage_port=storage, ledger_port=ledger_for_services)
+    audit_service = AuditService(ledger=ledger)
+
+    return ApplicationContainer(
+        settings=active_settings,
+        pipeline=pipeline,
+        report_service=report_service,
+        redaction_service=redaction_service,
+        pack_service=pack_service,
+        audit_service=audit_service,
+        ledger_port=ledger if ledger is not None else ledger_for_services,
+        storage_port=storage,
+        discovery_port=discovery,
+        deduper_port=deduper,
+        redaction_planner=redaction_planner,
+        bates_planner=bates_planner,
+        pack_port=pack_adapter,
+        index_port=StubIndexAdapter(),
+        offline_gate=offline_gate,
+    )
+
+
+# Backwards-compatible alias used by older callers/tests
+def create_container(settings: Settings | None = None) -> ApplicationContainer:
+    return bootstrap_application(settings=settings)
+
+
+# Public API expected by CLI/tests
+def bootstrap_application_container(settings: Settings | None = None) -> ApplicationContainer:
+    """Alias retained for IDE snippets."""
+
+    return bootstrap_application(settings=settings)

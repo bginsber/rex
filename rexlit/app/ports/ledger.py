@@ -1,6 +1,21 @@
 """Ledger port interface for audit trail operations."""
 
-from typing import Protocol, Any
+from typing import Any, Protocol
+
+from pydantic import BaseModel, Field
+
+
+class AuditRecord(BaseModel):
+    """Normalized view of an audit ledger entry."""
+
+    timestamp: str = Field(..., description="ISO-8601 timestamp")
+    operation: str = Field(..., description="Operation name recorded in the ledger")
+    inputs: list[str] = Field(default_factory=list, description="Input identifiers for the event")
+    outputs: list[str] = Field(
+        default_factory=list, description="Output identifiers or artifact paths for the event"
+    )
+    args: dict[str, Any] = Field(default_factory=dict, description="Additional parameters")
+    versions: dict[str, str] | None = Field(default=None, description="Tool versions (optional)")
 
 
 class LedgerPort(Protocol):
@@ -39,10 +54,10 @@ class LedgerPort(Protocol):
         """
         ...
 
-    def read_all(self) -> list[dict[str, Any]]:
+    def read_all(self) -> list[AuditRecord]:
         """Read all audit entries.
 
         Returns:
-            List of audit entry dictionaries
+            List of audit entry DTOs
         """
         ...

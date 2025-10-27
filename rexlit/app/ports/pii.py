@@ -69,3 +69,8 @@ class PIIPort(Protocol):
             List of entity type names
         """
         ...
+
+    def requires_online(self) -> bool:
+        """Return True when adapter needs network access."""
+
+        ...
