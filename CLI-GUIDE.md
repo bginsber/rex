@@ -106,13 +106,17 @@ rexlit index build PATH [OPTIONS]
 
 - `PATH` - Root directory containing documents (required)
 
-#### Options
+#### Options (core)
 
-- `--index-dir DIR` - Index output directory (default: `~/.local/share/rexlit/index`)
 - `--rebuild` - Delete and rebuild existing index
-- `--max-workers N` - Number of parallel workers (default: CPU count - 1)
-- `--no-progress` - Disable progress output
-- `--batch-size N` - Documents per batch (default: 100)
+
+#### Options (dense retrieval)
+
+- `--dense` - Build Kanon 2 dense embeddings + HNSW (requires `--online`)
+- `--dim INT` - Matryoshka output dimension (default: 768)
+- `--dense-batch INT` - Embedding request batch size (default: 32)
+- `--isaacus-api-key TEXT` - Override `ISAACUS_API_KEY`
+- `--isaacus-api-base TEXT` - Self-hosted Isaacus endpoint
 
 #### Examples
 
@@ -125,9 +129,6 @@ rexlit index build /docs --rebuild
 
 # Control parallelism
 rexlit index build /docs --max-workers 4
-
-# Custom index location
-rexlit index build /docs --index-dir /mnt/fast-ssd/index
 
 # Silent mode
 rexlit index build /docs --no-progress
@@ -183,12 +184,17 @@ rexlit index search QUERY [OPTIONS]
 
 - `QUERY` - Search query string (required)
 
-#### Options
+#### Options (core)
 
-- `--index-dir DIR` - Index directory (default: `~/.local/share/rexlit/index`)
 - `--limit N` - Maximum results to return (default: 10)
 - `--json` - Output results as JSON
-- `--show-metadata` - Include metadata in output
+
+#### Options (dense/hybrid)
+
+- `--mode [lexical|dense|hybrid]` - Retrieval strategy (dense/hybrid require `--online`)
+- `--dim INT` - Embedding dimension for query/dense search (default: 768)
+- `--isaacus-api-key TEXT` - Override `ISAACUS_API_KEY`
+- `--isaacus-api-base TEXT` - Self-hosted Isaacus endpoint
 
 #### Examples
 
@@ -274,7 +280,6 @@ rexlit index stats [OPTIONS]
 
 #### Options
 
-- `--index-dir DIR` - Index directory (default: `~/.local/share/rexlit/index`)
 - `--json` - Output as JSON
 
 #### Examples

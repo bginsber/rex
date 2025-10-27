@@ -70,13 +70,13 @@ Run `pytest -v --no-cov` after installation to validate your environment.
    ```bash
    rexlit ingest ./sample-docs --manifest out/manifest.jsonl
    ```
-3. Build the Tantivy index:
+3. Build the Tantivy index (lexical only):
    ```bash
-   rexlit index build ./sample-docs --index-dir out/index
+   rexlit index build ./sample-docs
    ```
-4. Search across the corpus:
+4. Search across the corpus (lexical):
    ```bash
-   rexlit index search out/index --query "privileged AND contract"
+   rexlit index search "privileged AND contract"
    ```
 5. Verify the audit chain before handing evidence to counsel:
    ```bash
@@ -105,16 +105,9 @@ rexlit ingest /evidence/incoming \
 Create or update a Tantivy index with parallel worker pools.
 
 ```bash
-rexlit index build /evidence/incoming \
-  --index-dir out/index \
-  --workers 6 \
-  --batch-size 100 \
-  --commit-every 1000
+rexlit index build /evidence/incoming
 ```
 
-- `--workers`: Override default worker pool (defaults to `cpu_count() - 1`).
-- `--batch-size`: Number of documents processed per worker chunk.
-- `--commit-every`: Frequency of persisting Tantivy writes.
 - `--dense`: Enable Kanon 2 dense embeddings + HNSW (requires `--online` or `REXLIT_ONLINE=1`).
 - `--dim`: Matryoshka dimension for Kanon 2 (`1792`, `1024`, `768`, `512`, `256`; default `768`).
 - `--dense-batch`: Batch size for embedding RPCs (default `32`).
@@ -126,16 +119,13 @@ rexlit index build /evidence/incoming \
 Query the index with rich boolean syntax and optional structured output.
 
 ```bash
-rexlit index search out/index \
-  --query '"duty to preserve" AND custodian:anderson' \
-  --limit 20 \
-  --json
+rexlit index search '"duty to preserve" AND custodian:anderson' --limit 20 --json
 ```
 
-- `--limit`: Maximum results to return (default: 10).
-- `--json`: Emit machine-friendly JSON for automation.
-- `--mode`: Choose `lexical`, `dense`, or `hybrid` scoring (dense/hybrid require online mode).
-- `--dim`: Matryoshka dimension for dense and hybrid queries (default `768`).
+- `--limit`: Maximum results to return (default: 10)
+- `--json`: Emit machine-friendly JSON for automation
+- `--mode`: Choose `lexical`, `dense`, or `hybrid` scoring (dense/hybrid require online mode)
+- `--dim`: Matryoshka dimension for dense and hybrid queries (default `768`)
 - `--isaacus-api-key` / `--isaacus-api-base`: Optional overrides mirroring the index build flags.
 
 #### Isaacus configuration
@@ -160,6 +150,38 @@ rexlit audit verify --ledger out/audit/log.jsonl
 ```
 
 - Returns non-zero exit code if tampering or truncation is detected.
+
+## Dense/Hybrid Search (Kanon 2)
+
+Dense retrieval augments BM25 with Kanon 2 embeddings and an HNSW vector index. Hybrid search fuses lexical and dense rankings using Reciprocal Rank Fusion (RRF).
+
+Prerequisites:
+- Online mode enabled: `--online` flag or `REXLIT_ONLINE=1`
+- `ISAACUS_API_KEY` set (or pass `--isaacus-api-key`)
+
+Build dense materials:
+```bash
+rexlit --online index build ./sample-docs --dense --dim 768
+```
+
+Search with hybrid scoring:
+```bash
+rexlit --online index search "privileged communication" --mode hybrid --dim 768
+```
+
+Artifacts:
+- HNSW index: `~/.local/share/rexlit/index/dense/kanon2_<dim>.hnsw`
+- Metadata JSON: adjacent `*.meta.json` with doc IDs and fields
+
+Memory guidelines (approximate):
+- 10K docs @ 768d ≈ 94 MB total (Tantivy + HNSW)
+- 100K docs @ 768d ≈ 937 MB total
+
+Notes:
+- Dense build/search is network-bound and respects offline gate.
+- Once built, searches can run offline using the persisted HNSW index for vector lookup (query embeddings still require online).
+
+See also: `docs/SELF_HOSTED_EMBEDDINGS.md` and `docs/adr/0007-dense-retrieval-design.md`.
 
 ## Phase 1 Deliverables (M0)
 

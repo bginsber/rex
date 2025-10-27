@@ -11,6 +11,7 @@ System design and implementation details for RexLit M0.
 - [Performance Optimizations](#performance-optimizations)
 - [Security Design](#security-design)
 - [Design Decisions](#design-decisions)
+- [Dense Retrieval Architecture](#dense-retrieval-architecture)
 
 ---
 
@@ -241,6 +242,50 @@ class IndexMetadata:
 - Ranked results by relevance
 - JSON output mode
 - Metadata filtering
+
+---
+
+## Dense Retrieval Architecture
+
+RexLit adds dense and hybrid retrieval while preserving the ports-and-adapters (hexagonal) architecture.
+
+Key concepts:
+- **EmbeddingPort** (`rexlit/app/ports/embedding.py`): protocol for text embeddings
+- **VectorStorePort** (`rexlit/app/ports/vector_store.py`): protocol for ANN storage
+- **Kanon2Adapter** (`rexlit/app/adapters/kanon2.py`): Isaacus-backed embedding adapter
+- **HNSWAdapter** (`rexlit/app/adapters/hnsw.py`): disk-backed HNSW adapter
+
+Data flow (build):
+```
+index build --dense
+  → collect dense-ready docs (sha256, path, text)
+  → EmbeddingPort.embed_documents([...])  # batched RPCs
+  → VectorStorePort.build(vectors, ids, metadata)
+  → persist .hnsw + .meta.json
+  → audit: operation=embedding_batch (latency p50/p95/p99, tokens)
+```
+
+Data flow (search):
+```
+index search --mode dense|hybrid
+  → if dense: embed query via EmbeddingPort.embed_query()
+           → VectorStorePort.query(query_vec)
+  → if hybrid: BM25 + dense → Reciprocal Rank Fusion (k=60)
+```
+
+Online/offline boundary:
+- The `OfflineModeGate` enforces `--online`/`REXLIT_ONLINE` for network calls.
+- Dense index build and dense/hybrid search require online mode (for embedding RPCs).
+- Once HNSW is built, loading/querying the vector index is fully offline.
+
+Bootstrap wiring:
+- `rexlit/bootstrap.py` instantiates optional `embedder` (Kanon2Adapter) and a `vector_store_factory` (HNSWAdapter) when online.
+- `TantivyIndexAdapter` delegates dense/hybrid operations to index/search helpers with injected ports.
+
+Rationale:
+- Ports allow swapping providers (future: Ollama/OpenAI) and deterministic testing.
+- HNSW persists vectors on disk for offline reopen and fast cosine search.
+- RRF fusion is robust across corpora without fragile normalization.
 
 ---
 
