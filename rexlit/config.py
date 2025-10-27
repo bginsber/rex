@@ -82,9 +82,20 @@ class Settings(BaseSettings):
         description="Enable append-only audit ledger",
     )
 
+    audit_fsync_interval: int = Field(
+        default=5,
+        ge=1,
+        description="Number of audit entries between fsync operations (1 = fsync every entry).",
+    )
+
     pii_key_path: Path | None = Field(
         default=None,
         description="Location of the symmetric key used to encrypt PII findings",
+    )
+
+    redaction_plan_key_path: Path | None = Field(
+        default=None,
+        description="Location of the key used to encrypt redaction plans",
     )
 
     audit_hmac_key_path: Path | None = Field(
@@ -153,6 +164,15 @@ class Settings(BaseSettings):
             self.pii_key_path
             if self.pii_key_path is not None
             else self.get_config_dir() / "pii.key"
+        )
+        return load_or_create_fernet_key(key_path)
+
+    def get_redaction_plan_key(self) -> bytes:
+        """Return the Fernet key used to encrypt redaction plans."""
+        key_path = (
+            self.redaction_plan_key_path
+            if self.redaction_plan_key_path is not None
+            else self.get_config_dir() / "redaction-plans.key"
         )
         return load_or_create_fernet_key(key_path)
 
