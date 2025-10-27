@@ -11,6 +11,7 @@ import pytest
 
 from rexlit.bootstrap import bootstrap_application
 from rexlit.config import Settings
+from rexlit.utils.crypto import decrypt_blob, encrypt_blob
 
 
 def test_bootstrap_application_provides_services(temp_dir: Path) -> None:
@@ -81,15 +82,21 @@ def test_pipeline_run_emits_manifest(temp_dir: Path) -> None:
     datetime.fromisoformat(record["produced_at"])
     assert result.notes
 
-    redaction_plan = sample_doc.with_suffix(".redaction-plan.jsonl")
+    redaction_plan = sample_doc.with_suffix(".redaction-plan.enc")
     assert redaction_plan.exists()
-    redaction_entry = json.loads(redaction_plan.read_text(encoding="utf-8").splitlines()[0])
+    plan_key = settings.get_redaction_plan_key()
+    token = redaction_plan.read_text(encoding="utf-8").splitlines()[0]
+    redaction_entry = json.loads(
+        decrypt_blob(token.encode("utf-8"), key=plan_key).decode("utf-8")
+    )
     assert redaction_entry["document"] == str(sample_doc.resolve())
     assert redaction_entry["sha256"] == result.documents[0].sha256
+    assert len(redaction_entry["plan_id"]) == 64
     assert redaction_entry["schema_id"] == "redaction_plan"
     assert redaction_entry["schema_version"] == 1
     assert redaction_entry["producer"].startswith("rexlit-")
     datetime.fromisoformat(redaction_entry["produced_at"])
+    assert result.redaction_plan_ids[str(sample_doc.resolve())] == redaction_entry["plan_id"]
 
     bates_plan_path = settings.get_data_dir() / "bates" / "bates_plan.jsonl"
     assert bates_plan_path.exists()
@@ -133,3 +140,36 @@ def test_pipeline_manifest_rejects_duplicate_documents(temp_dir: Path) -> None:
         container.pipeline.run(documents_dir, manifest_path=manifest_path)
 
     assert "Duplicate SHA-256 detected" in str(excinfo.value)
+
+
+def test_pipeline_refuses_to_overwrite_tampered_redaction_plan(temp_dir: Path) -> None:
+    """Pipeline validates redaction plans before regenerating them."""
+
+    documents_dir = temp_dir / "docs"
+    documents_dir.mkdir()
+    sample_doc = documents_dir / "sample.txt"
+    sample_doc.write_text("sample content for pipeline tamper test")
+
+    settings = Settings(
+        data_dir=temp_dir / "data",
+        config_dir=temp_dir / "config",
+        audit_enabled=False,
+    )
+
+    container = bootstrap_application(settings=settings)
+    manifest_path = temp_dir / "out" / "manifest.jsonl"
+    container.pipeline.run(documents_dir, manifest_path=manifest_path)
+
+    plan_path = sample_doc.with_suffix(".redaction-plan.enc")
+    token = plan_path.read_text(encoding="utf-8").splitlines()[0]
+    key = settings.get_redaction_plan_key()
+    record = json.loads(decrypt_blob(token.encode("utf-8"), key=key).decode("utf-8"))
+    record["plan_id"] = "0" * 64  # Corrupt the deterministic fingerprint
+    payload = json.dumps(record, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    tampered = encrypt_blob(payload, key=key).decode("utf-8")
+    plan_path.write_text(tampered + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError) as excinfo:
+        container.pipeline.run(documents_dir, manifest_path=manifest_path)
+
+    assert "plan_id mismatch" in str(excinfo.value)
