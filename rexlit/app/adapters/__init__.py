@@ -8,6 +8,8 @@ from .dedupe import HashDeduper
 from .storage import FileSystemStorageAdapter
 from .pack import ZipPackager
 from .redaction import JSONLineRedactionPlanner, PassthroughRedactionApplier
+from .kanon2 import Kanon2Adapter
+from .hnsw import HNSWAdapter
 
 __all__ = [
     "SequentialBatesPlanner",
@@ -17,4 +19,6 @@ __all__ = [
     "ZipPackager",
     "JSONLineRedactionPlanner",
     "PassthroughRedactionApplier",
+    "Kanon2Adapter",
+    "HNSWAdapter",
 ]
