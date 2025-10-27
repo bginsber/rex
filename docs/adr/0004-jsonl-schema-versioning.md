@@ -171,7 +171,7 @@ def read_manifest(record: dict) -> Manifest:
 ```bash
 # Validate manifest against schema
 python -c "from rexlit.utils.schema import validate_file; \
-    valid, invalid = validate_file('manifest.jsonl', 'manifest', 1); \
+    valid, invalid = validate_file('manifest.jsonl', 'manifest', 1, raise_on_error=False); \
     print(f'Valid: {valid}, Invalid: {invalid}')"
 ```
 
