@@ -2,7 +2,9 @@
 
 import hashlib
 from pathlib import Path
-from typing import Iterable, TypeVar
+from typing import Any, Iterable, TypeVar
+
+from rexlit.utils.hashing import compute_sha256_file
 
 T = TypeVar("T")
 
@@ -28,8 +30,11 @@ def deterministic_sort_paths(paths: Iterable[Path]) -> list[Path]:
         """Compute sort key: (content_hash, path_str)."""
         # Compute content hash if file exists
         if path.is_file():
-            with open(path, "rb") as f:
-                content_hash = hashlib.sha256(f.read()).hexdigest()
+            try:
+                content_hash = compute_sha256_file(path)
+            except (OSError, ValueError):
+                # Fall back to deterministic path hashing if file cannot be read
+                content_hash = hashlib.sha256(str(path).encode()).hexdigest()
         else:
             # For non-files (directories, missing files), use path hash
             content_hash = hashlib.sha256(str(path).encode()).hexdigest()
@@ -104,3 +109,22 @@ def verify_determinism(func, inputs: Iterable[T], runs: int = 3) -> bool:
     # Check all results are identical
     first_result = results[0]
     return all(r == first_result for r in results)
+
+
+def document_sort_key(document: Any) -> tuple[str, str]:
+    """Return deterministic sort key for document-like objects."""
+
+    if isinstance(document, dict):
+        sha = document.get("sha256", "")
+        path = document.get("path", "")
+    else:
+        sha = getattr(document, "sha256", "")
+        path = getattr(document, "path", "")
+
+    return (str(sha), str(path))
+
+
+def deterministic_order_documents(documents: Iterable[T]) -> list[T]:
+    """Sort documents deterministically by (sha256, path)."""
+
+    return sorted(list(documents), key=document_sort_key)
