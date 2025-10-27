@@ -345,8 +345,10 @@ def test_build_index_populates_dense_collector(
         def submit(self, fn, arg):
             return DummyFuture(fn, arg)
 
+        def map(self, fn, iterable, chunksize=1):
+            return (fn(item) for item in iterable)
+
     monkeypatch.setattr("rexlit.index.build.ProcessPoolExecutor", DummyExecutor)
-    monkeypatch.setattr("rexlit.index.build.as_completed", lambda futures: list(futures))
 
     build_index(
         doc_dir,

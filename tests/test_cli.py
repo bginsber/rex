@@ -64,6 +64,10 @@ def test_cli_ingest_emits_manifest_and_logs(
     audit_lines = [line for line in audit_path.read_text().splitlines() if line.strip()]
     assert audit_lines
     audit_entry = json.loads(audit_lines[-1])
-    assert audit_entry["operation"] == "ingest"
-    assert audit_entry["inputs"] == [str(docs_dir)]
-    assert len(audit_entry["outputs"]) == 1
+    assert audit_entry["operation"] == "m1_pipeline"
+    assert [Path(path).resolve() for path in audit_entry["inputs"]] == [docs_dir.resolve()]
+    outputs = {Path(output).resolve() for output in audit_entry["outputs"]}
+    assert manifest_path.resolve() in outputs
+    assert any(output.name.endswith(".redaction-plan.enc") for output in outputs)
+    assert "redaction_plans" in audit_entry["args"]
+    assert audit_entry["args"]["redaction_plans"]

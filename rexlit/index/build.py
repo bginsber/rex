@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import cpu_count
 from pathlib import Path
 from typing import TypedDict
@@ -149,13 +149,9 @@ def build_index(
     if max_workers is None:
         max_workers = max(1, cpu_count() - 1)
 
-    # Collect documents for processing
-    # Note: We need to materialize the iterator for batching
-    documents = list(discover_documents(root, recursive=True))
-    total_docs = len(documents)
-
     if show_progress:
-        print(f"Found {total_docs} documents. Processing with {max_workers} workers...")
+        print(f"Discovering and indexing documents in {root} (streaming)...")
+        print(f"Processing with {max_workers} workers...")
 
     # Initialize index writer
     writer = index.writer(heap_size=200_000_000)  # 200MB heap for better performance
@@ -163,25 +159,28 @@ def build_index(
     # Track progress and performance
     indexed_count = 0
     skipped_count = 0
+    discovered_count = 0
     start_time = time.time()
+    commit_interval = max(1000, batch_size * 4)
+
+    def document_stream():
+        nonlocal discovered_count
+        for doc_meta in discover_documents(root, recursive=True):
+            discovered_count += 1
+            yield doc_meta
+
+    documents_iter = document_stream()
 
     # Process documents in parallel
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all documents for processing
-        future_to_doc = {
-            executor.submit(_process_document_worker, doc_meta): doc_meta
-            for doc_meta in documents
-        }
-
-        # Process completed futures as they finish
-        for future in as_completed(future_to_doc):
-            doc_meta = future_to_doc[future]
-
+        for result in executor.map(_process_document_worker, documents_iter, chunksize=batch_size):
             try:
-                result = future.result()
+                if not result:
+                    skipped_count += 1
+                    continue
 
                 # Check if processing had an error
-                if result and "error" in result:
+                if "error" in result:
                     skipped_count += 1
                     if show_progress:
                         print(f"Warning: Skipping {result['path']}: {result['error']}")
@@ -219,16 +218,15 @@ def build_index(
                     )
 
                 # Periodic commits for memory management
-                if indexed_count % 1000 == 0:
+                if indexed_count and indexed_count % commit_interval == 0:
                     writer.commit()
-                    writer = index.writer(heap_size=200_000_000)
 
                     if show_progress:
                         elapsed = time.time() - start_time
                         docs_per_sec = indexed_count / elapsed if elapsed > 0 else 0
                         print(
-                            f"Indexed {indexed_count}/{total_docs} documents "
-                            f"({docs_per_sec:.1f} docs/sec)"
+                            f"Indexed {indexed_count} documents "
+                            f"({docs_per_sec:.1f} docs/sec) — committed batch"
                         )
 
                 # Regular progress updates
@@ -236,15 +234,14 @@ def build_index(
                     elapsed = time.time() - start_time
                     docs_per_sec = indexed_count / elapsed if elapsed > 0 else 0
                     print(
-                        f"Indexed {indexed_count}/{total_docs} documents "
+                        f"Indexed {indexed_count} documents "
                         f"({docs_per_sec:.1f} docs/sec)"
                     )
 
-            except Exception as e:
-                # Handle unexpected errors during result processing
+            except Exception as e:  # pragma: no cover - defensive guard
                 skipped_count += 1
                 if show_progress:
-                    print(f"Warning: Error processing {doc_meta.path}: {e}")
+                    print(f"Warning: Error processing document: {e}")
                 continue
 
     # Final commit
@@ -259,6 +256,7 @@ def build_index(
 
     if show_progress:
         print(f"\nIndex complete:")
+        print(f"  - Discovered: {discovered_count} documents")
         print(f"  - Indexed: {indexed_count} documents")
         print(f"  - Skipped: {skipped_count} documents")
         print(f"  - Time: {elapsed:.1f} seconds")
