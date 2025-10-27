@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Iterable
 
-from rexlit.app.ports import BatesAssignment, BatesPlannerPort, DocumentRecord
+from rexlit.app.ports import BatesAssignment, BatesPlan, BatesPlannerPort, DocumentRecord
 from rexlit.config import Settings
+from rexlit.utils.deterministic import deterministic_order_documents
 from rexlit.utils.hashing import compute_sha256_file
 from rexlit.utils.jsonl import atomic_write_jsonl
 
@@ -19,8 +20,8 @@ class SequentialBatesPlanner(BatesPlannerPort):
         self._prefix = prefix
         self.last_plan_path: Path | None = None
 
-    def plan(self, documents: Iterable[DocumentRecord]) -> Iterator[BatesAssignment]:
-        sorted_docs = sorted(documents, key=lambda doc: (doc.sha256, doc.path))
+    def plan(self, documents: Iterable[DocumentRecord]) -> BatesPlan:
+        sorted_docs = deterministic_order_documents(documents)
 
         bates_dir = self._settings.get_data_dir() / "bates"
         bates_dir.mkdir(parents=True, exist_ok=True)
@@ -77,4 +78,4 @@ class SequentialBatesPlanner(BatesPlannerPort):
         )
 
         self.last_plan_path = plan_path
-        return iter(entries)
+        return BatesPlan(path=plan_path, assignments=entries)

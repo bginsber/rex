@@ -6,6 +6,7 @@ from collections import OrderedDict
 from typing import Iterable, Iterator
 
 from rexlit.app.ports import DeduperPort, DocumentRecord
+from rexlit.utils.deterministic import deterministic_order_documents
 
 
 class HashDeduper(DeduperPort):
@@ -14,7 +15,7 @@ class HashDeduper(DeduperPort):
     def dedupe(self, documents: Iterable[DocumentRecord]) -> Iterator[DocumentRecord]:
         """Yield the first instance of each unique document hash."""
 
-        ordered_docs = sorted(documents, key=lambda doc: (doc.sha256, doc.path))
+        ordered_docs = deterministic_order_documents(documents)
         unique: OrderedDict[str, DocumentRecord] = OrderedDict()
 
         for document in ordered_docs:
