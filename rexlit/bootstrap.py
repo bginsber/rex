@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from rexlit.app import M1Pipeline, PackService, RedactionService, ReportService
 from rexlit.app.adapters import (
@@ -26,6 +26,7 @@ from rexlit.app.ports import (
     RedactionPlannerPort,
     StoragePort,
 )
+from rexlit.app.ports import EmbeddingPort, VectorStorePort
 from rexlit.audit.ledger import AuditLedger
 from rexlit.config import Settings, get_settings
 from rexlit.index.build import build_dense_index, build_index
@@ -36,6 +37,7 @@ from rexlit.index.search import (
     get_doctypes as load_doctypes,
 )
 from rexlit.utils.offline import OfflineModeGate
+from rexlit.app.adapters import HNSWAdapter, Kanon2Adapter
 
 
 @dataclass(slots=True)
@@ -57,6 +59,9 @@ class ApplicationContainer:
     pack_port: PackPort
     index_port: IndexPort
     offline_gate: OfflineModeGate
+    # New: optional embedding/vector store wiring for dense search
+    embedder: EmbeddingPort | None
+    vector_store_factory: Callable[[Path, int], VectorStorePort] | None
 
 
 class NoOpLedger:
@@ -97,8 +102,20 @@ class StubIndexAdapter(IndexPort):
 class TantivyIndexAdapter(IndexPort):
     """Tantivy-backed index adapter with optional dense retrieval support."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        embedder: EmbeddingPort | None = None,
+        vector_store_factory: Callable[[Path, int], VectorStorePort] | None = None,
+        ledger_port: LedgerPort | None = None,
+        offline_gate: OfflineModeGate | None = None,
+    ) -> None:
         self._settings = settings
+        self._embedder = embedder
+        self._vector_store_factory = vector_store_factory
+        self._ledger_port = ledger_port
+        self._offline_gate = offline_gate or OfflineModeGate.from_settings(settings)
 
     def add_document(self, path: str, text: str, metadata: dict) -> None:  # pragma: no cover - adapter writes via build
         raise NotImplementedError("Use build() to create Tantivy indexes.")
@@ -112,26 +129,47 @@ class TantivyIndexAdapter(IndexPort):
         **kwargs: Any,
     ) -> int:
         """Build Tantivy index and optional dense embeddings."""
-
-        if dense and not self._settings.online:
-            raise RuntimeError("Dense index build requires online mode (--online flag).")
+        if dense:
+            self._offline_gate.require("Dense indexing")
 
         index_dir = self._settings.get_index_dir()
         dense_documents: list[dict[str, Any]] = []
         collector = dense_documents if dense else None
+        # Map passthrough kwargs for tantivy build
+        passthrough: dict[str, Any] = {}
+        for key in ("show_progress", "max_workers", "batch_size"):
+            if key in kwargs:
+                passthrough[key] = kwargs[key]
 
         document_count = build_index(
             source,
             index_dir,
             rebuild=rebuild,
             dense_collector=collector,
-            **kwargs,
+            **passthrough,
         )
 
         if dense and dense_documents:
+            dim = int(kwargs.get("dense_dim", 768))
+            dense_batch = int(kwargs.get("dense_batch_size", 32))
+            api_key = kwargs.get("dense_api_key")
+            api_base = kwargs.get("dense_api_base")
+
+            vector_store = (
+                self._vector_store_factory(index_dir, dim)
+                if self._vector_store_factory is not None
+                else None
+            )
             build_dense_index(
                 dense_documents,
                 index_dir=index_dir,
+                dim=dim,
+                batch_size=dense_batch,
+                api_key=api_key,
+                api_base=api_base,
+                embedder=self._embedder,
+                vector_store=vector_store,
+                ledger=self._ledger_port,
             )
 
         return document_count
@@ -141,19 +179,51 @@ class TantivyIndexAdapter(IndexPort):
         query: str,
         *,
         limit: int = 10,
-        filters: dict | None = None,  # noqa: ARG002 - filters reserved for future use
+        filters: dict | None = None,  # noqa: ARG002 - reserved for future use
         mode: str | None = None,
+        dim: int = 768,
+        api_key: str | None = None,
+        api_base: str | None = None,
     ) -> list[TantivySearchResult]:
         strategy = (mode or "lexical").lower()
 
         if strategy == "dense":
-            if not self._settings.online:
-                raise RuntimeError("Dense search requires online mode (--online flag).")
-
+            self._offline_gate.require("dense search")
+            vector_store = (
+                self._vector_store_factory(self._settings.get_index_dir(), dim)
+                if self._vector_store_factory is not None
+                else None
+            )
             results, _ = dense_search_index(
                 self._settings.get_index_dir(),
                 query,
                 limit=limit,
+                dim=dim,
+                api_key=api_key,
+                api_base=api_base,
+                embedder=self._embedder,
+                vector_store=vector_store,
+            )
+            return results
+
+        if strategy == "hybrid":
+            self._offline_gate.require("hybrid search")
+            vector_store = (
+                self._vector_store_factory(self._settings.get_index_dir(), dim)
+                if self._vector_store_factory is not None
+                else None
+            )
+            from rexlit.index.search import hybrid_search_index as _hybrid
+
+            results, _ = _hybrid(
+                self._settings.get_index_dir(),
+                query,
+                limit=limit,
+                dim=dim,
+                api_key=api_key,
+                api_base=api_base,
+                embedder=self._embedder,
+                vector_store=vector_store,
             )
             return results
 
@@ -237,8 +307,25 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
         redaction_planner=redaction_planner,
         bates_planner=bates_planner,
         pack_port=pack_adapter,
-        index_port=StubIndexAdapter(),
+        index_port=TantivyIndexAdapter(
+            active_settings,
+            embedder=(
+                None
+                if not active_settings.online
+                else _safe_init_embedder(offline_gate)
+            ),
+            vector_store_factory=(
+                lambda index_dir, dim: HNSWAdapter(
+                    index_path=Path(index_dir) / "dense" / f"kanon2_{int(dim)}.hnsw",
+                    dimensions=int(dim),
+                )
+            ),
+            ledger_port=ledger_for_services,
+            offline_gate=offline_gate,
+        ),
         offline_gate=offline_gate,
+        embedder=(None if not active_settings.online else _safe_init_embedder(offline_gate)),
+        vector_store_factory=(lambda index_dir, dim: HNSWAdapter(index_path=Path(index_dir) / "dense" / f"kanon2_{int(dim)}.hnsw", dimensions=int(dim))),
     )
 
 
@@ -252,3 +339,11 @@ def bootstrap_application_container(settings: Settings | None = None) -> Applica
     """Alias retained for IDE snippets."""
 
     return bootstrap_application(settings=settings)
+
+
+# Internal helper to construct the embedder without failing bootstrap
+def _safe_init_embedder(offline_gate: OfflineModeGate) -> EmbeddingPort | None:
+    try:
+        return Kanon2Adapter(offline_gate=offline_gate)
+    except Exception:
+        return None

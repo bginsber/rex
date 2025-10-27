@@ -10,8 +10,9 @@ import tantivy
 from pydantic import BaseModel, Field
 
 from rexlit.index.build import create_schema
-from rexlit.index.hnsw_store import HNSWStore
-from rexlit.index.kanon2_embedder import QUERY_TASK, embed_texts
+from rexlit.index.hnsw_store import HNSWStore  # compatibility shim
+from rexlit.index.kanon2_embedder import QUERY_TASK, embed_texts  # compatibility shim
+from rexlit.app.ports import EmbeddingPort, VectorStorePort
 from rexlit.index.metadata import IndexMetadata
 
 
@@ -114,6 +115,8 @@ def dense_search_index(
     dim: int = 768,
     api_key: str | None = None,
     api_base: str | None = None,
+    embedder: EmbeddingPort | None = None,
+    vector_store: VectorStorePort | None = None,
 ) -> tuple[list[SearchResult], dict[str, Any]]:
     """Run a dense-only search using the Kanon 2 HNSW index."""
     if not query.strip():
@@ -121,33 +124,57 @@ def dense_search_index(
 
     dense_dir = index_dir / "dense"
     store_path = dense_dir / f"kanon2_{dim}.hnsw"
-    store = HNSWStore(dim=dim, index_path=store_path)
-    store.load()
 
-    embedding = embed_texts(
-        [query],
-        task=QUERY_TASK,
-        dimensions=dim,
-        api_key=api_key,
-        api_base=api_base,
-    )
+    if vector_store is None:
+        store = HNSWStore(dim=dim, index_path=store_path)
+        store.load()
+        resolve_meta = store.resolve_metadata
+        def _query(v: np.ndarray) -> list:
+            return store.query(v, top_k=limit)
+    else:
+        vs = vector_store
+        vs.load()
+        resolve_meta = lambda ident: getattr(vs, "_doc_meta", {}).get(ident) if hasattr(vs, "_doc_meta") else {}  # type: ignore[assignment]
+        def _query(v: np.ndarray) -> list:
+            return vs.query(v, top_k=limit)
 
-    if not embedding.embeddings:
-        return [], {"latency_ms": embedding.latency_ms, "usage": embedding.usage or {}}
+    if embedder is not None:
+        emb_vec = embedder.embed_query(query, dimensions=dim)
+        embeddings = [emb_vec] if emb_vec else []
+        telemetry = {"usage": {}}
+        latency = 0.0
+    else:
+        embedding = embed_texts(
+            [query],
+            task=QUERY_TASK,
+            dimensions=dim,
+            api_key=api_key,
+            api_base=api_base,
+        )
+        embeddings = embedding.embeddings
+        telemetry = {"usage": embedding.usage or {}}
+        latency = embedding.latency_ms
 
-    query_vector = np.asarray(embedding.embeddings[0], dtype=np.float32)
-    hits = store.query(query_vector, top_k=limit)
+    if not embeddings:
+        return [], {"latency_ms": latency, "usage": telemetry.get("usage", {})}
+
+    query_vector = np.asarray(embeddings[0], dtype=np.float32)
+    hits = _query(query_vector)
 
     results: list[SearchResult] = []
     for rank, hit in enumerate(hits, 1):
-        metadata = store.resolve_metadata(hit.identifier) or {}
+        # Handle both shim and adapter hits
+        if hasattr(hit, "metadata"):
+            metadata = getattr(hit, "metadata") or {}
+        else:
+            metadata = resolve_meta(hit.identifier) or {}
         result = SearchResult(
             path=metadata.get("path", ""),
             sha256=metadata.get("sha256", hit.identifier),
             custodian=metadata.get("custodian"),
             doctype=metadata.get("doctype"),
-            score=hit.score,
-            dense_score=hit.score,
+            score=float(getattr(hit, "score", 0.0)),
+            dense_score=float(getattr(hit, "score", 0.0)),
             lexical_score=None,
             strategy="dense",
             snippet=None,
@@ -156,8 +183,8 @@ def dense_search_index(
         results.append(result)
 
     telemetry = {
-        "latency_ms": embedding.latency_ms,
-        "usage": embedding.usage or {},
+        "latency_ms": latency,
+        "usage": telemetry.get("usage", {}),
         "dim": dim,
         "hits": len(results),
     }
@@ -178,6 +205,8 @@ def hybrid_search_index(
     api_key: str | None = None,
     api_base: str | None = None,
     fusion_k: int = 60,
+    embedder: EmbeddingPort | None = None,
+    vector_store: VectorStorePort | None = None,
 ) -> tuple[list[SearchResult], dict[str, Any]]:
     """Combine lexical and dense scores using Reciprocal Rank Fusion."""
     if not query.strip():
@@ -192,6 +221,8 @@ def hybrid_search_index(
         dim=dim,
         api_key=api_key,
         api_base=api_base,
+        embedder=embedder,
+        vector_store=vector_store,
     )
 
     fusion: dict[str, dict[str, Any]] = {}

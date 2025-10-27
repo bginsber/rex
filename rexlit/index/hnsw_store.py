@@ -1,4 +1,9 @@
-"""Disk-backed HNSW index for dense retrieval."""
+"""Disk-backed HNSW index for dense retrieval (compatibility shim).
+
+Deprecated: use `rexlit.app.ports.vector_store.VectorStorePort` and
+`rexlit.app.adapters.hnsw.HNSWAdapter` instead. This class remains as a shim
+to avoid breaking existing imports during the refactor.
+"""
 
 from __future__ import annotations
 
@@ -35,6 +40,12 @@ class HNSWStore:
         *,
         space: str = "cosine",
     ) -> None:
+        import warnings
+        warnings.warn(
+            "rexlit.index.hnsw_store.HNSWStore is deprecated; use HNSWAdapter",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.dim = dim
         self.index_path = Path(index_path)
         self.space = space
