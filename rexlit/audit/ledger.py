@@ -99,7 +99,13 @@ class AuditLedger:
     tamper-evidence and sealed with HMAC signatures for tamper detection.
     """
 
-    def __init__(self, ledger_path: Path, *, hmac_key: bytes | None = None) -> None:
+    def __init__(
+        self,
+        ledger_path: Path,
+        *,
+        hmac_key: bytes | None = None,
+        fsync_interval: int = 1,
+    ) -> None:
         """Initialize audit ledger.
 
         Args:
@@ -118,6 +124,8 @@ class AuditLedger:
         self._last_hash = GENESIS_HASH
         self._last_sequence = 0
         self._last_signature = GENESIS_SIGNATURE
+        self._fsync_interval = max(1, fsync_interval)
+        self._entries_since_fsync = 0
 
         self._bootstrap_state()
 
@@ -150,7 +158,7 @@ class AuditLedger:
 
         if metadata is None:
             last_hash = None if self._last_sequence == 0 else self._last_hash
-            self._write_metadata(self._last_sequence, last_hash)
+            self._write_metadata(self._last_sequence, last_hash, fsync=True)
 
     def _read_entries(self) -> list[AuditEntry]:
         """Load ledger entries from disk."""
@@ -192,7 +200,7 @@ class AuditLedger:
         payload = f"{last_sequence}:{last_hash or GENESIS_HASH}".encode("utf-8")
         return hmac.new(self._hmac_key, payload, hashlib.sha256).hexdigest()
 
-    def _write_metadata(self, last_sequence: int, last_hash: str | None) -> None:
+    def _write_metadata(self, last_sequence: int, last_hash: str | None, *, fsync: bool = True) -> None:
         """Persist metadata describing the current tip of the ledger."""
         payload = {
             "version": 1,
@@ -205,7 +213,8 @@ class AuditLedger:
         fd = os.open(self._metadata_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
             os.write(fd, data)
-            os.fsync(fd)
+            if fsync:
+                os.fsync(fd)
         finally:
             os.close(fd)
 
@@ -280,17 +289,23 @@ class AuditLedger:
         entry.signature = self._compute_signature(entry, self._last_signature)
 
         # Append to ledger with fsync for legal defensibility
+        should_fsync = False
+
         with open(self.ledger_path, "a", encoding="utf-8") as fh:
             fh.write(entry.model_dump_json() + "\n")
             fh.flush()
-            os.fsync(fh.fileno())
+            self._entries_since_fsync += 1
+            if self._entries_since_fsync >= self._fsync_interval:
+                os.fsync(fh.fileno())
+                should_fsync = True
+                self._entries_since_fsync = 0
 
         # Update last state for next entry
         self._last_sequence = sequence
         self._last_hash = entry.entry_hash or GENESIS_HASH
         self._last_signature = entry.signature or GENESIS_SIGNATURE
 
-        self._write_metadata(sequence, entry.entry_hash)
+        self._write_metadata(sequence, entry.entry_hash, fsync=should_fsync)
 
         return entry
 
