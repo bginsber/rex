@@ -1,5 +1,9 @@
 """Append-only audit ledger with deterministic hashing for chain-of-custody."""
 
+from __future__ import annotations
+
+import hashlib
+import hmac
 import json
 import os
 from datetime import UTC, datetime
@@ -9,7 +13,11 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from rexlit import __version__
+from rexlit.utils.crypto import load_or_create_hmac_key
 from rexlit.utils.hashing import compute_sha256
+
+GENESIS_HASH = "0" * 64
+GENESIS_SIGNATURE = "0" * 64
 
 
 class AuditEntry(BaseModel):
@@ -44,22 +52,35 @@ class AuditEntry(BaseModel):
         description="Tool versions used in operation",
     )
     previous_hash: str = Field(
-        default="0" * 64,
+        default=GENESIS_HASH,
         description="SHA-256 hash of previous entry (chain link). Genesis entry has 64 zeros.",
+    )
+    sequence: int | None = Field(
+        default=None,
+        ge=1,
+        description="Monotonic sequence number starting at 1.",
     )
     entry_hash: str | None = Field(
         default=None,
         description="SHA-256 hash of entry content including previous_hash (excluding this field)",
+    )
+    signature: str | None = Field(
+        default=None,
+        description="HMAC signature sealing the entry for tamper detection.",
     )
 
     def compute_hash(self) -> str:
         """Compute deterministic hash of entry content.
 
         Returns:
-            SHA-256 hash of entry (excluding entry_hash field)
+            SHA-256 hash of entry (excluding entry_hash and signature fields)
         """
-        # Create copy without entry_hash for deterministic hashing
-        data = self.model_dump(mode="json", exclude={"entry_hash"})
+        # Create copy without entry_hash/signature for deterministic hashing
+        data = self.model_dump(
+            mode="json",
+            exclude={"entry_hash", "signature"},
+            exclude_none=True,
+        )
         content = json.dumps(data, sort_keys=True, separators=(",", ":"))
         return compute_sha256(content.encode("utf-8"))
 
@@ -75,32 +96,145 @@ class AuditLedger:
     All operations are logged with timestamps, inputs, outputs, and cryptographic hashes.
     The ledger is stored as JSONL (one JSON object per line) for easy parsing and
     append-only semantics. Entries are linked in a blockchain-style hash chain for
-    tamper-evidence.
+    tamper-evidence and sealed with HMAC signatures for tamper detection.
     """
 
-    def __init__(self, ledger_path: Path) -> None:
+    def __init__(self, ledger_path: Path, *, hmac_key: bytes | None = None) -> None:
         """Initialize audit ledger.
 
         Args:
             ledger_path: Path to JSONL ledger file
+            hmac_key: Optional key for signing metadata (defaults to on-disk secret)
         """
         self.ledger_path = ledger_path
         self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
-        self._last_hash = self._get_last_hash()
 
-    def _get_last_hash(self) -> str:
-        """Get hash of last entry for chaining.
+        self._metadata_path = ledger_path.with_suffix(".meta")
+        if hmac_key is None:
+            self._hmac_key = load_or_create_hmac_key(ledger_path.with_suffix(".key"), length=32)
+        else:
+            self._hmac_key = hmac_key
 
-        Returns:
-            Hash of last entry, or genesis hash (64 zeros) if ledger is empty
-        """
+        self._last_hash = GENESIS_HASH
+        self._last_sequence = 0
+        self._last_signature = GENESIS_SIGNATURE
+
+        self._bootstrap_state()
+
+    # ---------------------------------------------------------------------#
+    # Internal helpers
+    # ---------------------------------------------------------------------#
+
+    def _bootstrap_state(self) -> None:
+        """Restore last known hash/sequence/signature state from ledger."""
+        entries = self._read_entries()
+
+        if entries:
+            last_entry = entries[-1]
+            self._last_hash = last_entry.entry_hash or GENESIS_HASH
+            if last_entry.sequence is not None:
+                self._last_sequence = last_entry.sequence
+            else:
+                self._last_sequence = len(entries)
+            self._last_signature = last_entry.signature or GENESIS_SIGNATURE
+
+        self._ensure_metadata_initialized()
+
+    def _ensure_metadata_initialized(self) -> None:
+        """Create metadata file if missing."""
         try:
-            entries = self.read_all()
-            if entries:
-                return entries[-1].entry_hash or ("0" * 64)
-        except Exception:
+            metadata = self._load_metadata()
+        except ValueError:
+            # Metadata exists but is invalid; leave untouched so verify() surfaces it.
+            return
+
+        if metadata is None:
+            last_hash = None if self._last_sequence == 0 else self._last_hash
+            self._write_metadata(self._last_sequence, last_hash)
+
+    def _read_entries(self) -> list[AuditEntry]:
+        """Load ledger entries from disk."""
+        if not self.ledger_path.exists():
+            return []
+
+        entries: list[AuditEntry] = []
+        with open(self.ledger_path, encoding="utf-8") as fh:
+            for line_num, raw_line in enumerate(fh, 1):
+                line = raw_line.strip()
+                if not line:
+                    continue
+
+                try:
+                    entry = AuditEntry.model_validate_json(line)
+                    entries.append(entry)
+                except Exception as exc:  # pragma: no cover - defensive logging path
+                    raise ValueError(
+                        f"Invalid entry at line {line_num} in {self.ledger_path}: {exc}"
+                    ) from exc
+
+        return entries
+
+    def _compute_signature(self, entry: AuditEntry, previous_signature: str) -> str:
+        """Compute HMAC signature for an entry."""
+        payload = "|".join(
+            [
+                str(entry.sequence or 0),
+                entry.previous_hash,
+                entry.entry_hash or "",
+                previous_signature,
+            ]
+        ).encode("utf-8")
+
+        return hmac.new(self._hmac_key, payload, hashlib.sha256).hexdigest()
+
+    def _compute_metadata_hmac(self, last_sequence: int, last_hash: str | None) -> str:
+        """Compute HMAC for ledger metadata."""
+        payload = f"{last_sequence}:{last_hash or GENESIS_HASH}".encode("utf-8")
+        return hmac.new(self._hmac_key, payload, hashlib.sha256).hexdigest()
+
+    def _write_metadata(self, last_sequence: int, last_hash: str | None) -> None:
+        """Persist metadata describing the current tip of the ledger."""
+        payload = {
+            "version": 1,
+            "last_sequence": last_sequence,
+            "last_hash": last_hash,
+            "hmac": self._compute_metadata_hmac(last_sequence, last_hash),
+        }
+        data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+        fd = os.open(self._metadata_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, data)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+        try:
+            os.chmod(self._metadata_path, 0o600)
+        except PermissionError:
             pass
-        return "0" * 64  # Genesis hash
+
+    def _load_metadata(self) -> dict[str, Any] | None:
+        """Load and validate ledger metadata."""
+        try:
+            raw = self._metadata_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+
+        data = json.loads(raw)
+        expected_hmac = self._compute_metadata_hmac(
+            int(data.get("last_sequence", 0)), data.get("last_hash")
+        )
+        actual_hmac = data.get("hmac")
+
+        if not isinstance(actual_hmac, str) or not hmac.compare_digest(expected_hmac, actual_hmac):
+            raise ValueError("Audit metadata HMAC mismatch")
+
+        return data
+
+    # ---------------------------------------------------------------------#
+    # Public API
+    # ---------------------------------------------------------------------#
 
     def log(
         self,
@@ -128,7 +262,8 @@ class AuditLedger:
         if "rexlit" not in versions:
             versions["rexlit"] = __version__
 
-        # Create entry with hash chain link
+        sequence = self._last_sequence + 1
+
         entry = AuditEntry(
             timestamp=datetime.now(UTC).isoformat(),
             operation=operation,
@@ -136,20 +271,26 @@ class AuditLedger:
             outputs=outputs or [],
             args=args or {},
             versions=versions,
-            previous_hash=self._last_hash,  # Chain to previous entry
+            previous_hash=self._last_hash,
+            sequence=sequence,
         )
 
         # Compute hash (includes previous_hash for chain integrity)
         entry.entry_hash = entry.compute_hash()
+        entry.signature = self._compute_signature(entry, self._last_signature)
 
         # Append to ledger with fsync for legal defensibility
-        with open(self.ledger_path, "a") as f:
-            f.write(entry.model_dump_json() + "\n")
-            f.flush()  # Flush Python buffer to OS
-            os.fsync(f.fileno())  # Force OS buffer to disk
+        with open(self.ledger_path, "a", encoding="utf-8") as fh:
+            fh.write(entry.model_dump_json() + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
 
-        # Update last hash for next entry
-        self._last_hash = entry.entry_hash
+        # Update last state for next entry
+        self._last_sequence = sequence
+        self._last_hash = entry.entry_hash or GENESIS_HASH
+        self._last_signature = entry.signature or GENESIS_SIGNATURE
+
+        self._write_metadata(sequence, entry.entry_hash)
 
         return entry
 
@@ -158,73 +299,102 @@ class AuditLedger:
 
         Returns:
             List of audit entries in chronological order
-
-        Raises:
-            FileNotFoundError: If ledger file does not exist
         """
-        if not self.ledger_path.exists():
-            return []
-
-        entries = []
-        with open(self.ledger_path) as f:
-            for line_num, line in enumerate(f, 1):
-                line = line.strip()
-                if not line:
-                    continue
-
-                try:
-                    entry = AuditEntry.model_validate_json(line)
-                    entries.append(entry)
-                except Exception as e:
-                    raise ValueError(
-                        f"Invalid entry at line {line_num} in {self.ledger_path}: {e}"
-                    ) from e
-
-        return entries
+        return self._read_entries()
 
     def verify(self) -> tuple[bool, str | None]:
-        """Verify integrity of hash chain in the ledger.
+        """Verify integrity of hash chain and metadata.
 
         Returns:
             Tuple of (is_valid, error_message). error_message is None if valid.
         """
         try:
-            entries = self.read_all()
-        except FileNotFoundError:
-            return True, None  # Empty ledger is valid
-        except ValueError as e:
-            return False, f"Ledger parsing error: {e}"
+            metadata = self._load_metadata()
+        except ValueError as exc:
+            return False, f"Audit metadata integrity failure: {exc}"
+
+        entries = self._read_entries()
+
+        if not self.ledger_path.exists():
+            if metadata and metadata.get("last_sequence", 0) > 0:
+                return False, "Audit ledger file is missing but metadata indicates prior entries."
+            return True, None
 
         if not entries:
-            return True, None  # Empty ledger is valid
+            if metadata and metadata.get("last_sequence", 0) > 0:
+                return False, "Audit ledger appears truncated (no entries but metadata expects data)."
+            return True, None
 
-        # Verify first entry has genesis previous_hash
-        if entries[0].previous_hash != "0" * 64:
-            return (
-                False,
-                f"First entry has invalid previous_hash (expected genesis hash '{'0' * 64}', got '{entries[0].previous_hash}')",
-            )
+        previous_hash = GENESIS_HASH
+        previous_signature = GENESIS_SIGNATURE
 
-        # Verify each entry's hash chain
-        for i, entry in enumerate(entries):
-            # Check individual hash
-            expected_hash = entry.compute_hash()
-            if entry.entry_hash != expected_hash:
+        for idx, entry in enumerate(entries, 1):
+            if entry.sequence is None:
                 return (
                     False,
-                    f"Entry {i} has invalid hash (expected '{expected_hash}', got '{entry.entry_hash}')",
+                    f"Entry {idx} missing sequence number; audit log predates tamper-proofing.",
                 )
 
-            # Check chain link (for all entries after the first)
-            if i > 0:
-                prev_entry = entries[i - 1]
-                if entry.previous_hash != prev_entry.entry_hash:
-                    return (
-                        False,
-                        f"Entry {i} breaks hash chain (previous_hash='{entry.previous_hash}' does not match "
-                        f"previous entry's hash='{prev_entry.entry_hash}'). This indicates missing, "
-                        f"deleted, or reordered entries.",
-                    )
+            if entry.entry_hash is None:
+                return (
+                    False,
+                    f"Entry {idx} missing entry_hash; ledger corrupted or tampered.",
+                )
+
+            if entry.signature is None:
+                return (
+                    False,
+                    f"Entry {idx} missing signature; audit log predates tamper-proofing.",
+                )
+
+            expected_hash = entry.compute_hash()
+            if not hmac.compare_digest(entry.entry_hash, expected_hash):
+                return (
+                    False,
+                    f"Entry {idx} has invalid hash (expected '{expected_hash}', got '{entry.entry_hash}').",
+                )
+
+            if entry.previous_hash != previous_hash:
+                return (
+                    False,
+                    f"Entry {idx} breaks hash chain (expected previous_hash='{previous_hash}', "
+                    f"found '{entry.previous_hash}').",
+                )
+
+            expected_signature = self._compute_signature(entry, previous_signature)
+            if not hmac.compare_digest(entry.signature, expected_signature):
+                return (
+                    False,
+                    f"Entry {idx} has invalid signature; ledger may have been tampered.",
+                )
+
+            if entry.sequence != idx:
+                return (
+                    False,
+                    f"Entry {idx} sequence mismatch (expected {idx}, got {entry.sequence}).",
+                )
+
+            previous_hash = entry.entry_hash
+            previous_signature = entry.signature
+
+        if metadata is None:
+            return False, "Audit metadata file is missing."
+
+        last_entry = entries[-1]
+        meta_sequence = int(metadata.get("last_sequence", 0))
+        meta_hash = metadata.get("last_hash")
+
+        if meta_sequence != last_entry.sequence:
+            return (
+                False,
+                f"Ledger metadata sequence mismatch (expected {last_entry.sequence}, got {meta_sequence}).",
+            )
+
+        if meta_hash != last_entry.entry_hash:
+            return (
+                False,
+                "Ledger metadata hash mismatch; possible truncation or tampering detected.",
+            )
 
         return True, None
 
@@ -238,7 +408,7 @@ class AuditLedger:
             List of matching audit entries
         """
         entries = self.read_all()
-        return [e for e in entries if e.operation == operation]
+        return [entry for entry in entries if entry.operation == operation]
 
     def get_by_input(self, input_path: str) -> list[AuditEntry]:
         """Get all entries that processed a specific input.
@@ -250,7 +420,7 @@ class AuditLedger:
             List of matching audit entries
         """
         entries = self.read_all()
-        return [e for e in entries if input_path in e.inputs]
+        return [entry for entry in entries if input_path in entry.inputs]
 
     def get_by_output(self, output_hash: str) -> list[AuditEntry]:
         """Get all entries that produced a specific output.
@@ -262,4 +432,4 @@ class AuditLedger:
             List of matching audit entries
         """
         entries = self.read_all()
-        return [e for e in entries if output_hash in e.outputs]
+        return [entry for entry in entries if output_hash in entry.outputs]

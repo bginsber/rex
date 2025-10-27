@@ -7,6 +7,7 @@ from typing import Annotated
 import typer
 
 from rexlit import __version__
+from rexlit.bootstrap import bootstrap_application
 from rexlit.config import Settings, get_settings, set_settings
 
 app = typer.Typer(
@@ -91,55 +92,29 @@ def ingest_run(
     ] = True,
 ) -> None:
     """Ingest documents from path and extract metadata."""
-    from rexlit.audit.ledger import AuditLedger
-    from rexlit.ingest.discover import discover_documents
-
-    settings = get_settings()
+    container = bootstrap_application()
 
     if not path.exists():
         typer.secho(f"Error: Path not found: {path}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
 
-    # Initialize audit ledger
-    ledger = AuditLedger(settings.get_audit_path()) if settings.audit_enabled else None
-
-    # Discover and ingest documents using streaming pattern
     typer.secho(f"Discovering documents in {path}...", fg=typer.colors.BLUE)
+    manifest_path = manifest.resolve() if manifest else None
+    result = container.pipeline.run(
+        path,
+        manifest_path=manifest_path,
+        recursive=recursive,
+    )
 
-    # Collect documents for processing
-    import json
+    typer.secho(f"Found {len(result.documents)} documents", fg=typer.colors.GREEN)
 
-    document_count = 0
-    sha256_hashes = []
+    for stage in result.stages:
+        color = typer.colors.GREEN if stage.status == "completed" else typer.colors.YELLOW
+        typer.secho(f"[{stage.status}] {stage.name}", fg=color)
 
-    # Clear manifest file if it exists
-    if manifest:
-        open(manifest, "w").close()
-
-    # Process documents as stream
-    for doc_meta in discover_documents(path, recursive=recursive):
-        document_count += 1
-        sha256_hashes.append(doc_meta.sha256)
-
-        # Write to manifest if requested
-        if manifest:
-            # Open in append mode for streaming writes
-            with open(manifest, "a") as f:
-                f.write(json.dumps(doc_meta.model_dump(mode="json")) + "\n")
-
-    typer.secho(f"Found {document_count} documents", fg=typer.colors.GREEN)
-
-    if manifest:
-        typer.secho(f"Manifest written to {manifest}", fg=typer.colors.GREEN)
-
-    # Log to audit ledger
-    if ledger:
-        ledger.log(
-            operation="ingest",
-            inputs=[str(path)],
-            outputs=sha256_hashes,
-            args={"watch": watch, "recursive": recursive},
-        )
+    if result.notes:
+        for note in result.notes:
+            typer.secho(f"NOTE: {note}", fg=typer.colors.YELLOW)
 
     if watch:
         typer.secho("Watch mode not yet implemented", fg=typer.colors.YELLOW)
@@ -157,11 +132,33 @@ def index_build(
         bool,
         typer.Option("--rebuild", help="Rebuild index from scratch"),
     ] = False,
+    dense: Annotated[
+        bool,
+        typer.Option(
+            "--dense",
+            help="Also build Kanon 2 dense embeddings (requires --online or REXLIT_ONLINE=1).",
+        ),
+    ] = False,
+    dim: Annotated[
+        int,
+        typer.Option("--dim", help="Dense embedding dimension (Matryoshka)", min=256),
+    ] = 768,
+    dense_batch: Annotated[
+        int,
+        typer.Option("--dense-batch", help="Batch size for embedding requests", min=1),
+    ] = 32,
+    isaacus_api_key: Annotated[
+        str | None,
+        typer.Option("--isaacus-api-key", help="Override ISAACUS_API_KEY environment variable"),
+    ] = None,
+    isaacus_api_base: Annotated[
+        str | None,
+        typer.Option("--isaacus-api-base", help="Isaacus self-host base URL"),
+    ] = None,
 ) -> None:
     """Build search index from documents."""
-    from rexlit.index.build import build_index
-
-    settings = get_settings()
+    container = bootstrap_application()
+    settings = container.settings
 
     if not path.exists():
         typer.secho(f"Error: Path not found: {path}", fg=typer.colors.RED, err=True)
@@ -170,8 +167,33 @@ def index_build(
     typer.secho(f"Building index from {path}...", fg=typer.colors.BLUE)
     index_dir = settings.get_index_dir()
 
-    count = build_index(path, index_dir, rebuild=rebuild)
+    if dense:
+        require_online(settings, False, "Dense indexing")
+
+    try:
+        count = container.index_port.build(
+            path,
+            rebuild=rebuild,
+            dense=dense,
+            dense_dim=dim,
+            dense_batch_size=dense_batch,
+            dense_api_key=isaacus_api_key,
+            dense_api_base=isaacus_api_base,
+        )
+    except RuntimeError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+
     typer.secho(f"Indexed {count} documents to {index_dir}", fg=typer.colors.GREEN)
+
+    if dense:
+        dense_path = index_dir / "dense" / f"kanon2_{dim}.hnsw"
+        if dense_path.exists():
+            typer.secho(f"Dense index stored at {dense_path}", fg=typer.colors.BLUE)
+        else:
+            typer.secho(
+                "Dense index skipped (no eligible textual content).", fg=typer.colors.YELLOW
+            )
 
 
 @index_app.command("search")
@@ -185,33 +207,94 @@ def index_search(
         int,
         typer.Option("--limit", "-n", help="Maximum results to return"),
     ] = 10,
+    mode: Annotated[
+        str,
+        typer.Option(
+            "--mode",
+            help="Search mode: lexical, dense, or hybrid",
+            case_sensitive=False,
+        ),
+    ] = "lexical",
+    dim: Annotated[
+        int,
+        typer.Option("--dim", help="Dense embedding dimension", min=256),
+    ] = 768,
+    isaacus_api_key: Annotated[
+        str | None,
+        typer.Option("--isaacus-api-key", help="Override ISAACUS_API_KEY environment variable"),
+    ] = None,
+    isaacus_api_base: Annotated[
+        str | None,
+        typer.Option("--isaacus-api-base", help="Isaacus self-host base URL"),
+    ] = None,
 ) -> None:
     """Search the index."""
     import json
 
-    from rexlit.index.search import search_index
+    container = bootstrap_application()
+    settings = container.settings
+    mode_normalized = mode.lower()
 
-    settings = get_settings()
-    index_dir = settings.get_index_dir()
+    if mode_normalized not in {"lexical", "dense", "hybrid"}:
+        typer.secho(
+            "Invalid mode. Choose from 'lexical', 'dense', or 'hybrid'.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=2)
 
-    if not index_dir.exists():
+    if not query.strip():
+        typer.secho("Error: Query cannot be empty", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    if mode_normalized in {"dense", "hybrid"}:
+        require_online(settings, False, f"{mode_normalized} search")
+
+    try:
+        results = container.index_port.search(
+            query,
+            limit=limit,
+            mode=mode_normalized,
+            dim=dim,
+            api_key=isaacus_api_key,
+            api_base=isaacus_api_base,
+        )
+    except FileNotFoundError:
         typer.secho(
             "Error: Index not found. Run 'rexlit index build' first.",
             fg=typer.colors.RED,
             err=True,
         )
         raise typer.Exit(code=1)
-
-    results = search_index(index_dir, query, limit=limit)
+    except ValueError as exc:
+        typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
 
     if json_output:
         typer.echo(json.dumps([r.model_dump(mode="json") for r in results], indent=2))
-    else:
-        typer.secho(f"Found {len(results)} results for '{query}':", fg=typer.colors.BLUE)
-        for i, result in enumerate(results, 1):
-            typer.echo(f"\n{i}. {result.path} (score: {result.score:.2f})")
-            if result.snippet:
-                typer.echo(f"   {result.snippet}")
+        return
+
+    if not results:
+        typer.secho("No results found", fg=typer.colors.YELLOW)
+        return
+
+    typer.secho(
+        f"Found {len(results)} {mode_normalized} results for '{query}':",
+        fg=typer.colors.BLUE,
+    )
+    for i, result in enumerate(results, 1):
+        score_repr = f"{result.score:.2f}"
+        components: list[str] = []
+        if result.strategy != "lexical" and result.lexical_score is not None:
+            components.append(f"lex={result.lexical_score:.2f}")
+        if result.dense_score is not None:
+            components.append(f"dense={result.dense_score:.2f}")
+        if components:
+            score_repr += f" ({', '.join(components)})"
+
+        typer.echo(f"\n{i}. {result.path} [{result.strategy}] (score: {score_repr})")
+        if result.snippet:
+            typer.echo(f"   {result.snippet}")
 
 
 # OCR subcommand (Phase 2)
@@ -259,17 +342,17 @@ def audit_show(
     """Show audit ledger entries."""
     import json
 
-    from rexlit.audit.ledger import AuditLedger
+    container = bootstrap_application()
 
-    settings = get_settings()
-    audit_path = settings.get_audit_path()
-
-    if not audit_path.exists():
+    if not container.audit_service.is_enabled():
         typer.secho("No audit ledger found", fg=typer.colors.YELLOW)
         return
 
-    ledger = AuditLedger(audit_path)
-    entries = ledger.read_all()
+    entries = container.audit_service.get_entries()
+
+    if not entries:
+        typer.secho("No audit ledger entries found", fg=typer.colors.YELLOW)
+        return
 
     if tail:
         entries = entries[-tail:]
@@ -284,21 +367,21 @@ def audit_show(
 @audit_app.command("verify")
 def audit_verify() -> None:
     """Verify audit ledger integrity."""
-    from rexlit.audit.ledger import AuditLedger
+    container = bootstrap_application()
 
-    settings = get_settings()
-    audit_path = settings.get_audit_path()
-
-    if not audit_path.exists():
+    if not container.audit_service.is_enabled():
         typer.secho("No audit ledger found", fg=typer.colors.YELLOW)
         return
 
-    ledger = AuditLedger(audit_path)
-    if ledger.verify():
+    valid, error = container.audit_service.verify()
+
+    if valid:
         typer.secho("Audit ledger is valid", fg=typer.colors.GREEN)
-    else:
-        typer.secho("Audit ledger integrity check failed", fg=typer.colors.RED, err=True)
-        raise typer.Exit(code=1)
+        return
+
+    message = error or "Audit ledger integrity check failed"
+    typer.secho(message, fg=typer.colors.RED, err=True)
+    raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":

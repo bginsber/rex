@@ -1,16 +1,33 @@
 """Build search index using Tantivy for document retrieval."""
 
+from __future__ import annotations
+
 import shutil
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
 from pathlib import Path
+from typing import TypedDict
 
+import numpy as np
 import tantivy
 
+from rexlit.index.hnsw_store import HNSWStore
+from rexlit.index.kanon2_embedder import DOCUMENT_TASK, EmbeddingResult, embed_texts
 from rexlit.index.metadata import IndexMetadata
-from rexlit.ingest.discover import discover_documents, DocumentMetadata
+from rexlit.ingest.discover import DocumentMetadata, discover_documents
 from rexlit.ingest.extract import extract_document
+
+
+class DenseDocument(TypedDict):
+    """Data captured for dense embedding construction."""
+
+    identifier: str
+    path: str
+    sha256: str
+    custodian: str | None
+    doctype: str | None
+    text: str
 
 
 def create_schema() -> tantivy.Schema:
@@ -77,6 +94,7 @@ def build_index(
     show_progress: bool = True,
     max_workers: int | None = None,
     batch_size: int = 100,
+    dense_collector: list[DenseDocument] | None = None,
 ) -> int:
     """Build search index from documents using parallel processing.
 
@@ -91,6 +109,8 @@ def build_index(
         show_progress: Show progress indicators (default: True)
         max_workers: Maximum number of worker processes (default: cpu_count() - 1)
         batch_size: Number of documents to process per batch (default: 100)
+        dense_collector: Optional list that will be populated with dense-ready
+            document payloads (identifier, metadata, text)
 
     Returns:
         Number of documents indexed
@@ -185,6 +205,18 @@ def build_index(
                     custodian=result["custodian_raw"],
                     doctype=result["doctype_raw"],
                 )
+
+                if dense_collector is not None and result["text"]:
+                    dense_collector.append(
+                        {
+                            "identifier": result["sha256"],
+                            "path": result["path"],
+                            "sha256": result["sha256"],
+                            "custodian": result["custodian"] or None,
+                            "doctype": result["doctype"] or None,
+                            "text": result["text"],
+                        }
+                    )
 
                 # Periodic commits for memory management
                 if indexed_count % 1000 == 0:
@@ -325,3 +357,94 @@ def get_index_stats(index_dir: Path) -> dict[str, int] | None:
         }
     except Exception:
         return None
+
+
+def _aggregate_usage(records: list[EmbeddingResult]) -> dict[str, float]:
+    """Aggregate usage and latency telemetry across embedding batches."""
+    total_latency = sum(record.latency_ms for record in records)
+    token_totals: dict[str, float] = {}
+
+    for record in records:
+        usage = record.usage or {}
+        for key, value in usage.items():
+            if not isinstance(value, (int, float)):
+                continue
+            token_totals[key] = token_totals.get(key, 0.0) + float(value)
+
+    token_totals["latency_ms"] = total_latency
+    token_totals["batches"] = float(len(records))
+    return token_totals
+
+
+def build_dense_index(
+    dense_documents: list[DenseDocument],
+    *,
+    index_dir: Path,
+    dim: int = 768,
+    batch_size: int = 32,
+    api_key: str | None = None,
+    api_base: str | None = None,
+) -> dict[str, object] | None:
+    """Construct a Kanon 2 HNSW index for dense retrieval.
+
+    Returns a dictionary with paths and telemetry metadata, or None when no
+    documents were suitable for embedding.
+    """
+    filtered_docs = [doc for doc in dense_documents if doc["text"].strip()]
+    if not filtered_docs:
+        return None
+
+    telemetry_records: list[EmbeddingResult] = []
+    embeddings: list[list[float]] = []
+    identifiers: list[str] = []
+    doc_metadata: dict[str, dict] = {}
+
+    for start in range(0, len(filtered_docs), batch_size):
+        batch = filtered_docs[start : start + batch_size]
+
+        result = embed_texts(
+            (doc["text"] for doc in batch),
+            task=DOCUMENT_TASK,
+            dimensions=dim,
+            api_key=api_key,
+            api_base=api_base,
+        )
+        telemetry_records.append(result)
+
+        if len(result.embeddings) != len(batch):
+            raise RuntimeError(
+                "Embedding provider returned a mismatched number of vectors."
+            )
+
+        embeddings.extend(result.embeddings)
+        identifiers.extend(doc["identifier"] for doc in batch)
+
+        for doc in batch:
+            doc_metadata[doc["identifier"]] = {
+                "path": doc["path"],
+                "sha256": doc["sha256"],
+                "custodian": doc["custodian"],
+                "doctype": doc["doctype"],
+            }
+
+    if not embeddings:
+        return None
+
+    array = np.asarray(embeddings, dtype=np.float32)
+    dense_dir = index_dir / "dense"
+    store = HNSWStore(dim=dim, index_path=dense_dir / f"kanon2_{dim}.hnsw")
+    store.build(
+        array,
+        identifiers,
+        doc_metadata=doc_metadata,
+    )
+
+    usage_summary = _aggregate_usage(telemetry_records)
+    usage_summary["vectors"] = float(len(identifiers))
+    usage_summary["dim"] = float(dim)
+
+    return {
+        "index_path": str(store.index_path),
+        "metadata_path": str(store.metadata_path),
+        "usage": usage_summary,
+    }

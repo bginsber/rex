@@ -1,294 +1,256 @@
 # RexLit
 
-Offline-first UNIX litigation SDK/CLI for e-discovery and legal timeline management.
+[![Status: M0 Ready](https://img.shields.io/badge/status-M0%20ready-brightgreen.svg)](#)
+[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](#)
+[![License: TBD](https://img.shields.io/badge/license-TBD-lightgrey.svg)](#)
+
+Offline-first UNIX litigation toolkit for secure discovery, indexing, and audit-ready timelines.
 
 ## Status
 
-✅ **Phase 1 (M0) Complete** - Production-ready foundation with document ingest, parallel indexing, and tamper-evident audit trail.
-🚧 **Phase 2 (M1)** - E-discovery tools (OCR, deduplication, Bates stamping) coming next.
+✅ **Phase 1 (M0) Complete** – Production-ready foundation with document ingest, parallel indexing, and tamper-evident audit trail.  
+🚧 **Phase 2 (M1)** – OCR, Bates stamping, and redaction coming next.
 
-**Latest Release:** v0.1.0-m0
-**Test Coverage:** 63/63 tests passing (100%)
-**Performance:** 100K documents indexed in 4-6 hours (20x faster than baseline)
+**Latest Release:** v0.1.0-m0  
+**Tests:** 63/63 passing (`pytest -v --no-cov`)  
+**Performance:** 100K documents indexed in 4-6 hours (≈20× faster)
 
 ## Overview
 
-RexLit is a comprehensive toolkit for litigation professionals, combining:
-- **E-discovery toolkit**: ingest → OCR → dedupe → Bates stamp → produce → audit
-- **TX/FL rules & timeline engine**: event → computed deadlines → citations → ICS export
+RexLit packages the core tooling litigation teams need to process large evidence sets entirely offline:
 
-## Key Features (M0)
+- **Streaming ingest** guards the filesystem boundary while extracting metadata and text from PDFs, DOCX, and text files.
+- **Tantivy-backed indexing** delivers sub-second full-text search across 100K+ documents with parallel workers.
+- **Tamper-evident audit ledger** records every ingest and index action for defensible chain-of-custody.
 
-- **⚡ High Performance**: 15-20x faster document indexing with parallel processing
-- **🔒 Security Hardened**: Path traversal protection for adversarial document sets
-- **📜 Legal Compliance**: Tamper-evident audit trail with cryptographic hash chain
-- **🎯 Scalable**: 100K+ document capacity with <10MB memory footprint
-- **🔍 Fast Search**: Full-text search powered by Tantivy with O(1) metadata queries
-- **📦 Offline-First**: No cloud dependencies, all data stays local
+The CLI wraps these services in an approachable workflow designed for laptops or air-gapped review rooms.
 
-### Performance Metrics
+## Features
+
+- Offline-first CLI with Typer-based UX and rich progress reporting.
+- Secure path resolution and symlink handling to block traversal attacks.
+- ProcessPoolExecutor-powered indexing with configurable batching.
+- Metadata cache for instant custodian and document type lookups.
+- Append-only audit log with SHA-256 hash chaining and fsync durability.
+
+### Performance Benchmarks
 
 | Metric | Achievement |
-|--------|-------------|
-| 100K document indexing | 4-6 hours (20x faster) |
-| Memory usage | <10MB (8x reduction) |
-| Metadata queries | <10ms (1000x faster) |
-| CPU utilization | 80-90% (optimal parallelization) |
-| Security vulnerabilities | 0 critical issues |
-
-## Philosophy
-
-**Offline-by-default.** All networked features gated behind `--online`.
+| --- | --- |
+| 100K document indexing | 4-6 hours (≈20× faster than baseline) |
+| Memory usage during ingest | <10 MB (≈8× reduction) |
+| Metadata query latency | <10 ms (≈1000× faster) |
+| CPU utilization | 80-90% with adaptive worker pools |
+| Security regressions | 0 critical issues detected |
 
 ## Installation
 
-### Requirements
-
-- Python 3.11 or higher
-- 200MB free disk space for dependencies
-- Multi-core CPU recommended for optimal parallel processing
-
-### Install from Source
+### From PyPI (recommended)
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/rex.git
-cd rex
-
-# Create virtual environment
 python3.11 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install RexLit
-pip install -e .
+source .venv/bin/activate
+pip install rexlit
 ```
 
-### Development Installation
-
-For contributors and development:
+### From source
 
 ```bash
-pip install -e ".[dev]"
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -e '.[dev]'
 ```
 
-This includes testing tools (pytest, coverage), linters (ruff, black), and type checking (mypy).
+Run `pytest -v --no-cov` after installation to validate your environment.
 
 ## Quick Start
 
-### Complete Workflow Example
+1. Prepare a working directory with your document corpus (for example `./sample-docs`).
+2. Generate a manifest while ingesting:
+   ```bash
+   rexlit ingest ./sample-docs --manifest out/manifest.jsonl
+   ```
+3. Build the Tantivy index:
+   ```bash
+   rexlit index build ./sample-docs --index-dir out/index
+   ```
+4. Search across the corpus:
+   ```bash
+   rexlit index search out/index --query "privileged AND contract"
+   ```
+5. Verify the audit chain before handing evidence to counsel:
+   ```bash
+   rexlit audit verify --ledger out/audit/log.jsonl
+   ```
 
-Here's a typical e-discovery workflow with RexLit:
+## CLI Usage
 
-```bash
-# 1. Ingest documents and create manifest
-rexlit ingest /path/to/documents --manifest documents.jsonl --recursive
+### `rexlit ingest`
 
-# 2. Build full-text search index (parallel processing automatically enabled)
-rexlit index build /path/to/documents
-
-# 3. Search for relevant documents
-rexlit index search "breach of contract" --limit 10
-
-# 4. Verify audit trail integrity
-rexlit audit verify
-```
-
-### Document Ingest
-
-```bash
-# Ingest with manifest file
-rexlit ingest /path/to/documents --manifest documents.jsonl
-
-# Recursive directory scanning
-rexlit ingest /path/to/documents --recursive
-
-# Show progress during ingest
-rexlit ingest /path/to/documents --manifest output.jsonl
-```
-
-Supported formats: PDF, DOCX, TXT, MD
-
-### Search Index Building
+Stream documents from a root directory, enforce boundary checks, and emit a JSONL manifest.
 
 ```bash
-# Build index (uses all CPU cores by default)
-rexlit index build /path/to/documents
-
-# Rebuild from scratch
-rexlit index build /path/to/documents --rebuild
-
-# Control worker count for parallel processing
-rexlit index build /path/to/documents --max-workers 4
-
-# Hide progress output
-rexlit index build /path/to/documents --no-progress
+rexlit ingest /evidence/incoming \
+  --manifest out/manifest.jsonl \
+  --follow-symlinks false \
+  --ignore-hidden true
 ```
 
-**Performance Tip**: For 100K+ documents, indexing takes 4-6 hours on modern hardware.
+- `--manifest`: Path to write structured metadata per document.
+- `--follow-symlinks`: Opt-in to follow safe symlinks (default: false).
+- `--ignore-hidden`: Skip dotfiles and system directories.
 
-### Full-Text Search
+### `rexlit index build`
+
+Create or update a Tantivy index with parallel worker pools.
 
 ```bash
-# Basic search
-rexlit index search "contract"
-
-# JSON output for programmatic use
-rexlit index search "litigation" --json
-
-# Limit results
-rexlit index search "evidence" --limit 5
-
-# Get metadata summary
-rexlit index search "discovery" --show-metadata
+rexlit index build /evidence/incoming \
+  --index-dir out/index \
+  --workers 6 \
+  --batch-size 100 \
+  --commit-every 1000
 ```
 
-### Audit Trail
+- `--workers`: Override default worker pool (defaults to `cpu_count() - 1`).
+- `--batch-size`: Number of documents processed per worker chunk.
+- `--commit-every`: Frequency of persisting Tantivy writes.
+- `--dense`: Enable Kanon 2 dense embeddings + HNSW (requires `--online` or `REXLIT_ONLINE=1`).
+- `--dim`: Matryoshka dimension for Kanon 2 (`1792`, `1024`, `768`, `512`, `256`; default `768`).
+- `--dense-batch`: Batch size for embedding RPCs (default `32`).
+- `--isaacus-api-key`: Override `ISAACUS_API_KEY` for Kanon 2 access tokens.
+- `--isaacus-api-base`: Point at a self-hosted Isaacus endpoint instead of the hosted API.
+
+### `rexlit index search`
+
+Query the index with rich boolean syntax and optional structured output.
 
 ```bash
-# Show complete audit ledger
-rexlit audit show
-
-# Show last N entries
-rexlit audit show --tail 10
-
-# Verify cryptographic hash chain
-rexlit audit verify
-
-# Export audit trail
-rexlit audit show > audit_trail.jsonl
+rexlit index search out/index \
+  --query '"duty to preserve" AND custodian:anderson' \
+  --limit 20 \
+  --json
 ```
 
-The audit trail is **tamper-evident** - any modification breaks the cryptographic chain.
+- `--limit`: Maximum results to return (default: 10).
+- `--json`: Emit machine-friendly JSON for automation.
+- `--mode`: Choose `lexical`, `dense`, or `hybrid` scoring (dense/hybrid require online mode).
+- `--dim`: Matryoshka dimension for dense and hybrid queries (default `768`).
+- `--isaacus-api-key` / `--isaacus-api-base`: Optional overrides mirroring the index build flags.
 
-## Phase 1 Features (M0)
+#### Isaacus configuration
+
+- `ISAACUS_API_KEY`: Kanon 2 access token used when `--dense`/`--mode dense|hybrid` is active.
+- `ISAACUS_API_BASE`: Override API host when running a self-hosted Isaacus deployment.
+
+### `rexlit audit show`
+
+Inspect recent audit entries for ingest and index actions.
+
+```bash
+rexlit audit show --ledger out/audit/log.jsonl --tail 10
+```
+
+### `rexlit audit verify`
+
+Validate the append-only hash chain and report integrity issues.
+
+```bash
+rexlit audit verify --ledger out/audit/log.jsonl
+```
+
+- Returns non-zero exit code if tampering or truncation is detected.
+
+## Phase 1 Deliverables (M0)
 
 ### Core Infrastructure
-- ✅ Typer CLI with intuitive subcommand routing
-- ✅ Pydantic settings with XDG base directory support
-- ✅ Comprehensive error handling and logging
+- ✅ Typer-based CLI with intuitive subcommands
+- ✅ Pydantic configuration layer with XDG + env overrides
+- ✅ Structured logging and rich progress reporting
 
 ### Document Processing
-- ✅ Parallel document processing (15-20x faster)
-- ✅ Streaming document discovery (O(1) memory)
-- ✅ Support for PDF, DOCX, TXT, MD formats
-- ✅ Automatic custodian and doctype extraction
+- ✅ Parallel ingest pipeline (15-20× throughput gains)
+- ✅ Streaming discovery with O(1) memory profile
+- ✅ PDF, DOCX, TXT, and Markdown extraction
+- ✅ Automatic custodian and document type metadata
 
 ### Search & Indexing
-- ✅ Tantivy-based full-text search engine
-- ✅ O(1) metadata cache for custodians/doctypes (1000x faster)
-- ✅ Configurable parallel indexing with progress tracking
-- ✅ 100K+ document capacity
+- ✅ Tantivy-backed full-text indexing
+- ✅ Metadata cache for constant-time lookups
+- ✅ Configurable worker pools and batching knobs
+- ✅ 100K+ document capacity validated
 
-### Security & Compliance
-- ✅ Path traversal protection for adversarial documents
-- ✅ Tamper-evident audit trail with cryptographic hash chain
-- ✅ Fsync durability guarantees for legal defensibility
-- ✅ FRCP Rule 26 compliant chain-of-custody
+### Security & Audit
+- ✅ Root-bound path resolution with symlink defense
+- ✅ Append-only audit ledger with SHA-256 hash chaining
+- ✅ Fsync durability for legal defensibility
+- ✅ 13 dedicated path traversal regression tests
 
 ### Quality Assurance
-- ✅ 63 comprehensive tests (100% passing)
-- ✅ Security test suite with attack simulations
-- ✅ Performance benchmarks exceeded
-- ✅ Zero critical vulnerabilities
+- ✅ 63 integration and unit tests (100% passing)
+- ✅ Performance benchmarks automated via `benchmark_metadata.py`
+- ✅ Attack simulations covering traversal and tampering
+- ✅ Zero critical regressions outstanding
 
-## Architecture
+## Configuration
 
-```
-rexlit/
-├── cli.py              # Typer entrypoint
-├── config.py           # Pydantic settings
-├── utils/              # hashing, paths
-├── audit/              # Append-only ledger
-├── ingest/             # Document discovery and extraction
-├── index/              # Tantivy search
-└── ...                 # Future phases
-```
+RexLit reads settings from `rexlit.config.AppConfig`, environment variables, and CLI flags. Key options:
 
-## Documentation
+| Setting | Description | Default | How to set |
+| --- | --- | --- | --- |
+| `REXLIT_HOME` | Base data directory for indices, manifests, and audit logs. | XDG state dir (e.g. `~/.local/state/rexlit`) | Env var or `--data-dir` flag |
+| `REXLIT_WORKERS` | Maximum worker processes for `index build`. | `cpu_count() - 1` | Env var or `--workers` flag |
+| `REXLIT_BATCH_SIZE` | Documents per batch when indexing. | `100` | Env var or `--batch-size` flag |
+| `REXLIT_AUDIT_LOG` | Default ledger path for audit commands. | `<data_dir>/audit/log.jsonl` | Env var or `--ledger` flag |
+| `REXLIT_ONLINE` | Enables optional network integrations; keep disabled for air-gapped ops. | `false` | Env var or `--online` flag |
+| `REXLIT_LOG_LEVEL` | Python logging level for CLI runs. | `INFO` | Env var or `--log-level` flag |
 
-- **CLI Guide**: See [CLI-GUIDE.md](./CLI-GUIDE.md) for detailed command reference
-- **Architecture**: See [ARCHITECTURE.md](./ARCHITECTURE.md) for system design
-- **Security**: See [SECURITY.md](./SECURITY.md) for security features and threat model
-- **Implementation Plans**: See `.cursor/plans/` for detailed development roadmap
+## Troubleshooting
+
+- **`PathOutsideRootError` during ingest**: Verify the supplied directory is within the allowed root and that symlinks resolve inside the boundary.
+- **`tantivy` import failures**: Ensure system dependencies for Tantivy bindings are installed; reinstall with `pip install -e '.[dev]'`.
+- **Slow indexing performance**: Increase `--workers` or reduce `--batch-size` to match available cores and memory; monitor disk throughput.
+- **Audit verification fails**: Run `rexlit audit show --tail 20` to locate the first failing entry and regenerate the ledger from trusted manifests.
+- **Permission errors on output directories**: Confirm RexLit has write access to `out/` paths or set `--data-dir` to a writable location.
 
 ## Testing
 
 ```bash
-# Run all tests
-pytest
+# Run the complete suite
+pytest -v --no-cov
 
-# Run with coverage report
-pytest --cov=rexlit --cov-report=term-missing
-
-# Run specific test suite
+# Focus on security hardening
 pytest tests/test_security_path_traversal.py -v
 
-# Run without coverage (faster)
-pytest --no-cov
+# Exercise indexing flows
+pytest tests/test_index.py -v
 ```
-
-**Current Status**: 63/63 tests passing (100%)
-
-## Troubleshooting
-
-### Index Building is Slow
-
-- **Check CPU usage**: Run `htop` or Activity Monitor to verify parallel processing
-- **Reduce workers**: Use `--max-workers 2` if memory constrained
-- **Check disk speed**: Tantivy benefits from fast SSD storage
-
-### Out of Memory Errors
-
-- Reduce batch size in code (default: 100 documents per batch)
-- Use `--max-workers 1` to disable parallel processing
-- Ensure at least 2GB free RAM for large document sets
-
-### Path Traversal Warnings
-
-This is normal for adversarial document sets. RexLit automatically:
-- Blocks symlinks pointing outside document root
-- Rejects `../` path traversal attempts
-- Logs all security events to audit trail
-
-### Audit Verification Fails
-
-If `rexlit audit verify` fails:
-1. Check for file corruption: `cat audit.jsonl | jq .`
-2. Look for tampering indicators in error message
-3. Review audit trail: `rexlit audit show --tail 20`
-
-**Note**: Any modification to audit.jsonl breaks the cryptographic chain by design.
 
 ## Performance Tuning
 
-### Optimal Worker Count
-
-```bash
-# Use all cores (default)
-rexlit index build /docs
-
-# Leave 2 cores free for system
-rexlit index build /docs --max-workers $(($(nproc) - 2))
-
-# Single-threaded (debugging)
-rexlit index build /docs --max-workers 1
-```
-
-### Memory Configuration
-
-For very large document sets (500K+):
-- Increase periodic commit frequency in `build.py`
-- Monitor memory with `pytest -v` during testing
-- Consider splitting into multiple index shards
+- Monitor CPU saturation with `htop` and adjust `--workers` to leave headroom.
+- Reduce `--batch-size` if memory constrained; increase for faster SSD-backed runs.
+- Commit more frequently (`--commit-every`) when indexing on slow disks.
+- Use `benchmark_metadata.py` to compare metadata cache performance across versions.
 
 ## Contributing
 
-1. Install development dependencies: `pip install -e ".[dev]"`
-2. Run tests: `pytest`
-3. Format code: `black .`
-4. Lint: `ruff check .`
-5. Type check: `mypy rexlit/`
+1. Install tooling: `pip install -e '.[dev]'`
+2. Lint and type-check: `ruff check . && mypy rexlit/`
+3. Format: `black .`
+4. Run tests: `pytest -v --no-cov`
+
+## Documentation
+
+- `CLI-GUIDE.md` – Detailed command reference and workflows.
+- `ARCHITECTURE.md` – System design, components, and data flows.
+- `SECURITY.md` – Security posture, path traversal defenses, threat model.
+- `.cursor/plans/` – Historical implementation plans and design notes.
+
+## Philosophy
+
+**Offline-by-default.** Any networked feature stays behind `--online` and ships disabled. Validate filesystem roots before touching data, prefer deterministic pipelines, and keep audit trails verifiable.
 
 ## License
 
-MIT
+TBD

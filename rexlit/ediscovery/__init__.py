@@ -1,3 +1,5 @@
 """E-discovery tools: deduplication, PII, production."""
 
-__all__: list[str] = []
+from rexlit.ediscovery.pii_storage import EncryptedPIIStore, PIIFindingRecord
+
+__all__ = ["EncryptedPIIStore", "PIIFindingRecord"]

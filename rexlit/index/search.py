@@ -1,11 +1,17 @@
 """Search index using Tantivy for document retrieval."""
 
-from pathlib import Path
+from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
+import numpy as np
 import tantivy
 from pydantic import BaseModel, Field
 
 from rexlit.index.build import create_schema
+from rexlit.index.hnsw_store import HNSWStore
+from rexlit.index.kanon2_embedder import QUERY_TASK, embed_texts
 from rexlit.index.metadata import IndexMetadata
 
 
@@ -17,6 +23,13 @@ class SearchResult(BaseModel):
     custodian: str | None = Field(None, description="Document custodian")
     doctype: str | None = Field(None, description="Document type")
     score: float = Field(..., description="Relevance score")
+    lexical_score: float | None = Field(
+        None, description="Raw lexical score when available (BM25)."
+    )
+    dense_score: float | None = Field(
+        None, description="Raw dense similarity score when available."
+    )
+    strategy: str = Field("lexical", description="Search strategy that produced the score.")
     snippet: str | None = Field(None, description="Text snippet")
     metadata: str | None = Field(None, description="Document metadata")
 
@@ -54,10 +67,8 @@ def search_index(
     searcher = index.searcher()
 
     # Parse query
-    query_parser = tantivy.QueryParser.for_index(index, ["body", "path", "custodian"])
-
     try:
-        parsed_query = query_parser.parse_query(query)
+        parsed_query = index.parse_query(query, default_field_names=["body", "path", "custodian"])
     except Exception as e:
         raise ValueError(f"Invalid query syntax: {e}") from e
 
@@ -84,12 +95,152 @@ def search_index(
             custodian=custodian if custodian else None,
             doctype=doctype if doctype else None,
             score=score,
+             lexical_score=score,
+             dense_score=None,
+             strategy="lexical",
             snippet=None,  # TODO: Extract snippet from body
             metadata=metadata if metadata else None,
         )
         results.append(result)
 
     return results
+
+
+def dense_search_index(
+    index_dir: Path,
+    query: str,
+    *,
+    limit: int = 10,
+    dim: int = 768,
+    api_key: str | None = None,
+    api_base: str | None = None,
+) -> tuple[list[SearchResult], dict[str, Any]]:
+    """Run a dense-only search using the Kanon 2 HNSW index."""
+    if not query.strip():
+        raise ValueError("Query cannot be empty")
+
+    dense_dir = index_dir / "dense"
+    store_path = dense_dir / f"kanon2_{dim}.hnsw"
+    store = HNSWStore(dim=dim, index_path=store_path)
+    store.load()
+
+    embedding = embed_texts(
+        [query],
+        task=QUERY_TASK,
+        dimensions=dim,
+        api_key=api_key,
+        api_base=api_base,
+    )
+
+    if not embedding.embeddings:
+        return [], {"latency_ms": embedding.latency_ms, "usage": embedding.usage or {}}
+
+    query_vector = np.asarray(embedding.embeddings[0], dtype=np.float32)
+    hits = store.query(query_vector, top_k=limit)
+
+    results: list[SearchResult] = []
+    for rank, hit in enumerate(hits, 1):
+        metadata = store.resolve_metadata(hit.identifier) or {}
+        result = SearchResult(
+            path=metadata.get("path", ""),
+            sha256=metadata.get("sha256", hit.identifier),
+            custodian=metadata.get("custodian"),
+            doctype=metadata.get("doctype"),
+            score=hit.score,
+            dense_score=hit.score,
+            lexical_score=None,
+            strategy="dense",
+            snippet=None,
+            metadata=None,
+        )
+        results.append(result)
+
+    telemetry = {
+        "latency_ms": embedding.latency_ms,
+        "usage": embedding.usage or {},
+        "dim": dim,
+        "hits": len(results),
+    }
+    return results, telemetry
+
+
+def _rrf(rank: int, k: int = 60) -> float:
+    return 1.0 / (k + rank)
+
+
+def hybrid_search_index(
+    index_dir: Path,
+    query: str,
+    *,
+    limit: int = 10,
+    dim: int = 768,
+    lexical_budget: int | None = None,
+    api_key: str | None = None,
+    api_base: str | None = None,
+    fusion_k: int = 60,
+) -> tuple[list[SearchResult], dict[str, Any]]:
+    """Combine lexical and dense scores using Reciprocal Rank Fusion."""
+    if not query.strip():
+        raise ValueError("Query cannot be empty")
+
+    lexical_limit = lexical_budget or max(limit, 20)
+    lexical_results = search_index(index_dir, query, limit=lexical_limit)
+    dense_results, dense_telemetry = dense_search_index(
+        index_dir,
+        query,
+        limit=lexical_limit,
+        dim=dim,
+        api_key=api_key,
+        api_base=api_base,
+    )
+
+    fusion: dict[str, dict[str, Any]] = {}
+    for rank, result in enumerate(dense_results, 1):
+        fusion[result.sha256] = {
+            "dense": result,
+            "dense_rank": rank,
+            "score": _rrf(rank, fusion_k),
+        }
+
+    for rank, result in enumerate(lexical_results, 1):
+        entry = fusion.setdefault(result.sha256, {})
+        entry["lexical"] = result
+        entry["lexical_rank"] = rank
+        entry["score"] = entry.get("score", 0.0) + _rrf(rank, fusion_k)
+
+    fused_results: list[SearchResult] = []
+    for entry in fusion.values():
+        dense_component = entry.get("dense")
+        lexical_component = entry.get("lexical")
+
+        template = dense_component or lexical_component
+        if template is None:
+            continue
+
+        fused_results.append(
+            SearchResult(
+                path=template.path,
+                sha256=template.sha256,
+                custodian=template.custodian,
+                doctype=template.doctype,
+                score=float(entry.get("score", 0.0)),
+                lexical_score=getattr(lexical_component, "lexical_score", None),
+                dense_score=getattr(dense_component, "dense_score", None),
+                strategy="hybrid",
+                snippet=getattr(lexical_component, "snippet", None),
+                metadata=getattr(lexical_component, "metadata", None),
+            )
+        )
+
+    fused_results.sort(key=lambda item: item.score, reverse=True)
+    return fused_results[:limit], {
+        "lexical_count": len(lexical_results),
+        "dense_count": len(dense_results),
+        "fusion": "rrf",
+        "dim": dim,
+        "dense_latency_ms": dense_telemetry.get("latency_ms", 0.0),
+        "usage": dense_telemetry.get("usage", {}),
+    }
 
 
 def search_by_custodian(

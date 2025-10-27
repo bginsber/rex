@@ -72,3 +72,30 @@ def nested_files(temp_dir: Path) -> Path:
     (sub2 / "doc1.txt").write_text("Document from Jane Smith.")
 
     return temp_dir
+
+
+@pytest.fixture
+def override_settings(temp_dir: Path) -> Generator["Settings", None, None]:
+    """Provide isolated RexLit settings scoped to tests."""
+
+    import rexlit.config as config_module
+
+    original_settings = getattr(config_module, "_settings", None)
+
+    data_dir = temp_dir / "appdata"
+    config_dir = temp_dir / "appconfig"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    config_dir.mkdir(parents=True, exist_ok=True)
+
+    settings = config_module.Settings(
+        data_dir=data_dir,
+        config_dir=config_dir,
+        audit_enabled=True,
+    )
+
+    config_module._settings = settings
+
+    try:
+        yield settings
+    finally:
+        config_module._settings = original_settings

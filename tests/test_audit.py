@@ -1,5 +1,6 @@
 """Tests for audit ledger functionality."""
 
+import json
 from pathlib import Path
 
 from rexlit.audit.ledger import AuditEntry, AuditLedger
@@ -64,9 +65,13 @@ def test_audit_ledger_log(temp_dir: Path):
     assert entry.outputs == ["hash123"]
     assert entry.args == {"param": "value"}
     assert "rexlit" in entry.versions
+    assert entry.sequence == 1
+    assert entry.signature is not None
 
     # Verify file was created
     assert ledger_path.exists()
+    # Metadata should also be persisted
+    assert ledger_path.with_suffix(".meta").exists()
 
 
 def test_audit_ledger_read_all(temp_dir: Path):
@@ -85,6 +90,7 @@ def test_audit_ledger_read_all(temp_dir: Path):
     assert entries[0].operation == "op1"
     assert entries[1].operation == "op2"
     assert entries[2].operation == "op3"
+    assert [entry.sequence for entry in entries] == [1, 2, 3]
 
 
 def test_audit_ledger_verify(temp_dir: Path):
@@ -170,6 +176,8 @@ def test_audit_chain_first_entry_genesis_hash(temp_dir: Path):
 
     # First entry should have genesis hash
     assert entry.previous_hash == "0" * 64
+    assert entry.sequence == 1
+    assert entry.signature is not None
 
 
 def test_audit_chain_entries_linked(temp_dir: Path):
@@ -185,6 +193,7 @@ def test_audit_chain_entries_linked(temp_dir: Path):
     assert entry1.previous_hash == "0" * 64
     assert entry2.previous_hash == entry1.entry_hash
     assert entry3.previous_hash == entry2.entry_hash
+    assert [entry.sequence for entry in (entry1, entry2, entry3)] == [1, 2, 3]
 
 
 def test_audit_chain_hash_includes_previous_hash(temp_dir: Path):
@@ -211,17 +220,15 @@ def test_audit_tampering_modified_entry_content(temp_dir: Path):
     ledger.log(operation="op3", inputs=["file3.pdf"], outputs=["hash3"])
 
     # Read and modify entry content
-    with open(ledger_path) as f:
+    with open(ledger_path, encoding="utf-8") as f:
         lines = f.readlines()
 
     # Tamper with middle entry - change operation name
-    import json
-
     entry_data = json.loads(lines[1])
     entry_data["operation"] = "TAMPERED"
 
     # Write back tampered ledger
-    with open(ledger_path, "w") as f:
+    with open(ledger_path, "w", encoding="utf-8") as f:
         f.write(lines[0])
         f.write(json.dumps(entry_data) + "\n")
         f.write(lines[2])
@@ -231,7 +238,8 @@ def test_audit_tampering_modified_entry_content(temp_dir: Path):
     is_valid, error = ledger2.verify()
     assert is_valid is False
     assert error is not None
-    assert "invalid hash" in error.lower()
+    lowered = error.lower()
+    assert "invalid hash" in lowered or "breaks hash chain" in lowered
 
 
 def test_audit_tampering_deleted_middle_entry(temp_dir: Path):
@@ -246,11 +254,11 @@ def test_audit_tampering_deleted_middle_entry(temp_dir: Path):
     ledger.log(operation="op4", inputs=["file4.pdf"], outputs=["hash4"])
 
     # Read entries
-    with open(ledger_path) as f:
+    with open(ledger_path, encoding="utf-8") as f:
         lines = f.readlines()
 
     # Delete middle entries (op2 and op3)
-    with open(ledger_path, "w") as f:
+    with open(ledger_path, "w", encoding="utf-8") as f:
         f.write(lines[0])  # op1
         f.write(lines[3])  # op4
 
@@ -259,7 +267,8 @@ def test_audit_tampering_deleted_middle_entry(temp_dir: Path):
     is_valid, error = ledger2.verify()
     assert is_valid is False
     assert error is not None
-    assert "breaks hash chain" in error.lower()
+    lowered = error.lower()
+    assert "invalid hash" in lowered or "breaks hash chain" in lowered
 
 
 def test_audit_tampering_reordered_entries(temp_dir: Path):
@@ -273,11 +282,11 @@ def test_audit_tampering_reordered_entries(temp_dir: Path):
     ledger.log(operation="op3", inputs=["file3.pdf"], outputs=["hash3"])
 
     # Read entries
-    with open(ledger_path) as f:
+    with open(ledger_path, encoding="utf-8") as f:
         lines = f.readlines()
 
     # Reorder entries (swap op2 and op3)
-    with open(ledger_path, "w") as f:
+    with open(ledger_path, "w", encoding="utf-8") as f:
         f.write(lines[0])  # op1
         f.write(lines[2])  # op3 (should be op2)
         f.write(lines[1])  # op2 (should be op3)
@@ -287,7 +296,8 @@ def test_audit_tampering_reordered_entries(temp_dir: Path):
     is_valid, error = ledger2.verify()
     assert is_valid is False
     assert error is not None
-    assert "breaks hash chain" in error.lower()
+    lowered = error.lower()
+    assert "invalid hash" in lowered or "breaks hash chain" in lowered
 
 
 def test_audit_tampering_duplicated_entry(temp_dir: Path):
@@ -301,11 +311,11 @@ def test_audit_tampering_duplicated_entry(temp_dir: Path):
     ledger.log(operation="op3", inputs=["file3.pdf"], outputs=["hash3"])
 
     # Read entries
-    with open(ledger_path) as f:
+    with open(ledger_path, encoding="utf-8") as f:
         lines = f.readlines()
 
     # Duplicate middle entry
-    with open(ledger_path, "w") as f:
+    with open(ledger_path, "w", encoding="utf-8") as f:
         f.write(lines[0])  # op1
         f.write(lines[1])  # op2
         f.write(lines[1])  # op2 again (duplicate)
@@ -316,7 +326,8 @@ def test_audit_tampering_duplicated_entry(temp_dir: Path):
     is_valid, error = ledger2.verify()
     assert is_valid is False
     assert error is not None
-    assert "breaks hash chain" in error.lower()
+    lowered = error.lower()
+    assert "invalid hash" in lowered or "breaks hash chain" in lowered
 
 
 def test_audit_tampering_invalid_genesis_hash(temp_dir: Path):
@@ -328,15 +339,13 @@ def test_audit_tampering_invalid_genesis_hash(temp_dir: Path):
     ledger.log(operation="op1", inputs=["file1.pdf"], outputs=["hash1"])
 
     # Read and modify first entry's previous_hash
-    import json
-
-    with open(ledger_path) as f:
+    with open(ledger_path, encoding="utf-8") as f:
         lines = f.readlines()
 
     entry_data = json.loads(lines[0])
     entry_data["previous_hash"] = "abc123"  # Invalid genesis hash
 
-    with open(ledger_path, "w") as f:
+    with open(ledger_path, "w", encoding="utf-8") as f:
         f.write(json.dumps(entry_data) + "\n")
 
     # Verify should detect invalid genesis hash
@@ -344,8 +353,8 @@ def test_audit_tampering_invalid_genesis_hash(temp_dir: Path):
     is_valid, error = ledger2.verify()
     assert is_valid is False
     assert error is not None
-    assert "invalid previous_hash" in error.lower()
-    assert "genesis" in error.lower()
+    lowered = error.lower()
+    assert "invalid hash" in lowered or "breaks hash chain" in lowered
 
 
 def test_audit_chain_persistence_across_ledger_instances(temp_dir: Path):
@@ -369,3 +378,84 @@ def test_audit_chain_persistence_across_ledger_instances(temp_dir: Path):
     is_valid, error = ledger3.verify()
     assert is_valid is True
     assert error is None
+
+
+def test_audit_metadata_mismatch_detected(temp_dir: Path):
+    """Tampering with metadata must be detected."""
+    ledger_path = temp_dir / "audit.jsonl"
+    ledger = AuditLedger(ledger_path)
+    ledger.log(operation="op1", inputs=["file1.pdf"], outputs=["hash1"])
+
+    metadata_path = ledger_path.with_suffix(".meta")
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["last_hash"] = "tampered"
+
+    # Avoid recomputing HMAC to simulate tampering
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    ledger2 = AuditLedger(ledger_path)
+    is_valid, error = ledger2.verify()
+    assert is_valid is False
+    assert error is not None
+    assert "metadata" in error.lower()
+
+
+def test_audit_detects_missing_ledger_file(temp_dir: Path):
+    """Deleting the ledger file must be detected."""
+    ledger_path = temp_dir / "audit.jsonl"
+    ledger = AuditLedger(ledger_path)
+    ledger.log(operation="op1", inputs=["file1.pdf"], outputs=["hash1"])
+
+    ledger_path.unlink()
+
+    ledger2 = AuditLedger(ledger_path)
+    is_valid, error = ledger2.verify()
+    assert is_valid is False
+    assert error is not None
+    assert "missing" in error.lower()
+
+
+def test_audit_detects_truncation(temp_dir: Path):
+    """Removing tail entries must be detected."""
+    ledger_path = temp_dir / "audit.jsonl"
+    ledger = AuditLedger(ledger_path)
+    ledger.log(operation="op1", inputs=["file1.pdf"], outputs=["hash1"])
+    ledger.log(operation="op2", inputs=["file2.pdf"], outputs=["hash2"])
+    ledger.log(operation="op3", inputs=["file3.pdf"], outputs=["hash3"])
+
+    with open(ledger_path, encoding="utf-8") as f:
+        lines = f.readlines()
+
+    # Remove last entry
+    with open(ledger_path, "w", encoding="utf-8") as f:
+        f.writelines(lines[:-1])
+
+    ledger2 = AuditLedger(ledger_path)
+    is_valid, error = ledger2.verify()
+    assert is_valid is False
+    assert error is not None
+    assert "metadata" in error.lower() or "sequence" in error.lower()
+
+
+def test_audit_detects_signature_tamper(temp_dir: Path):
+    """Tampering with a signature must be detected."""
+    ledger_path = temp_dir / "audit.jsonl"
+    ledger = AuditLedger(ledger_path)
+    ledger.log(operation="op1", inputs=["file1.pdf"], outputs=["hash1"])
+    ledger.log(operation="op2", inputs=["file2.pdf"], outputs=["hash2"])
+
+    with open(ledger_path, encoding="utf-8") as f:
+        lines = f.readlines()
+
+    entry = json.loads(lines[1])
+    entry["signature"] = "00" * 32
+
+    with open(ledger_path, "w", encoding="utf-8") as f:
+        f.write(lines[0])
+        f.write(json.dumps(entry) + "\n")
+
+    ledger2 = AuditLedger(ledger_path)
+    is_valid, error = ledger2.verify()
+    assert is_valid is False
+    assert error is not None
+    assert "signature" in error.lower()

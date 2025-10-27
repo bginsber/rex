@@ -3,12 +3,15 @@
 import json
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from rexlit.index.build import build_index
+from rexlit.bootstrap import TantivyIndexAdapter
+from rexlit.config import Settings
+from rexlit.index.build import build_dense_index, build_index
 from rexlit.index.metadata import IndexMetadata
-from rexlit.index.search import get_custodians, get_doctypes
+from rexlit.index.search import SearchResult, get_custodians, get_doctypes
 
 
 class TestIndexMetadata:
@@ -309,6 +312,198 @@ class TestParallelProcessing:
 
         # Verify all documents were indexed
         assert count == 10
+
+
+def test_build_index_populates_dense_collector(
+    temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dense collector receives textual payloads during indexing."""
+    doc_dir = temp_dir / "docs"
+    doc_dir.mkdir()
+    (doc_dir / "doc.txt").write_text("dense collector test")
+
+    index_dir = temp_dir / "index"
+    dense_collector: list[dict] = []
+
+    class DummyFuture:
+        def __init__(self, fn, arg):
+            self._result = fn(arg)
+
+        def result(self):
+            return self._result
+
+    class DummyExecutor:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):  # pragma: no cover - context teardown
+            return False
+
+        def submit(self, fn, arg):
+            return DummyFuture(fn, arg)
+
+    monkeypatch.setattr("rexlit.index.build.ProcessPoolExecutor", DummyExecutor)
+    monkeypatch.setattr("rexlit.index.build.as_completed", lambda futures: list(futures))
+
+    build_index(
+        doc_dir,
+        index_dir,
+        rebuild=True,
+        show_progress=False,
+        max_workers=1,
+        dense_collector=dense_collector,
+    )
+
+    assert dense_collector, "Dense collector should capture document payloads"
+    record = dense_collector[0]
+    assert record["identifier"]
+    assert record["text"] == "dense collector test"
+
+
+def test_build_dense_index_creates_artifacts(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Dense index builder calls embedder and persists metadata."""
+    monkeypatch.setattr(
+        "rexlit.index.build.embed_texts",
+        lambda texts, **kwargs: SimpleNamespace(
+            embeddings=[[0.1, 0.2]],
+            latency_ms=5.0,
+            usage={"prompt_tokens": 4},
+        ),
+    )
+
+    def fake_hnsw_build(self, embeddings, identifiers, doc_metadata=None, **kwargs):
+        self.index_path.parent.mkdir(parents=True, exist_ok=True)
+        self.index_path.write_bytes(b"index")
+        self.metadata_path.write_text(
+            json.dumps(
+                {
+                    "dim": self.dim,
+                    "space": self.space,
+                    "ids": list(identifiers),
+                    "ef_search": kwargs.get("ef_search", 64),
+                    "doc_metadata": doc_metadata or {},
+                }
+            )
+        )
+        self._ids = list(identifiers)
+        self._metadata = doc_metadata or {}
+
+    monkeypatch.setattr("rexlit.index.hnsw_store.HNSWStore.build", fake_hnsw_build)
+
+    dense_docs = [
+        {
+            "identifier": "doc-sha",
+            "path": "doc.txt",
+            "sha256": "doc-sha",
+            "custodian": None,
+            "doctype": "txt",
+            "text": "dense body",
+        }
+    ]
+
+    result = build_dense_index(
+        dense_docs,
+        index_dir=temp_dir,
+        dim=2,
+        batch_size=1,
+    )
+
+    assert result is not None
+    assert Path(result["index_path"]).exists()
+    metadata_payload = json.loads(Path(result["metadata_path"]).read_text())
+    assert metadata_payload["ids"] == ["doc-sha"]
+    assert result["usage"]["vectors"] == 1.0
+    assert result["usage"]["dim"] == 2.0
+
+
+def test_tantivy_adapter_dense_requires_online(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Dense indexing refuses to run when offline."""
+    settings = Settings(data_dir=temp_dir, online=False)
+    adapter = TantivyIndexAdapter(settings)
+
+    monkeypatch.setattr("rexlit.bootstrap.build_index", lambda *args, **kwargs: 0)
+
+    with pytest.raises(RuntimeError):
+        adapter.build(temp_dir, rebuild=False, dense=True)
+
+
+def test_tantivy_adapter_dense_build_invokes_dense_pipeline(
+    temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dense build delegates to dense_index builder when online."""
+    settings = Settings(data_dir=temp_dir, online=True)
+    adapter = TantivyIndexAdapter(settings)
+
+    def fake_build_index(source, index_dir, *, dense_collector=None, **kwargs):
+        if dense_collector is not None:
+            dense_collector.append(
+                {
+                    "identifier": "doc-sha",
+                    "path": "doc.txt",
+                    "sha256": "doc-sha",
+                    "custodian": None,
+                    "doctype": "txt",
+                    "text": "payload",
+                }
+            )
+        return 5
+
+    monkeypatch.setattr("rexlit.bootstrap.build_index", fake_build_index)
+
+    called: dict = {}
+
+    def fake_dense_index(docs, **kwargs):
+        called["docs"] = docs
+        called["kwargs"] = kwargs
+        return {"index_path": str(temp_dir / "dense" / "kanon2_768.hnsw"), "usage": {"vectors": 1}}
+
+    monkeypatch.setattr("rexlit.bootstrap.build_dense_index", fake_dense_index)
+
+    result = adapter.build(temp_dir, rebuild=False, dense=True)
+    assert result == 5
+    assert called["docs"]
+
+
+def test_tantivy_adapter_dense_search_requires_online(temp_dir: Path) -> None:
+    """Dense search enforces online guard."""
+    settings = Settings(data_dir=temp_dir, online=False)
+    adapter = TantivyIndexAdapter(settings)
+
+    with pytest.raises(RuntimeError):
+        adapter.search("query", limit=5, mode="dense")
+
+
+def test_tantivy_adapter_dense_search_delegates_when_online(
+    temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dense search delegates to dense search helper when permitted."""
+    settings = Settings(data_dir=temp_dir, online=True)
+    adapter = TantivyIndexAdapter(settings)
+
+    dense_result = SearchResult(
+        path="doc.txt",
+        sha256="doc-sha",
+        custodian=None,
+        doctype="txt",
+        score=0.9,
+        dense_score=0.9,
+        lexical_score=None,
+        strategy="dense",
+        snippet=None,
+        metadata=None,
+    )
+
+    monkeypatch.setattr(
+        "rexlit.bootstrap.dense_search_index",
+        lambda *args, **kwargs: ([dense_result], {"usage": {}}),
+    )
+
+    results = adapter.search("query", limit=1, mode="dense")
+    assert len(results) == 1
+    assert results[0].strategy == "dense"
 
     def test_parallel_processing_error_handling(self, temp_dir: Path):
         """Test that parallel processing handles errors gracefully."""

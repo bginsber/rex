@@ -2,9 +2,17 @@
 
 import os
 from pathlib import Path
+from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, PrivateAttr, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from rexlit.utils.crypto import (
+    decrypt_blob,
+    encrypt_blob,
+    load_or_create_fernet_key,
+    load_or_create_hmac_key,
+)
 
 
 def get_xdg_data_home() -> Path:
@@ -21,6 +29,9 @@ def get_xdg_config_home() -> Path:
     if xdg_config:
         return Path(xdg_config)
     return Path.home() / ".config"
+
+
+APIKeyName = Literal["anthropic", "deepseek"]
 
 
 class Settings(BaseSettings):
@@ -55,12 +66,12 @@ class Settings(BaseSettings):
     )
 
     # API keys (online features only)
-    anthropic_api_key: str | None = Field(
+    anthropic_api_key: SecretStr | None = Field(
         default=None,
         description="Anthropic API key for Claude Agent SDK",
     )
 
-    deepseek_api_key: str | None = Field(
+    deepseek_api_key: SecretStr | None = Field(
         default=None,
         description="DeepSeek API key for online OCR",
     )
@@ -71,11 +82,40 @@ class Settings(BaseSettings):
         description="Enable append-only audit ledger",
     )
 
+    pii_key_path: Path | None = Field(
+        default=None,
+        description="Location of the symmetric key used to encrypt PII findings",
+    )
+
+    audit_hmac_key_path: Path | None = Field(
+        default=None,
+        description="Location of the audit ledger HMAC key for tamper detection",
+    )
+
+    api_secret_key_path: Path | None = Field(
+        default=None,
+        description="Location of the master encryption key used for API secrets",
+    )
+
     # Index settings
     index_backend: str = Field(
         default="tantivy",
         description="Search backend: tantivy or whoosh",
     )
+
+    _api_key_cache: dict[str, str | None] = PrivateAttr(default_factory=dict)
+
+    def model_post_init(self, __context: Any) -> None:
+        """Persist inline API keys into the encrypted secrets store."""
+        super().model_post_init(__context)
+        for provider in ("anthropic", "deepseek"):
+            field_name = f"{provider}_api_key"
+            secret: SecretStr | None = getattr(self, field_name)
+            if secret is None:
+                continue
+            self.store_api_key(provider, secret.get_secret_value())
+            # Prevent accidental plaintext reuse once persisted.
+            object.__setattr__(self, field_name, None)
 
     def get_data_dir(self) -> Path:
         """Get the data directory, creating if necessary."""
@@ -106,6 +146,90 @@ class Settings(BaseSettings):
         index_dir = self.get_data_dir() / "index"
         index_dir.mkdir(parents=True, exist_ok=True)
         return index_dir
+
+    def get_pii_key(self) -> bytes:
+        """Return the Fernet key used to encrypt PII findings."""
+        key_path = (
+            self.pii_key_path
+            if self.pii_key_path is not None
+            else self.get_config_dir() / "pii.key"
+        )
+        return load_or_create_fernet_key(key_path)
+
+    def get_audit_hmac_key(self) -> bytes:
+        """Return the HMAC key used to seal audit ledger metadata."""
+        key_path = (
+            self.audit_hmac_key_path
+            if self.audit_hmac_key_path is not None
+            else self.get_config_dir() / "audit-ledger.key"
+        )
+        return load_or_create_hmac_key(key_path, length=32)
+
+    def get_pii_store_path(self) -> Path:
+        """Return the path used to persist encrypted PII findings."""
+        return self.get_data_dir() / "pii_findings.enc"
+
+    def _get_api_secret_store_key(self) -> bytes:
+        """Load (or create) the Fernet key that seals API secrets."""
+        key_path = (
+            self.api_secret_key_path
+            if self.api_secret_key_path is not None
+            else self.get_config_dir() / "api-secrets.key"
+        )
+        return load_or_create_fernet_key(key_path)
+
+    def _get_api_key_path(self, provider: APIKeyName) -> Path:
+        """Return the encrypted storage location for ``provider``."""
+        return self.get_config_dir() / "secrets" / f"{provider}.api.enc"
+
+    def store_api_key(self, provider: APIKeyName, secret: str) -> None:
+        """Persist ``secret`` for ``provider`` using at-rest encryption."""
+        path = self._get_api_key_path(provider)
+        token = encrypt_blob(secret.encode("utf-8"), key=self._get_api_secret_store_key())
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, token)
+        finally:
+            os.close(fd)
+        try:
+            os.chmod(path, 0o600)
+        except PermissionError:
+            # Windows may not support POSIX chmod semantics; ignore best-effort failure.
+            pass
+
+        self._api_key_cache[provider] = secret
+
+    def get_api_key(self, provider: APIKeyName) -> str | None:
+        """Retrieve the API key for ``provider`` from the encrypted store."""
+        if provider in self._api_key_cache:
+            return self._api_key_cache[provider]
+
+        path = self._get_api_key_path(provider)
+        if not path.exists():
+            self._api_key_cache[provider] = None
+            return None
+
+        try:
+            token = path.read_bytes()
+            secret = decrypt_blob(
+                token,
+                key=self._get_api_secret_store_key(),
+            ).decode("utf-8")
+        except Exception as exc:  # noqa: BLE001 - any failure leaves storage unreadable
+            raise RuntimeError(f"Failed to load API key for provider '{provider}'.") from exc
+
+        self._api_key_cache[provider] = secret
+        return secret
+
+    def get_anthropic_api_key(self) -> str | None:
+        """Convenience accessor for the Anthropic API key."""
+        return self.get_api_key("anthropic")
+
+    def get_deepseek_api_key(self) -> str | None:
+        """Convenience accessor for the DeepSeek API key."""
+        return self.get_api_key("deepseek")
 
 
 # Global settings instance

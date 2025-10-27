@@ -185,10 +185,11 @@ Each audit entry contains:
 ```json
 {
   "timestamp": "2025-10-23T09:15:23.123456Z",
-  "action": "INDEX_BUILD_COMPLETE",
-  "details": {"indexed": 1000},
-  "hash": "4a7b3c2d9f1e8a4b2c5d7f3e1a6b9d4c...",
-  "previous_hash": "9f1e8a4b2c5d7f3e1a6b9d4c2a7b3c2d..."
+  "operation": "index.build",
+  "sequence": 42,
+  "previous_hash": "9f1e8a4b2c5d7f3e1a6b9d4c2a7b3c2d...",
+  "entry_hash": "4a7b3c2d9f1e8a4b2c5d7f3e1a6b9d4c...",
+  "signature": "5fd5b996e0a9b0c1..."
 }
 ```
 
@@ -206,12 +207,22 @@ hash = SHA256(
 - First entry has `previous_hash = "0000000000000000..."`
 - Establishes the chain starting point
 
+#### HMAC-Sealed Ledger Tip
+
+- Each entry is signed with an HMAC keyed by a secret stored under `~/.config/rexlit/audit-ledger.key`.
+- The ledger tip (`last_sequence`, `last_hash`) is replicated in `audit.jsonl.meta` and sealed with the same HMAC.
+- Verification fails if:
+  - An entry signature does not match (content tampering)
+  - The ledger file is truncated or deleted (metadata mismatch)
+  - Metadata is altered without the secret key (HMAC mismatch)
+
 #### Cryptographic Properties
 
 1. **Immutability**: Changing any entry breaks all subsequent hashes
-2. **Append-Only**: No deletions without breaking chain
+2. **Append-Only**: No deletions without breaking chain or metadata seal
 3. **Temporal Ordering**: Reordering breaks linkage
-4. **Tamper-Evidence**: Verification detects any modification
+4. **Tamper-Evidence**: Verification detects content, signature, or metadata tampering
+5. **Deletion Detection**: Missing files or truncated tails trigger verification failure
 
 #### Example Attack Detection
 
@@ -249,7 +260,19 @@ os.fsync(file.fileno())  # Force write to disk
 
 ---
 
-### 3. Input Validation
+### 3. PII Encryption at Rest
+
+**Status**: ✅ Production-Ready
+
+- PII findings are persisted via `EncryptedPIIStore` which encrypts every record using Fernet (AES-128 + HMAC).
+- Encryption keys are generated on first use and stored at `~/.config/rexlit/pii.key` with `0600` permissions.
+- The encrypted findings file (`pii_findings.enc`) contains only ciphertext; document identifiers, entity text, and coordinates are never written in plaintext.
+- Decryption occurs in memory only when calling `EncryptedPIIStore.read_*` helpers.
+- `EncryptedPIIStore.purge()` securely removes all stored ciphertext for breach response workflows.
+
+---
+
+### 4. Input Validation
 
 **Status**: ✅ Implemented
 
@@ -276,7 +299,7 @@ if path.suffix.lower() not in ALLOWED_EXTENSIONS:
 
 ---
 
-### 4. Minimal Attack Surface
+### 5. Minimal Attack Surface
 
 **Status**: ✅ By Design
 

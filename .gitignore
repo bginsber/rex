@@ -45,3 +45,4 @@ data/
 .venv/
 .coverage
 .pytest_cache/
+.worktrees
