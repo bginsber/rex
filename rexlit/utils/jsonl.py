@@ -5,31 +5,11 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from dataclasses import asdict, dataclass, is_dataclass
-from datetime import UTC, datetime
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from rexlit import __version__
-
-
-@dataclass(frozen=True, slots=True)
-class SchemaStamp:
-    """Stamp applied to JSONL records to encode schema provenance."""
-
-    schema_id: str
-    schema_version: int
-    producer: str
-    produced_at: str
-
-    def apply(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Return a copy of ``payload`` with schema metadata overlaid."""
-        stamped = dict(payload)
-        stamped["schema_id"] = self.schema_id
-        stamped["schema_version"] = self.schema_version
-        stamped["producer"] = self.producer
-        stamped["produced_at"] = self.produced_at
-        return stamped
+from rexlit.utils.schema import SchemaStamp, build_schema_stamp
 
 
 def _normalize_record(record: Any, *, schema_stamp: SchemaStamp | None = None) -> str:
@@ -87,15 +67,11 @@ def _build_schema_stamp(
     if schema_id is None or schema_version is None:
         raise ValueError("Both schema_id and schema_version are required when stamping records.")
 
-    default_producer = f"rexlit-{__version__}"
-    metadata_producer = producer or default_producer
-    metadata_produced_at = produced_at or datetime.now(UTC).isoformat()
-
-    return SchemaStamp(
+    return build_schema_stamp(
         schema_id=schema_id,
         schema_version=schema_version,
-        producer=metadata_producer,
-        produced_at=metadata_produced_at,
+        producer=producer,
+        produced_at=produced_at,
     )
 
 
