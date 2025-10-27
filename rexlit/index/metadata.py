@@ -5,7 +5,6 @@ import logging
 from bisect import bisect_left
 from pathlib import Path
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -40,7 +39,7 @@ class IndexMetadata:
                 with open(self.cache_file) as f:
                     data = json.load(f)
                     return self._normalize_loaded_cache(data)
-            except (json.JSONDecodeError, IOError) as exc:
+            except (OSError, json.JSONDecodeError) as exc:
                 return self._handle_corrupt_cache(f"{exc}")
         return self._empty_cache()
 
@@ -136,7 +135,7 @@ class IndexMetadata:
         try:
             with open(self.cache_file, "w") as f:
                 json.dump(self._cache, f, indent=2)
-        except IOError as e:
+        except OSError as e:
             # Log error but don't fail the indexing process
             print(f"Warning: Failed to save metadata cache: {e}")
 

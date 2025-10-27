@@ -1,7 +1,8 @@
 """Storage port interface for filesystem operations."""
 
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Protocol, Iterator, Any
+from typing import Any, Protocol
 
 
 class StoragePort(Protocol):

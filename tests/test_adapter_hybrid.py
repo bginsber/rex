@@ -7,9 +7,7 @@ from rexlit.config import Settings
 from rexlit.index.search import SearchResult
 
 
-def test_tantivy_adapter_hybrid_search_delegates_when_online(
-    temp_dir: Path, monkeypatch
-) -> None:
+def test_tantivy_adapter_hybrid_search_delegates_when_online(temp_dir: Path, monkeypatch) -> None:
     settings = Settings(data_dir=temp_dir, online=True)
     adapter = TantivyIndexAdapter(settings)
 

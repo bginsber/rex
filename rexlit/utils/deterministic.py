@@ -1,8 +1,9 @@
 """Deterministic ordering utilities for reproducible workflows."""
 
 import hashlib
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable, TypeVar
+from typing import Any, TypeVar
 
 from rexlit.utils.hashing import compute_sha256_file
 
@@ -26,6 +27,7 @@ def deterministic_sort_paths(paths: Iterable[Path]) -> list[Path]:
         >>> sorted_paths = deterministic_sort_paths(paths)
         >>> # Always returns same order based on content hash + path
     """
+
     def sort_key(path: Path) -> tuple[str, str]:
         """Compute sort key: (content_hash, path_str)."""
         # Compute content hash if file exists

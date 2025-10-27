@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 
 from rexlit.app.ports.embedding import EmbeddingPort, EmbeddingResult
-from rexlit.app.ports.vector_store import VectorStorePort, VectorHit
 from rexlit.app.ports.ledger import LedgerPort
+from rexlit.app.ports.vector_store import VectorHit, VectorStorePort
 from rexlit.index.build import build_dense_index
 
 
@@ -71,7 +72,9 @@ class MockVectorStore(VectorStorePort):
 class DummyLedger(LedgerPort):
     last: dict[str, Any] | None = None
 
-    def log(self, operation: str, inputs: list[str], outputs: list[str], args: dict[str, Any]) -> None:  # noqa: D401
+    def log(
+        self, operation: str, inputs: list[str], outputs: list[str], args: dict[str, Any]
+    ) -> None:  # noqa: D401
         self.last = {"operation": operation, "inputs": inputs, "outputs": outputs, "args": args}
 
     def verify(self) -> bool:  # pragma: no cover - not used

@@ -8,15 +8,81 @@ from rexlit.index.search import SearchResult, hybrid_search_index
 def test_hybrid_rrf_fusion_orders_by_rrf(monkeypatch, tmp_path: Path) -> None:
     # Lexical ranks: A(1), B(2), C(3)
     lex = [
-        SearchResult(path="a.txt", sha256="A", custodian=None, doctype=None, score=3.0, lexical_score=3.0, dense_score=None, strategy="lexical", snippet=None, metadata=None),  # noqa: E501
-        SearchResult(path="b.txt", sha256="B", custodian=None, doctype=None, score=2.0, lexical_score=2.0, dense_score=None, strategy="lexical", snippet=None, metadata=None),  # noqa: E501
-        SearchResult(path="c.txt", sha256="C", custodian=None, doctype=None, score=1.0, lexical_score=1.0, dense_score=None, strategy="lexical", snippet=None, metadata=None),  # noqa: E501
+        SearchResult(
+            path="a.txt",
+            sha256="A",
+            custodian=None,
+            doctype=None,
+            score=3.0,
+            lexical_score=3.0,
+            dense_score=None,
+            strategy="lexical",
+            snippet=None,
+            metadata=None,
+        ),  # noqa: E501
+        SearchResult(
+            path="b.txt",
+            sha256="B",
+            custodian=None,
+            doctype=None,
+            score=2.0,
+            lexical_score=2.0,
+            dense_score=None,
+            strategy="lexical",
+            snippet=None,
+            metadata=None,
+        ),  # noqa: E501
+        SearchResult(
+            path="c.txt",
+            sha256="C",
+            custodian=None,
+            doctype=None,
+            score=1.0,
+            lexical_score=1.0,
+            dense_score=None,
+            strategy="lexical",
+            snippet=None,
+            metadata=None,
+        ),  # noqa: E501
     ]
     # Dense ranks: B(1), C(2), A(3)
     den = [
-        SearchResult(path="b.txt", sha256="B", custodian=None, doctype=None, score=0.9, lexical_score=None, dense_score=0.9, strategy="dense", snippet=None, metadata=None),  # noqa: E501
-        SearchResult(path="c.txt", sha256="C", custodian=None, doctype=None, score=0.8, lexical_score=None, dense_score=0.8, strategy="dense", snippet=None, metadata=None),  # noqa: E501
-        SearchResult(path="a.txt", sha256="A", custodian=None, doctype=None, score=0.7, lexical_score=None, dense_score=0.7, strategy="dense", snippet=None, metadata=None),  # noqa: E501
+        SearchResult(
+            path="b.txt",
+            sha256="B",
+            custodian=None,
+            doctype=None,
+            score=0.9,
+            lexical_score=None,
+            dense_score=0.9,
+            strategy="dense",
+            snippet=None,
+            metadata=None,
+        ),  # noqa: E501
+        SearchResult(
+            path="c.txt",
+            sha256="C",
+            custodian=None,
+            doctype=None,
+            score=0.8,
+            lexical_score=None,
+            dense_score=0.8,
+            strategy="dense",
+            snippet=None,
+            metadata=None,
+        ),  # noqa: E501
+        SearchResult(
+            path="a.txt",
+            sha256="A",
+            custodian=None,
+            doctype=None,
+            score=0.7,
+            lexical_score=None,
+            dense_score=0.7,
+            strategy="dense",
+            snippet=None,
+            metadata=None,
+        ),  # noqa: E501
     ]
 
     monkeypatch.setattr("rexlit.index.search.search_index", lambda *a, **k: lex)

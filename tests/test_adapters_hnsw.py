@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sys
-from types import SimpleNamespace
 from pathlib import Path
 
 import numpy as np
@@ -16,7 +15,9 @@ class _FakeHNSWIndex:
         self._vecs: np.ndarray | None = None
 
     # Methods mirroring hnswlib.Index
-    def init_index(self, *, max_elements: int, ef_construction: int, M: int) -> None:  # noqa: ARG002
+    def init_index(
+        self, *, max_elements: int, ef_construction: int, M: int
+    ) -> None:  # noqa: ARG002
         return None
 
     def add_items(self, array: np.ndarray, ids: np.ndarray) -> None:  # noqa: ARG002

@@ -284,9 +284,7 @@ class TestParallelProcessing:
 
         # Build index with parallel processing (2 workers for testing)
         index_dir = temp_dir / "index"
-        count = build_index(
-            doc_dir, index_dir, rebuild=True, show_progress=False, max_workers=2
-        )
+        count = build_index(doc_dir, index_dir, rebuild=True, show_progress=False, max_workers=2)
 
         # Verify all documents were indexed
         assert count == 20, "All documents should be indexed"
@@ -306,9 +304,7 @@ class TestParallelProcessing:
 
         # Build index with single worker
         index_dir = temp_dir / "index"
-        count = build_index(
-            doc_dir, index_dir, rebuild=True, show_progress=False, max_workers=1
-        )
+        count = build_index(doc_dir, index_dir, rebuild=True, show_progress=False, max_workers=1)
 
         # Verify all documents were indexed
         assert count == 10
@@ -365,7 +361,9 @@ def test_build_index_populates_dense_collector(
     assert record["text"] == "dense collector test"
 
 
-def test_build_dense_index_creates_artifacts(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_dense_index_creates_artifacts(
+    temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Dense index builder calls embedder and persists metadata."""
     monkeypatch.setattr(
         "rexlit.index.build.embed_texts",
@@ -421,7 +419,9 @@ def test_build_dense_index_creates_artifacts(temp_dir: Path, monkeypatch: pytest
     assert result["usage"]["dim"] == 2.0
 
 
-def test_tantivy_adapter_dense_requires_online(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_tantivy_adapter_dense_requires_online(
+    temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Dense indexing refuses to run when offline."""
     settings = Settings(data_dir=temp_dir, online=False)
     adapter = TantivyIndexAdapter(settings)
@@ -522,9 +522,7 @@ def test_tantivy_adapter_dense_search_delegates_when_online(
 
         # Build index - should continue despite errors
         index_dir = temp_dir / "index"
-        count = build_index(
-            doc_dir, index_dir, rebuild=True, show_progress=False, max_workers=2
-        )
+        count = build_index(doc_dir, index_dir, rebuild=True, show_progress=False, max_workers=2)
 
         # Should have indexed only the valid documents
         assert count == 5, "Only valid documents should be indexed"
@@ -543,9 +541,7 @@ def test_tantivy_adapter_dense_search_delegates_when_online(
         # Build index with parallel processing
         index_dir = temp_dir / "index"
         start = time.time()
-        count = build_index(
-            doc_dir, index_dir, rebuild=True, show_progress=False, max_workers=4
-        )
+        count = build_index(doc_dir, index_dir, rebuild=True, show_progress=False, max_workers=4)
         elapsed = time.time() - start
 
         # Verify all documents were indexed
@@ -611,9 +607,7 @@ def test_tantivy_adapter_dense_search_delegates_when_online(
 
         # Build index with default workers (None)
         index_dir = temp_dir / "index"
-        count = build_index(
-            doc_dir, index_dir, rebuild=True, show_progress=False, max_workers=None
-        )
+        count = build_index(doc_dir, index_dir, rebuild=True, show_progress=False, max_workers=None)
 
         # Should work with default configuration
         assert count == 10

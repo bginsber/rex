@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import os
 import time
-from dataclasses import dataclass
 import warnings
-from typing import Any, Iterable, Sequence
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from typing import Any
 
 try:  # pragma: no cover - optional dependency guard
     from isaacus import Isaacus
@@ -66,12 +67,12 @@ def _init_client(
     if api_base:
         # Isaacus SDK exposes api_base and/or base_url depending on version.
         if hasattr(client, "api_base"):
-            setattr(client, "api_base", api_base)
+            client.api_base = api_base
         elif hasattr(client, "base_url"):
-            setattr(client, "base_url", api_base)
+            client.base_url = api_base
         else:  # pragma: no cover - defensive branch
             # Fallback to attribute assignment for forward compatibility.
-            setattr(client, "api_base", api_base)
+            client.api_base = api_base
 
     return client
 

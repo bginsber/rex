@@ -9,10 +9,10 @@ import numpy as np
 import tantivy
 from pydantic import BaseModel, Field
 
+from rexlit.app.ports import EmbeddingPort, VectorStorePort
 from rexlit.index.build import create_schema
 from rexlit.index.hnsw_store import HNSWStore  # compatibility shim
 from rexlit.index.kanon2_embedder import QUERY_TASK, embed_texts  # compatibility shim
-from rexlit.app.ports import EmbeddingPort, VectorStorePort
 from rexlit.index.metadata import IndexMetadata
 
 
@@ -96,9 +96,9 @@ def search_index(
             custodian=custodian if custodian else None,
             doctype=doctype if doctype else None,
             score=score,
-             lexical_score=score,
-             dense_score=None,
-             strategy="lexical",
+            lexical_score=score,
+            dense_score=None,
+            strategy="lexical",
             snippet=None,  # TODO: Extract snippet from body
             metadata=metadata if metadata else None,
         )
@@ -129,12 +129,15 @@ def dense_search_index(
         store = HNSWStore(dim=dim, index_path=store_path)
         store.load()
         resolve_meta = store.resolve_metadata
+
         def _query(v: np.ndarray) -> list:
             return store.query(v, top_k=limit)
+
     else:
         vs = vector_store
         vs.load()
         resolve_meta = lambda ident: getattr(vs, "_doc_meta", {}).get(ident) if hasattr(vs, "_doc_meta") else {}  # type: ignore[assignment]
+
         def _query(v: np.ndarray) -> list:
             return vs.query(v, top_k=limit)
 
@@ -165,7 +168,7 @@ def dense_search_index(
     for rank, hit in enumerate(hits, 1):
         # Handle both shim and adapter hits
         if hasattr(hit, "metadata"):
-            metadata = getattr(hit, "metadata") or {}
+            metadata = hit.metadata or {}
         else:
             metadata = resolve_meta(hit.identifier) or {}
         result = SearchResult(

@@ -1,11 +1,12 @@
 """Schema validation, migration, and metadata stamping utilities."""
 
-from dataclasses import dataclass
 import hashlib
 import json
-from datetime import datetime, timezone
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator, Mapping
+from typing import Any
 
 from rexlit import __version__
 
@@ -31,11 +32,7 @@ class SchemaMigrationError(Exception):
 def strip_schema_metadata(record: Mapping[str, Any]) -> dict[str, Any]:
     """Return a copy of ``record`` without schema metadata fields."""
 
-    return {
-        key: value
-        for key, value in record.items()
-        if key not in SCHEMA_METADATA_FIELDS
-    }
+    return {key: value for key, value in record.items() if key not in SCHEMA_METADATA_FIELDS}
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +86,7 @@ def load_schema(schema_id: str, version: int = 1) -> dict[str, Any]:
     with open(schema_path) as f:
         return json.load(f)
 
+
 def build_schema_stamp(
     *,
     schema_id: str,
@@ -99,7 +97,7 @@ def build_schema_stamp(
     """Construct a :class:`SchemaStamp` for reuse across writers."""
 
     default_producer = producer or f"rexlit-{__version__}"
-    timestamp = produced_at or datetime.now(timezone.utc).isoformat()
+    timestamp = produced_at or datetime.now(UTC).isoformat()
     return SchemaStamp(
         schema_id=schema_id,
         schema_version=schema_version,
@@ -190,7 +188,9 @@ def validate_record(record: dict[str, Any], schema_id: str, schema_version: int 
         message = f"{schema_id}@{schema_version} validation failed: {exc.message}"
         raise SchemaValidationError(message) from exc
     except jsonschema.SchemaError as exc:  # pragma: no cover - schema authoring bug
-        raise SchemaValidationError(f"Invalid schema definition for {schema_id}@{schema_version}: {exc}") from exc
+        raise SchemaValidationError(
+            f"Invalid schema definition for {schema_id}@{schema_version}: {exc}"
+        ) from exc
 
     return True
 

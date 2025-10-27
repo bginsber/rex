@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from rexlit.app import M1Pipeline, PackService, RedactionService, ReportService
 from rexlit.app.adapters import (
     FileSystemStorageAdapter,
     HashDeduper,
+    HNSWAdapter,
     IngestDiscoveryAdapter,
     JSONLineRedactionPlanner,
+    Kanon2Adapter,
     SequentialBatesPlanner,
     ZipPackager,
 )
@@ -20,24 +23,30 @@ from rexlit.app.ports import (
     BatesPlannerPort,
     DeduperPort,
     DiscoveryPort,
+    EmbeddingPort,
     IndexPort,
     LedgerPort,
     PackPort,
     RedactionPlannerPort,
     StoragePort,
+    VectorStorePort,
 )
-from rexlit.app.ports import EmbeddingPort, VectorStorePort
 from rexlit.audit.ledger import AuditLedger
 from rexlit.config import Settings, get_settings
-from rexlit.index.build import build_dense_index, build_index
+from rexlit.index.build import DenseDocument, build_dense_index, build_index
 from rexlit.index.search import (
     SearchResult as TantivySearchResult,
+)
+from rexlit.index.search import (
     dense_search_index,
+)
+from rexlit.index.search import (
     get_custodians as load_custodians,
+)
+from rexlit.index.search import (
     get_doctypes as load_doctypes,
 )
 from rexlit.utils.offline import OfflineModeGate
-from rexlit.app.adapters import HNSWAdapter, Kanon2Adapter
 
 
 @dataclass(slots=True)
@@ -73,20 +82,24 @@ class NoOpLedger:
     def append(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - compatibility alias
         return None
 
-    def read_all(self) -> list[Any]:
+    def read_all(self) -> list[dict[str, Any]]:
         return []
 
-    def verify(self) -> bool:
-        return True
+    def verify(self) -> tuple[bool, str | None]:
+        return (True, None)
 
 
 class StubIndexAdapter(IndexPort):
     """Placeholder index adapter used until Tantivy wiring lands."""
 
-    def add_document(self, path: str, text: str, metadata: dict) -> None:  # pragma: no cover - stub
+    def add_document(
+        self, path: str, text: str, metadata: dict[str, Any]
+    ) -> None:  # pragma: no cover - stub
         raise RuntimeError("Search indexing not yet implemented for offline bootstrap.")
 
-    def search(self, query: str, *, limit: int = 10, filters: dict | None = None):
+    def search(  # type: ignore[override]
+        self, query: str, *, limit: int = 10, filters: dict[str, Any] | None = None
+    ) -> list[TantivySearchResult]:
         raise RuntimeError("Search indexing not yet implemented for offline bootstrap.")
 
     def get_custodians(self) -> set[str]:
@@ -117,7 +130,9 @@ class TantivyIndexAdapter(IndexPort):
         self._ledger_port = ledger_port
         self._offline_gate = offline_gate or OfflineModeGate.from_settings(settings)
 
-    def add_document(self, path: str, text: str, metadata: dict) -> None:  # pragma: no cover - adapter writes via build
+    def add_document(
+        self, path: str, text: str, metadata: dict[str, Any]
+    ) -> None:  # pragma: no cover - adapter writes via build
         raise NotImplementedError("Use build() to create Tantivy indexes.")
 
     def build(
@@ -133,7 +148,7 @@ class TantivyIndexAdapter(IndexPort):
             self._offline_gate.require("Dense indexing")
 
         index_dir = self._settings.get_index_dir()
-        dense_documents: list[dict[str, Any]] = []
+        dense_documents: list[DenseDocument] = []
         collector = dense_documents if dense else None
         # Map passthrough kwargs for tantivy build
         passthrough: dict[str, Any] = {}
@@ -174,17 +189,18 @@ class TantivyIndexAdapter(IndexPort):
 
         return document_count
 
-    def search(
+    def search(  # type: ignore[override]
         self,
         query: str,
         *,
         limit: int = 10,
-        filters: dict | None = None,  # noqa: ARG002 - reserved for future use
+        filters: dict[str, Any] | None = None,  # noqa: ARG002 - reserved for future use
         mode: str | None = None,
         dim: int = 768,
         api_key: str | None = None,
         api_base: str | None = None,
     ) -> list[TantivySearchResult]:
+        # Extension of IndexPort.search to support dense/hybrid modes
         strategy = (mode or "lexical").lower()
 
         if strategy == "dense":
@@ -249,8 +265,8 @@ def _create_ledger(settings: Settings) -> LedgerPort | None:
         fsync_interval=settings.audit_fsync_interval,
     )
     # Compatibility alias for legacy call sites
-    setattr(ledger, "append", ledger.log)
-    return ledger
+    ledger.append = ledger.log  # type: ignore[attr-defined]
+    return ledger  # type: ignore[return-value]
 
 
 def bootstrap_application(settings: Settings | None = None) -> ApplicationContainer:
@@ -309,11 +325,7 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
         pack_port=pack_adapter,
         index_port=TantivyIndexAdapter(
             active_settings,
-            embedder=(
-                None
-                if not active_settings.online
-                else _safe_init_embedder(offline_gate)
-            ),
+            embedder=(None if not active_settings.online else _safe_init_embedder(offline_gate)),
             vector_store_factory=(
                 lambda index_dir, dim: HNSWAdapter(
                     index_path=Path(index_dir) / "dense" / f"kanon2_{int(dim)}.hnsw",
@@ -325,7 +337,12 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
         ),
         offline_gate=offline_gate,
         embedder=(None if not active_settings.online else _safe_init_embedder(offline_gate)),
-        vector_store_factory=(lambda index_dir, dim: HNSWAdapter(index_path=Path(index_dir) / "dense" / f"kanon2_{int(dim)}.hnsw", dimensions=int(dim))),
+        vector_store_factory=(
+            lambda index_dir, dim: HNSWAdapter(
+                index_path=Path(index_dir) / "dense" / f"kanon2_{int(dim)}.hnsw",
+                dimensions=int(dim),
+            )
+        ),
     )
 
 

@@ -1,7 +1,6 @@
 """Index port interface for search index operations."""
 
-from pathlib import Path
-from typing import Protocol, Iterator
+from typing import Any, Protocol
 
 from pydantic import BaseModel
 
@@ -26,7 +25,7 @@ class IndexPort(Protocol):
         self,
         path: str,
         text: str,
-        metadata: dict,
+        metadata: dict[str, Any],
     ) -> None:
         """Add document to index.
 
@@ -42,7 +41,7 @@ class IndexPort(Protocol):
         query: str,
         *,
         limit: int = 10,
-        filters: dict | None = None,
+        filters: dict[str, Any] | None = None,
     ) -> list[SearchResult]:
         """Search index.
 

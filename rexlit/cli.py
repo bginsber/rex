@@ -7,7 +7,7 @@ import typer
 
 from rexlit import __version__
 from rexlit.bootstrap import bootstrap_application
-from rexlit.config import Settings, get_settings, set_settings
+from rexlit.config import get_settings, set_settings
 from rexlit.utils.offline import OfflineModeGate
 
 app = typer.Typer(
@@ -161,7 +161,7 @@ def index_build(
         require_online(container.offline_gate, "Dense indexing")
 
     try:
-        count = container.index_port.build(
+        count = container.index_port.build(  # type: ignore[attr-defined]
             path,
             rebuild=rebuild,
             dense=dense,
@@ -241,7 +241,7 @@ def index_search(
         require_online(container.offline_gate, f"{mode_normalized} search")
 
     try:
-        results = container.index_port.search(
+        results = container.index_port.search(  # type: ignore[call-arg]
             query,
             limit=limit,
             mode=mode_normalized,
@@ -275,14 +275,18 @@ def index_search(
     for i, result in enumerate(results, 1):
         score_repr = f"{result.score:.2f}"
         components: list[str] = []
-        if result.strategy != "lexical" and result.lexical_score is not None:
-            components.append(f"lex={result.lexical_score:.2f}")
-        if result.dense_score is not None:
-            components.append(f"dense={result.dense_score:.2f}")
+        strategy = getattr(result, "strategy", "lexical")
+        lexical_score = getattr(result, "lexical_score", None)
+        dense_score = getattr(result, "dense_score", None)
+
+        if strategy != "lexical" and lexical_score is not None:
+            components.append(f"lex={lexical_score:.2f}")
+        if dense_score is not None:
+            components.append(f"dense={dense_score:.2f}")
         if components:
             score_repr += f" ({', '.join(components)})"
 
-        typer.echo(f"\n{i}. {result.path} [{result.strategy}] (score: {score_repr})")
+        typer.echo(f"\n{i}. {result.path} [{strategy}] (score: {score_repr})")
         if result.snippet:
             typer.echo(f"   {result.snippet}")
 

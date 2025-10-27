@@ -15,14 +15,17 @@ def test_cli_offline_dense_build_refuses(temp_dir: Path) -> None:
 
     runner = CliRunner()
     # Omit --online; pass --data-dir to isolate settings
-    result = runner.invoke(app, ["--data-dir", str(temp_dir / "data"), "index", "build", str(docs), "--dense"])  # fmt: off
+    result = runner.invoke(
+        app, ["--data-dir", str(temp_dir / "data"), "index", "build", str(docs), "--dense"]
+    )  # fmt: off
     assert result.exit_code == 2
     assert "requires online mode" in result.stdout.lower()
 
 
 def test_cli_offline_hybrid_search_refuses(temp_dir: Path) -> None:
     runner = CliRunner()
-    result = runner.invoke(app, ["--data-dir", str(temp_dir / "data"), "index", "search", "q", "--mode", "hybrid"])  # fmt: off
+    result = runner.invoke(
+        app, ["--data-dir", str(temp_dir / "data"), "index", "search", "q", "--mode", "hybrid"]
+    )  # fmt: off
     assert result.exit_code == 2
     assert "requires online mode" in result.stdout.lower()
-

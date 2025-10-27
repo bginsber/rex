@@ -12,13 +12,13 @@ from typing import TypedDict
 import numpy as np
 import tantivy
 
+from rexlit.app.ports import EmbeddingPort, LedgerPort, VectorStorePort
 from rexlit.index.hnsw_store import HNSWStore  # compatibility shim
 from rexlit.index.kanon2_embedder import (
     DOCUMENT_TASK,
     EmbeddingResult,  # legacy DTO used by _aggregate_usage
     embed_texts,  # compatibility shim
 )
-from rexlit.app.ports import EmbeddingPort, LedgerPort, VectorStorePort
 from rexlit.index.metadata import IndexMetadata
 from rexlit.ingest.discover import DocumentMetadata, discover_documents
 from rexlit.ingest.extract import extract_document
@@ -238,10 +238,7 @@ def build_index(
                 elif show_progress and indexed_count % 100 == 0:
                     elapsed = time.time() - start_time
                     docs_per_sec = indexed_count / elapsed if elapsed > 0 else 0
-                    print(
-                        f"Indexed {indexed_count} documents "
-                        f"({docs_per_sec:.1f} docs/sec)"
-                    )
+                    print(f"Indexed {indexed_count} documents " f"({docs_per_sec:.1f} docs/sec)")
 
             except Exception as e:  # pragma: no cover - defensive guard
                 skipped_count += 1
@@ -260,7 +257,7 @@ def build_index(
     docs_per_sec = indexed_count / elapsed if elapsed > 0 else 0
 
     if show_progress:
-        print(f"\nIndex complete:")
+        print("\nIndex complete:")
         print(f"  - Discovered: {discovered_count} documents")
         print(f"  - Indexed: {indexed_count} documents")
         print(f"  - Skipped: {skipped_count} documents")
@@ -433,9 +430,7 @@ def build_dense_index(
         telemetry_records.append(result)
 
         if len(result.embeddings) != len(batch):
-            raise RuntimeError(
-                "Embedding provider returned a mismatched number of vectors."
-            )
+            raise RuntimeError("Embedding provider returned a mismatched number of vectors.")
 
         embeddings.extend(result.embeddings)
         identifiers.extend(doc["identifier"] for doc in batch)

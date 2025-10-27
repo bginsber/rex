@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -27,17 +28,19 @@ class HNSWAdapter(VectorStorePort):
         self._space = space
         self._index: Any | None = None
         self._ids: list[str] | None = None
-        self._doc_meta: dict[str, dict] = {}
+        self._doc_meta: dict[str, dict[str, Any]] = {}
 
     @property
     def index_path(self) -> Path:
         return self._index_path
 
-    def _ensure_index(self):
+    def _ensure_index(self) -> Any:
         try:
-            import hnswlib  # type: ignore
+            import hnswlib
         except Exception as exc:  # pragma: no cover - optional dep
-            raise RuntimeError("hnswlib is required for dense retrieval. Install 'hnswlib'.") from exc
+            raise RuntimeError(
+                "hnswlib is required for dense retrieval. Install 'hnswlib'."
+            ) from exc
 
         if self._index is None:
             self._index = hnswlib.Index(space=self._space, dim=self._dim)
@@ -47,7 +50,7 @@ class HNSWAdapter(VectorStorePort):
         self,
         embeddings: np.ndarray,
         identifiers: Sequence[str],
-        metadata: dict[str, dict] | None = None,
+        metadata: dict[str, dict[str, Any]] | None = None,
         *,
         m: int = 32,
         ef_construction: int = 200,
@@ -68,16 +71,17 @@ class HNSWAdapter(VectorStorePort):
         index.set_ef(ef_search)
         index.save_index(str(self._index_path))
 
+        doc_meta_value = metadata or {}
         meta = {
             "dim": self._dim,
             "space": self._space,
             "ids": ids,
             "ef_search": ef_search,
-            "doc_metadata": metadata or {},
+            "doc_metadata": doc_meta_value,
         }
         self._meta_path.write_text(json.dumps(meta))
         self._ids = ids
-        self._doc_meta = meta["doc_metadata"]
+        self._doc_meta = doc_meta_value
 
     def load(self, *, ef_search: int = 64) -> None:
         if not self._index_path.exists():
@@ -91,10 +95,17 @@ class HNSWAdapter(VectorStorePort):
 
         meta = json.loads(self._meta_path.read_text())
         if int(meta.get("dim", -1)) != self._dim:
-            raise ValueError(f"Stored dimension {meta.get('dim')} does not match expected {self._dim}")
+            raise ValueError(
+                f"Stored dimension {meta.get('dim')} does not match expected {self._dim}"
+            )
 
         self._ids = list(meta.get("ids", []))
-        self._doc_meta = meta.get("doc_metadata", {})
+        loaded_doc_meta = meta.get("doc_metadata", {})
+        # Validate doc_metadata is a dict[str, dict[str, Any]]
+        if isinstance(loaded_doc_meta, dict):
+            self._doc_meta = loaded_doc_meta
+        else:
+            self._doc_meta = {}
 
     def query(self, vector: np.ndarray, *, top_k: int = 20) -> list[VectorHit]:
         if self._ids is None:
@@ -115,4 +126,3 @@ class HNSWAdapter(VectorStorePort):
             meta = self._doc_meta.get(doc_id, {}) if isinstance(self._doc_meta, dict) else {}
             hits.append(VectorHit(identifier=doc_id, score=score, metadata=meta))
         return hits
-

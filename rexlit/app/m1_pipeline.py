@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -18,15 +19,15 @@ from rexlit.app.ports import (
     DocumentRecord,
     LedgerPort,
     OCRPort,
-    PIIPort,
     PackPort,
+    PIIPort,
     RedactionPlannerPort,
     StoragePort,
 )
 from rexlit.config import Settings
+from rexlit.utils.deterministic import deterministic_order_documents
 from rexlit.utils.jsonl import atomic_write_jsonl
 from rexlit.utils.offline import OfflineModeGate
-from rexlit.utils.deterministic import deterministic_order_documents
 from rexlit.utils.plans import validate_redaction_plan_file
 
 StageStatus = Literal["pending", "completed", "skipped", "failed"]
@@ -144,9 +145,7 @@ class M1Pipeline:
 
         unique_docs = self._run_dedupe(discovered, stages)
 
-        redaction_plan_paths, redaction_plan_ids = self._run_redaction_planning(
-            unique_docs, stages
-        )
+        redaction_plan_paths, redaction_plan_ids = self._run_redaction_planning(unique_docs, stages)
 
         bates_plan = self._run_bates(unique_docs, stages)
 

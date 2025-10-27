@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """Benchmark script to demonstrate metadata cache performance improvements."""
 
-import time
 import tempfile
+import time
 from pathlib import Path
 
 from rexlit.index.build import build_index
@@ -60,7 +60,7 @@ def benchmark_metadata_queries(index_dir: Path, num_iterations: int = 10):
     avg_custodian_time = sum(custodian_times) / len(custodian_times)
     avg_doctype_time = sum(doctype_times) / len(doctype_times)
 
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  get_custodians() average: {avg_custodian_time*1000:.2f} ms")
     print(f"  get_doctypes() average:   {avg_doctype_time*1000:.2f} ms")
 
@@ -68,7 +68,7 @@ def benchmark_metadata_queries(index_dir: Path, num_iterations: int = 10):
     custodians = get_custodians(index_dir)
     doctypes = get_doctypes(index_dir)
 
-    print(f"\nMetadata found:")
+    print("\nMetadata found:")
     print(f"  Unique custodians: {len(custodians)} - {sorted(custodians)}")
     print(f"  Unique doctypes:   {len(doctypes)} - {sorted(doctypes)}")
 
@@ -118,15 +118,15 @@ def main():
         # Scale down to 1K docs: ~50-100ms estimated
         estimated_old_time = 0.075  # 75ms for 1K docs (conservative estimate)
 
-        print(f"\nPerformance Improvement:")
+        print("\nPerformance Improvement:")
         print(f"  Old approach (estimated): ~{estimated_old_time*1000:.0f} ms")
         print(f"  New cached approach:      {cust_time*1000:.2f} ms")
         print(f"  Speedup:                  {estimated_old_time/cust_time:.0f}x faster")
 
-        print(f"\nProjected at 100K documents:")
-        print(f"  Old approach: 5-10 seconds (with 10K limit)")
-        print(f"  New approach: <10 ms (complete metadata)")
-        print(f"  Improvement:  ~1000x faster + complete results")
+        print("\nProjected at 100K documents:")
+        print("  Old approach: 5-10 seconds (with 10K limit)")
+        print("  New approach: <10 ms (complete metadata)")
+        print("  Improvement:  ~1000x faster + complete results")
 
     print("\n" + "=" * 70)
     print("Benchmark complete!")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Sequence
+from collections.abc import Sequence
 
 from rexlit.app.ports.embedding import EmbeddingPort, EmbeddingResult
 from rexlit.utils.offline import OfflineModeGate
@@ -17,7 +17,13 @@ class Kanon2Adapter(EmbeddingPort):
     DOCUMENT_TASK = "retrieval/document"
     QUERY_TASK = "retrieval/query"
 
-    def __init__(self, *, offline_gate: OfflineModeGate, api_key: str | None = None, api_base: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        offline_gate: OfflineModeGate,
+        api_key: str | None = None,
+        api_base: str | None = None,
+    ) -> None:
         offline_gate.require("Kanon 2 embeddings")
         self._api_key = api_key or os.getenv("ISAACUS_API_KEY")
         self._api_base = api_base or os.getenv("ISAACUS_API_BASE")
@@ -35,30 +41,36 @@ class Kanon2Adapter(EmbeddingPort):
         self._client = Isaacus(api_key=self._api_key)
         if self._api_base is not None:
             if hasattr(self._client, "api_base"):
-                setattr(self._client, "api_base", self._api_base)
+                self._client.api_base = self._api_base
             elif hasattr(self._client, "base_url"):
-                setattr(self._client, "base_url", self._api_base)
+                self._client.base_url = self._api_base
 
     def embed_documents(self, texts: Sequence[str], *, dimensions: int = 768) -> EmbeddingResult:
         if not texts:
-            return EmbeddingResult(embeddings=[], latency_ms=0.0, token_count=0, model=self.MODEL_ID, dimensions=dimensions)
+            return EmbeddingResult(
+                embeddings=[],
+                latency_ms=0.0,
+                token_count=0,
+                model=self.MODEL_ID,
+                dimensions=dimensions,
+            )
 
         start = time.perf_counter()
         # Isaacus SDK versions differ in parameter names; support common forms
         try:
-            response = self._client.embeddings.create(
-                model=self.MODEL_ID,
-                task=self.DOCUMENT_TASK,
+            response = self._client.embeddings.create(  # type: ignore[call-arg]
+                model=self.MODEL_ID,  # type: ignore[arg-type]
+                task=self.DOCUMENT_TASK,  # type: ignore[arg-type]
                 input=list(texts),
                 dimensions=dimensions,
             )
-            vectors = [item.embedding for item in response.data]
+            vectors: list[list[float]] = [item.embedding for item in response.data]  # type: ignore[attr-defined]
             tokens = int(getattr(getattr(response, "usage", None), "total_tokens", 0) or 0)
         except TypeError:
             # Fallback to older signature observed in current codebase
             response = self._client.embeddings.create(
-                model=self.MODEL_ID,
-                task=self.DOCUMENT_TASK,
+                model=self.MODEL_ID,  # type: ignore[arg-type]
+                task=self.DOCUMENT_TASK,  # type: ignore[arg-type]
                 texts=list(texts),
                 dimensions=dimensions,
             )
@@ -80,19 +92,20 @@ class Kanon2Adapter(EmbeddingPort):
             return []
 
         try:
-            response = self._client.embeddings.create(
-                model=self.MODEL_ID,
-                task=self.QUERY_TASK,
+            response = self._client.embeddings.create(  # type: ignore[call-arg]
+                model=self.MODEL_ID,  # type: ignore[arg-type]
+                task=self.QUERY_TASK,  # type: ignore[arg-type]
                 input=[query],
                 dimensions=dimensions,
             )
-            return response.data[0].embedding
+            embedding: list[float] = response.data[0].embedding  # type: ignore[attr-defined]
+            return embedding
         except TypeError:
             response = self._client.embeddings.create(
-                model=self.MODEL_ID,
-                task=self.QUERY_TASK,
+                model=self.MODEL_ID,  # type: ignore[arg-type]
+                task=self.QUERY_TASK,  # type: ignore[arg-type]
                 texts=[query],
                 dimensions=dimensions,
             )
-            return getattr(response, "embeddings")[0].embedding
-
+            embedding_fallback: list[float] = response.embeddings[0].embedding
+            return embedding_fallback

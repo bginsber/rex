@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from rexlit.app.ports import BatesAssignment, BatesPlan, BatesPlannerPort, DocumentRecord
 from rexlit.config import Settings

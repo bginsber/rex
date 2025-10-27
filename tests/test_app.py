@@ -86,9 +86,7 @@ def test_pipeline_run_emits_manifest(temp_dir: Path) -> None:
     assert redaction_plan.exists()
     plan_key = settings.get_redaction_plan_key()
     token = redaction_plan.read_text(encoding="utf-8").splitlines()[0]
-    redaction_entry = json.loads(
-        decrypt_blob(token.encode("utf-8"), key=plan_key).decode("utf-8")
-    )
+    redaction_entry = json.loads(decrypt_blob(token.encode("utf-8"), key=plan_key).decode("utf-8"))
     assert redaction_entry["document"] == str(sample_doc.resolve())
     assert redaction_entry["sha256"] == result.documents[0].sha256
     assert len(redaction_entry["plan_id"]) == 64

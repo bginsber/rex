@@ -8,9 +8,9 @@ to avoid breaking existing imports during the refactor.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
 
 try:  # pragma: no cover - optional dependency warning path
     import hnswlib
@@ -41,6 +41,7 @@ class HNSWStore:
         space: str = "cosine",
     ) -> None:
         import warnings
+
         warnings.warn(
             "rexlit.index.hnsw_store.HNSWStore is deprecated; use HNSWAdapter",
             DeprecationWarning,
@@ -156,7 +157,7 @@ class HNSWStore:
             self._metadata = {}
         return self._metadata.get(identifier)
 
-    def _ensure_index(self) -> "hnswlib.Index":
+    def _ensure_index(self) -> hnswlib.Index:
         if hnswlib is None:  # pragma: no cover - dependency missing runtime path
             raise RuntimeError(
                 "hnswlib is required for dense search. Install it with 'pip install hnswlib'."

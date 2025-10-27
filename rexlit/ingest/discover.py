@@ -3,8 +3,8 @@
 import logging
 import mimetypes
 import os
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from collections.abc import Iterator
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -145,7 +145,7 @@ def discover_document(
         allowed_root_resolved = allowed_root.resolve()
         try:
             resolved_path.relative_to(allowed_root_resolved)
-        except ValueError as e:
+        except ValueError:
             raise ValueError(
                 f"Security: Path traversal detected. "
                 f"File {file_path} resolves to {resolved_path} "
@@ -245,7 +245,9 @@ def discover_documents(
                 continue
 
             try:
-                metadata = discover_document(path, allowed_root=allowed_root, precomputed_hash=sha256)
+                metadata = discover_document(
+                    path, allowed_root=allowed_root, precomputed_hash=sha256
+                )
             except ValueError as e:
                 if "Path traversal" in str(e):
                     logger.warning("SECURITY: %s", e)
@@ -277,7 +279,7 @@ def discover_documents(
             if allowed_root:
                 try:
                     resolved_path.relative_to(allowed_root)
-                except ValueError as e:
+                except ValueError:
                     logger.warning(
                         "SECURITY: Path traversal detected. File %s resolves to %s outside %s",
                         file_path,

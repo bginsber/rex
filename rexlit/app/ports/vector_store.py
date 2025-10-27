@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, Sequence
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -32,7 +33,7 @@ class VectorStorePort(Protocol):
         self,
         embeddings: np.ndarray,  # shape: (n, dim)
         identifiers: Sequence[str],
-        metadata: dict[str, dict] | None = None,
+        metadata: dict[str, dict[str, Any]] | None = None,
         *,
         m: int = 32,
         ef_construction: int = 200,
@@ -48,4 +49,3 @@ class VectorStorePort(Protocol):
     def query(self, vector: np.ndarray, *, top_k: int = 20) -> list[VectorHit]:
         """Return top‑k nearest neighbours for ``vector``."""
         ...
-

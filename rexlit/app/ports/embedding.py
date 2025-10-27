@@ -8,8 +8,9 @@ alternatives.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol, Sequence
+from typing import Protocol
 
 
 @dataclass(slots=True)
@@ -49,4 +50,3 @@ class EmbeddingPort(Protocol):
     def embed_query(self, query: str, *, dimensions: int = 768) -> list[float]:
         """Embed a single search query vector."""
         ...
-

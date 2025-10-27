@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Iterable, Iterator
+from collections.abc import Iterable, Iterator
 
 from rexlit.app.ports import DeduperPort, DocumentRecord
 from rexlit.utils.deterministic import deterministic_order_documents

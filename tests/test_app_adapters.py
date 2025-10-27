@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable
 
 import pytest
 
@@ -108,9 +108,9 @@ def test_redaction_planner_rejects_tampered_plan(temp_dir: Path) -> None:
     key = settings.get_redaction_plan_key()
     entry = _read_encrypted_plan(plan_path, key)
     entry["plan_id"] = "0" * 64
-    payload = json.dumps(
-        entry, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
+    payload = json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
     tampered = encrypt_blob(payload, key=key).decode("utf-8")
     plan_path.write_text(tampered + "\n", encoding="utf-8")
 

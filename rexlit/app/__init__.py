@@ -12,6 +12,6 @@ __all__ = [
 ]
 
 from rexlit.app.m1_pipeline import M1Pipeline
-from rexlit.app.report_service import ReportService
-from rexlit.app.redaction_service import RedactionService
 from rexlit.app.pack_service import PackService
+from rexlit.app.redaction_service import RedactionService
+from rexlit.app.report_service import ReportService
