@@ -46,6 +46,9 @@ from rexlit.index.search import (
 from rexlit.index.search import (
     get_doctypes as load_doctypes,
 )
+from rexlit.index.search import (
+    search_index as lexical_search_index,
+)
 from rexlit.utils.offline import OfflineModeGate
 
 
@@ -130,6 +133,23 @@ class TantivyIndexAdapter(IndexPort):
         self._ledger_port = ledger_port
         self._offline_gate = offline_gate or OfflineModeGate.from_settings(settings)
 
+    def _resolve_embedder(
+        self, api_key: str | None = None, api_base: str | None = None
+    ) -> EmbeddingPort | None:
+        """Return an embedder honoring command-line overrides when provided."""
+        if api_key or api_base:
+            override = _safe_init_embedder(
+                self._offline_gate, api_key=api_key, api_base=api_base
+            )
+            if override is not None:
+                return override
+            return None
+
+        if self._embedder is None:
+            self._embedder = _safe_init_embedder(self._offline_gate)
+
+        return self._embedder
+
     def add_document(
         self, path: str, text: str, metadata: dict[str, Any]
     ) -> None:  # pragma: no cover - adapter writes via build
@@ -169,6 +189,7 @@ class TantivyIndexAdapter(IndexPort):
             dense_batch = int(kwargs.get("dense_batch_size", 32))
             api_key = kwargs.get("dense_api_key")
             api_base = kwargs.get("dense_api_base")
+            embedder = self._resolve_embedder(api_key=api_key, api_base=api_base)
 
             vector_store = (
                 self._vector_store_factory(index_dir, dim)
@@ -182,7 +203,7 @@ class TantivyIndexAdapter(IndexPort):
                 batch_size=dense_batch,
                 api_key=api_key,
                 api_base=api_base,
-                embedder=self._embedder,
+                embedder=embedder,
                 vector_store=vector_store,
                 ledger=self._ledger_port,
             )
@@ -205,6 +226,7 @@ class TantivyIndexAdapter(IndexPort):
 
         if strategy == "dense":
             self._offline_gate.require("dense search")
+            embedder = self._resolve_embedder(api_key=api_key, api_base=api_base)
             vector_store = (
                 self._vector_store_factory(self._settings.get_index_dir(), dim)
                 if self._vector_store_factory is not None
@@ -217,13 +239,14 @@ class TantivyIndexAdapter(IndexPort):
                 dim=dim,
                 api_key=api_key,
                 api_base=api_base,
-                embedder=self._embedder,
+                embedder=embedder,
                 vector_store=vector_store,
             )
             return results
 
         if strategy == "hybrid":
             self._offline_gate.require("hybrid search")
+            embedder = self._resolve_embedder(api_key=api_key, api_base=api_base)
             vector_store = (
                 self._vector_store_factory(self._settings.get_index_dir(), dim)
                 if self._vector_store_factory is not None
@@ -238,12 +261,19 @@ class TantivyIndexAdapter(IndexPort):
                 dim=dim,
                 api_key=api_key,
                 api_base=api_base,
-                embedder=self._embedder,
+                embedder=embedder,
                 vector_store=vector_store,
             )
             return results
 
-        raise NotImplementedError("Lexical search not yet implemented for Tantivy adapter.")
+        if strategy in {"lexical", "bm25"}:
+            return lexical_search_index(
+                self._settings.get_index_dir(),
+                query,
+                limit=limit,
+            )
+
+        raise NotImplementedError(f"Unsupported search mode '{strategy}'.")
 
     def get_custodians(self) -> set[str]:
         return load_custodians(self._settings.get_index_dir())
@@ -359,8 +389,10 @@ def bootstrap_application_container(settings: Settings | None = None) -> Applica
 
 
 # Internal helper to construct the embedder without failing bootstrap
-def _safe_init_embedder(offline_gate: OfflineModeGate) -> EmbeddingPort | None:
+def _safe_init_embedder(
+    offline_gate: OfflineModeGate, *, api_key: str | None = None, api_base: str | None = None
+) -> EmbeddingPort | None:
     try:
-        return Kanon2Adapter(offline_gate=offline_gate)
+        return Kanon2Adapter(offline_gate=offline_gate, api_key=api_key, api_base=api_base)
     except Exception:
         return None

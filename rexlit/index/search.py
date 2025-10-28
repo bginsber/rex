@@ -76,18 +76,108 @@ def search_index(
     # Execute search
     search_results = searcher.search(parsed_query, limit + offset)
 
+    # Precompute field handles for efficient lookup
+    path_field = getattr(schema, "get_field", lambda name: None)("path")
+    sha_field = getattr(schema, "get_field", lambda name: None)("sha256")
+    custodian_field = getattr(schema, "get_field", lambda name: None)("custodian")
+    doctype_field = getattr(schema, "get_field", lambda name: None)("doctype")
+    metadata_field = getattr(schema, "get_field", lambda name: None)("metadata")
+
+    def _coerce_value(value: Any) -> str:
+        """Convert Tantivy field values into plain strings."""
+        if value is None:
+            return ""
+        if hasattr(value, "text") and callable(value.text):
+            value = value.text()
+        elif hasattr(value, "as_text") and callable(value.as_text):  # pragma: no cover - compatibility
+            value = value.as_text()
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="ignore")
+        return str(value)
+
+    def _extract_field(doc: Any, field_handle: Any, field_name: str) -> list[str]:
+        """Extract stored field values regardless of Tantivy version."""
+        if field_handle is None:
+            return []
+        get_all = getattr(doc, "get_all", None)
+        if callable(get_all):
+            try:
+                values = get_all(field_handle) or []
+            except TypeError:  # pragma: no cover - compatibility
+                try:
+                    values = get_all(field_name) or []
+                except TypeError:
+                    values = []
+            return [_coerce_value(value) for value in values if value is not None]
+
+        # Fallback for older bindings where Document behaves like a mapping.
+        if hasattr(doc, "get"):
+            raw = doc.get(field_name)
+        else:  # pragma: no cover - legacy fallback
+            try:
+                raw = doc[field_name]
+            except Exception:
+                raw = None
+
+        if raw is None:
+            return []
+        if isinstance(raw, (list, tuple, set)):
+            return [_coerce_value(value) for value in raw if value is not None]
+        return [_coerce_value(raw)]
+
     # Convert to SearchResult objects
     results = []
     for score, doc_address in search_results.hits[offset : offset + limit]:
         doc = searcher.doc(doc_address)
-        doc_dict = index.schema.to_named_doc(doc)
+        if hasattr(index.schema, "to_named_doc"):
+            doc_dict = index.schema.to_named_doc(doc)  # type: ignore[attr-defined]
+            path = doc_dict.get("path", [""])[0] if "path" in doc_dict else ""
+            sha256 = doc_dict.get("sha256", [""])[0] if "sha256" in doc_dict else ""
+            custodian = doc_dict.get("custodian", [""])[0] if "custodian" in doc_dict else None
+            doctype = doc_dict.get("doctype", [""])[0] if "doctype" in doc_dict else None
+            metadata = doc_dict.get("metadata", [""])[0] if "metadata" in doc_dict else None
+        else:
+            path_values = _extract_field(doc, path_field, "path")
+            sha_values = _extract_field(doc, sha_field, "sha256")
+            custodian_values = _extract_field(doc, custodian_field, "custodian")
+            doctype_values = _extract_field(doc, doctype_field, "doctype")
+            metadata_values = _extract_field(doc, metadata_field, "metadata")
 
-        # Extract fields
-        path = doc_dict.get("path", [""])[0] if "path" in doc_dict else ""
-        sha256 = doc_dict.get("sha256", [""])[0] if "sha256" in doc_dict else ""
-        custodian = doc_dict.get("custodian", [""])[0] if "custodian" in doc_dict else None
-        doctype = doc_dict.get("doctype", [""])[0] if "doctype" in doc_dict else None
-        metadata = doc_dict.get("metadata", [""])[0] if "metadata" in doc_dict else None
+            if hasattr(doc, "__iter__"):
+                name_lookup = getattr(schema, "get_field_name", None)
+                try:
+                    iterable = list(doc)
+                except TypeError:  # pragma: no cover - compatibility
+                    iterable = []
+                for entry in iterable:
+                    try:
+                        field_token, value = entry
+                    except (TypeError, ValueError):
+                        continue
+                    field_name = None
+                    if callable(name_lookup):
+                        try:
+                            field_name = name_lookup(field_token)
+                        except Exception:  # pragma: no cover - defensive
+                            field_name = None
+                    if field_name is None and isinstance(field_token, str):
+                        field_name = field_token
+                    if field_name == "path" and not path_values:
+                        path_values.append(_coerce_value(value))
+                    elif field_name == "sha256" and not sha_values:
+                        sha_values.append(_coerce_value(value))
+                    elif field_name == "custodian" and not custodian_values:
+                        custodian_values.append(_coerce_value(value))
+                    elif field_name == "doctype" and not doctype_values:
+                        doctype_values.append(_coerce_value(value))
+                    elif field_name == "metadata" and not metadata_values:
+                        metadata_values.append(_coerce_value(value))
+
+            path = path_values[0] if path_values else ""
+            sha256 = sha_values[0] if sha_values else ""
+            custodian = custodian_values[0] if custodian_values else None
+            doctype = doctype_values[0] if doctype_values else None
+            metadata = metadata_values[0] if metadata_values else None
 
         # Create result
         result = SearchResult(

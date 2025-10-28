@@ -611,3 +611,128 @@ def test_tantivy_adapter_dense_search_delegates_when_online(
 
         # Should work with default configuration
         assert count == 10
+
+
+def test_search_index_handles_missing_to_named_doc(monkeypatch, temp_dir: Path) -> None:
+    """search_index should work with Tantivy schemas lacking to_named_doc()."""
+    from rexlit.index import search as search_module
+
+    index_dir = temp_dir / "index"
+    index_dir.mkdir()
+
+    class FakeValue:
+        def __init__(self, text: str) -> None:
+            self._text = text
+
+        def text(self) -> str:
+            return self._text
+
+    class FakeDoc:
+        def __init__(self, values: dict[str, list[FakeValue]]) -> None:
+            self._values = values
+
+        def get_all(self, field: str) -> list[FakeValue]:
+            return list(self._values.get(field, []))
+
+    class FakeSchema:
+        def get_field(self, name: str) -> str:
+            return name
+
+    class FakeSearcher:
+        def __init__(self) -> None:
+            self._doc = FakeDoc(
+                {
+                    "path": [FakeValue("doc.txt")],
+                    "sha256": [FakeValue("hash")],
+                    "custodian": [FakeValue("bg")],
+                    "doctype": [FakeValue("text")],
+                    "metadata": [FakeValue('{"foo": "bar"}')],
+                }
+            )
+
+        def search(self, query: object, limit: int) -> SimpleNamespace:
+            return SimpleNamespace(hits=[(1.0, "doc0")])
+
+        def doc(self, address: str) -> FakeDoc:  # pragma: no cover - defensive
+            return self._doc
+
+    class FakeIndex:
+        def __init__(self, schema: FakeSchema, path: str) -> None:
+            self.schema = schema
+            self._searcher = FakeSearcher()
+
+        def parse_query(self, query: str, default_field_names: list[str]) -> SimpleNamespace:
+            return SimpleNamespace(query=query, fields=default_field_names)
+
+        def searcher(self) -> FakeSearcher:
+            return self._searcher
+
+    monkeypatch.setattr(search_module, "create_schema", lambda: FakeSchema())
+    monkeypatch.setattr(search_module.tantivy, "Index", FakeIndex)
+
+    results = search_module.search_index(index_dir, "query")
+
+    assert len(results) == 1
+    result = results[0]
+    assert result.path == "doc.txt"
+    assert result.sha256 == "hash"
+    assert result.custodian == "bg"
+    assert result.doctype == "text"
+    assert result.metadata == '{"foo": "bar"}'
+
+
+def test_search_index_iterates_document_when_get_all_absent(monkeypatch, temp_dir: Path) -> None:
+    """search_index should fall back to iterating Document values when needed."""
+    from rexlit.index import search as search_module
+
+    index_dir = temp_dir / "index_iter"
+    index_dir.mkdir()
+
+    class FakeSchema:
+        def get_field(self, name: str) -> None:  # pragma: no cover - not used
+            return None
+
+        def get_field_name(self, field_token: str) -> str:
+            return field_token
+
+    class FakeDoc:
+        def __iter__(self):
+            return iter(
+                [
+                    ("path", "iter_doc.txt"),
+                    ("sha256", "iter-hash"),
+                    ("custodian", "iter-custodian"),
+                    ("doctype", "iter-doctype"),
+                    ("metadata", '{"foo": "iter"}'),
+                ]
+            )
+
+    class FakeSearcher:
+        def search(self, query: object, limit: int) -> SimpleNamespace:
+            return SimpleNamespace(hits=[(1.0, "doc0")])
+
+        def doc(self, address: str) -> FakeDoc:
+            return FakeDoc()
+
+    class FakeIndex:
+        def __init__(self, schema: FakeSchema, path: str) -> None:
+            self.schema = schema
+            self._searcher = FakeSearcher()
+
+        def parse_query(self, query: str, default_field_names: list[str]) -> SimpleNamespace:
+            return SimpleNamespace(query=query, fields=default_field_names)
+
+        def searcher(self) -> FakeSearcher:
+            return self._searcher
+
+    monkeypatch.setattr(search_module, "create_schema", lambda: FakeSchema())
+    monkeypatch.setattr(search_module.tantivy, "Index", FakeIndex)
+
+    results = search_module.search_index(index_dir, "query")
+    assert len(results) == 1
+    result = results[0]
+    assert result.path == "iter_doc.txt"
+    assert result.sha256 == "iter-hash"
+    assert result.custodian == "iter-custodian"
+    assert result.doctype == "iter-doctype"
+    assert result.metadata == '{"foo": "iter"}'
