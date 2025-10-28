@@ -102,8 +102,7 @@ def extract_docx(file_path: Path) -> ExtractedContent:
         from docx import Document
     except ImportError as e:
         raise ImportError(
-            "python-docx is required for DOCX extraction. "
-            "Install with: pip install python-docx"
+            "python-docx is required for DOCX extraction. " "Install with: pip install python-docx"
         ) from e
 
     doc = Document(file_path)

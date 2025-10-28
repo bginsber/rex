@@ -17,7 +17,12 @@ def test_classify_doctype():
     """Test document type classification."""
     assert classify_doctype("application/pdf", ".pdf") == "pdf"
     assert classify_doctype("text/plain", ".txt") == "text"
-    assert classify_doctype("application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx") == "docx"
+    assert (
+        classify_doctype(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx"
+        )
+        == "docx"
+    )
     assert classify_doctype("image/png", ".png") == "image"
     assert classify_doctype(None, ".pdf") == "pdf"
     assert classify_doctype(None, ".unknown") is None

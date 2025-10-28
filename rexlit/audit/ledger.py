@@ -197,10 +197,12 @@ class AuditLedger:
 
     def _compute_metadata_hmac(self, last_sequence: int, last_hash: str | None) -> str:
         """Compute HMAC for ledger metadata."""
-        payload = f"{last_sequence}:{last_hash or GENESIS_HASH}".encode("utf-8")
+        payload = f"{last_sequence}:{last_hash or GENESIS_HASH}".encode()
         return hmac.new(self._hmac_key, payload, hashlib.sha256).hexdigest()
 
-    def _write_metadata(self, last_sequence: int, last_hash: str | None, *, fsync: bool = True) -> None:
+    def _write_metadata(
+        self, last_sequence: int, last_hash: str | None, *, fsync: bool = True
+    ) -> None:
         """Persist metadata describing the current tip of the ledger."""
         payload = {
             "version": 1,
@@ -337,7 +339,10 @@ class AuditLedger:
 
         if not entries:
             if metadata and metadata.get("last_sequence", 0) > 0:
-                return False, "Audit ledger appears truncated (no entries but metadata expects data)."
+                return (
+                    False,
+                    "Audit ledger appears truncated (no entries but metadata expects data).",
+                )
             return True, None
 
         previous_hash = GENESIS_HASH

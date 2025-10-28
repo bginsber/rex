@@ -217,9 +217,7 @@ def _read_plan_entries(path: Path, key: bytes | None) -> list[dict[str, Any]]:
                 continue
 
             if key is None:
-                raise ValueError(
-                    f"Redaction plan at {path} is encrypted but no key was provided."
-                )
+                raise ValueError(f"Redaction plan at {path} is encrypted but no key was provided.")
 
             try:
                 decrypted = decrypt_blob(line.encode("utf-8"), key=key)

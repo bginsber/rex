@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 from rexlit.app.ports import DiscoveryPort, DocumentRecord
 from rexlit.ingest.discover import discover_documents

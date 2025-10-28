@@ -17,7 +17,7 @@ class OfflineModeGate:
     online_enabled: bool
 
     @classmethod
-    def from_settings(cls, settings: "Settings") -> "OfflineModeGate":
+    def from_settings(cls, settings: Settings) -> OfflineModeGate:
         """Construct gate using configuration and environment overrides."""
 
         env_override = os.getenv("REXLIT_ONLINE")

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from .bates import SequentialBatesPlanner
-from .discovery import IngestDiscoveryAdapter
 from .dedupe import HashDeduper
-from .storage import FileSystemStorageAdapter
+from .discovery import IngestDiscoveryAdapter
+from .hnsw import HNSWAdapter
+from .kanon2 import Kanon2Adapter
 from .pack import ZipPackager
 from .redaction import JSONLineRedactionPlanner, PassthroughRedactionApplier
+from .storage import FileSystemStorageAdapter
 
 __all__ = [
     "SequentialBatesPlanner",
@@ -17,4 +19,6 @@ __all__ = [
     "ZipPackager",
     "JSONLineRedactionPlanner",
     "PassthroughRedactionApplier",
+    "Kanon2Adapter",
+    "HNSWAdapter",
 ]

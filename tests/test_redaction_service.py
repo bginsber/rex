@@ -10,7 +10,7 @@ import pytest
 from rexlit.app.adapters import FileSystemStorageAdapter
 from rexlit.app.redaction_service import RedactionService
 from rexlit.config import Settings
-from rexlit.utils.crypto import decrypt_blob, encrypt_blob
+from rexlit.utils.crypto import decrypt_blob
 
 
 class StubLedger:

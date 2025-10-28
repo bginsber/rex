@@ -12,8 +12,13 @@ from typing import TypedDict
 import numpy as np
 import tantivy
 
-from rexlit.index.hnsw_store import HNSWStore
-from rexlit.index.kanon2_embedder import DOCUMENT_TASK, EmbeddingResult, embed_texts
+from rexlit.app.ports import EmbeddingPort, LedgerPort, VectorStorePort
+from rexlit.index.hnsw_store import HNSWStore  # compatibility shim
+from rexlit.index.kanon2_embedder import (
+    DOCUMENT_TASK,
+    EmbeddingResult,  # legacy DTO used by _aggregate_usage
+    embed_texts,  # compatibility shim
+)
 from rexlit.index.metadata import IndexMetadata
 from rexlit.ingest.discover import DocumentMetadata, discover_documents
 from rexlit.ingest.extract import extract_document
@@ -233,10 +238,7 @@ def build_index(
                 elif show_progress and indexed_count % 100 == 0:
                     elapsed = time.time() - start_time
                     docs_per_sec = indexed_count / elapsed if elapsed > 0 else 0
-                    print(
-                        f"Indexed {indexed_count} documents "
-                        f"({docs_per_sec:.1f} docs/sec)"
-                    )
+                    print(f"Indexed {indexed_count} documents " f"({docs_per_sec:.1f} docs/sec)")
 
             except Exception as e:  # pragma: no cover - defensive guard
                 skipped_count += 1
@@ -255,7 +257,7 @@ def build_index(
     docs_per_sec = indexed_count / elapsed if elapsed > 0 else 0
 
     if show_progress:
-        print(f"\nIndex complete:")
+        print("\nIndex complete:")
         print(f"  - Discovered: {discovered_count} documents")
         print(f"  - Indexed: {indexed_count} documents")
         print(f"  - Skipped: {skipped_count} documents")
@@ -382,6 +384,9 @@ def build_dense_index(
     batch_size: int = 32,
     api_key: str | None = None,
     api_base: str | None = None,
+    embedder: EmbeddingPort | None = None,
+    vector_store: VectorStorePort | None = None,
+    ledger: LedgerPort | None = None,
 ) -> dict[str, object] | None:
     """Construct a Kanon 2 HNSW index for dense retrieval.
 
@@ -396,23 +401,36 @@ def build_dense_index(
     embeddings: list[list[float]] = []
     identifiers: list[str] = []
     doc_metadata: dict[str, dict] = {}
+    batch_sizes: list[int] = []
 
     for start in range(0, len(filtered_docs), batch_size):
         batch = filtered_docs[start : start + batch_size]
-
-        result = embed_texts(
-            (doc["text"] for doc in batch),
-            task=DOCUMENT_TASK,
-            dimensions=dim,
-            api_key=api_key,
-            api_base=api_base,
-        )
+        batch_sizes.append(len(batch))
+        # Use injected embedder when provided; fall back to legacy function
+        if embedder is not None:
+            emb = embedder.embed_documents([doc["text"] for doc in batch], dimensions=dim)
+            result = EmbeddingResult(
+                embeddings=emb.embeddings,
+                latency_ms=emb.latency_ms,
+                usage={
+                    "total_tokens": float(emb.token_count or 0),
+                    "input_count": len(batch),
+                    "dimensions": dim,
+                    "task": 0,  # numeric placeholder to avoid skew in aggregation
+                },
+            )
+        else:
+            result = embed_texts(
+                (doc["text"] for doc in batch),
+                task=DOCUMENT_TASK,
+                dimensions=dim,
+                api_key=api_key,
+                api_base=api_base,
+            )
         telemetry_records.append(result)
 
         if len(result.embeddings) != len(batch):
-            raise RuntimeError(
-                "Embedding provider returned a mismatched number of vectors."
-            )
+            raise RuntimeError("Embedding provider returned a mismatched number of vectors.")
 
         embeddings.extend(result.embeddings)
         identifiers.extend(doc["identifier"] for doc in batch)
@@ -430,19 +448,78 @@ def build_dense_index(
 
     array = np.asarray(embeddings, dtype=np.float32)
     dense_dir = index_dir / "dense"
-    store = HNSWStore(dim=dim, index_path=dense_dir / f"kanon2_{dim}.hnsw")
-    store.build(
-        array,
-        identifiers,
-        doc_metadata=doc_metadata,
-    )
+    if vector_store is None:
+        store = HNSWStore(dim=dim, index_path=dense_dir / f"kanon2_{dim}.hnsw")
+        store.build(
+            array,
+            identifiers,
+            doc_metadata=doc_metadata,
+        )
+        index_path = store.index_path
+        metadata_path = store.metadata_path
+    else:
+        vs = vector_store
+        # Try to capture index path if adapter exposes it
+        vs.build(array, identifiers, metadata=doc_metadata)
+        index_path = getattr(vs, "index_path", dense_dir / f"kanon2_{dim}.hnsw")
+        metadata_path = Path(str(index_path) + ".meta.json")
 
     usage_summary = _aggregate_usage(telemetry_records)
     usage_summary["vectors"] = float(len(identifiers))
     usage_summary["dim"] = float(dim)
+    # Add latency percentiles and token totals
+    latencies = [rec.latency_ms for rec in telemetry_records] or [0.0]
+    try:
+        p50 = float(np.percentile(latencies, 50))
+        p95 = float(np.percentile(latencies, 95))
+        p99 = float(np.percentile(latencies, 99))
+    except Exception:
+        p50 = p95 = p99 = float(sum(latencies) / max(1, len(latencies)))
+    usage_summary["latency_ms_p50"] = p50
+    usage_summary["latency_ms_p95"] = p95
+    usage_summary["latency_ms_p99"] = p99
+    # Best-effort total tokens across batches
+    tokens_total = 0.0
+    for rec in telemetry_records:
+        usage = rec.usage or {}
+        value = usage.get("total_tokens") if isinstance(usage, dict) else None
+        if isinstance(value, (int, float)):
+            tokens_total += float(value)
+    usage_summary["tokens_total"] = tokens_total
+    # Batch size stats
+    if batch_sizes:
+        usage_summary["batch_count"] = float(len(batch_sizes))
+        usage_summary["batch_size_min"] = float(min(batch_sizes))
+        usage_summary["batch_size_max"] = float(max(batch_sizes))
+        usage_summary["batch_size_mean"] = float(sum(batch_sizes) / len(batch_sizes))
+
+    # Emit audit entry if ledger present (minimal; full metrics later)
+    if ledger is not None:
+        try:
+            ledger.log(
+                operation="embedding_batch",
+                inputs=[doc["sha256"] for doc in filtered_docs],
+                outputs=[str(index_path)],
+                args={
+                    "dim": dim,
+                    "vectors": int(len(identifiers)),
+                    "batches": int(len(telemetry_records)),
+                    "latency_ms_total": usage_summary.get("latency_ms", 0.0),
+                    "latency_ms_p50": p50,
+                    "latency_ms_p95": p95,
+                    "latency_ms_p99": p99,
+                    "tokens_total": int(tokens_total),
+                    "batch_size_min": int(min(batch_sizes) if batch_sizes else 0),
+                    "batch_size_max": int(max(batch_sizes) if batch_sizes else 0),
+                    "batch_size_mean": usage_summary.get("batch_size_mean", 0.0),
+                },
+            )
+        except Exception:
+            # Non-fatal; keep offline-first behavior
+            pass
 
     return {
-        "index_path": str(store.index_path),
-        "metadata_path": str(store.metadata_path),
+        "index_path": str(index_path),
+        "metadata_path": str(metadata_path),
         "usage": usage_summary,
     }

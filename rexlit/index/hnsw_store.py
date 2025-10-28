@@ -1,11 +1,16 @@
-"""Disk-backed HNSW index for dense retrieval."""
+"""Disk-backed HNSW index for dense retrieval (compatibility shim).
+
+Deprecated: use `rexlit.app.ports.vector_store.VectorStorePort` and
+`rexlit.app.adapters.hnsw.HNSWAdapter` instead. This class remains as a shim
+to avoid breaking existing imports during the refactor.
+"""
 
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
 
 try:  # pragma: no cover - optional dependency warning path
     import hnswlib
@@ -35,6 +40,13 @@ class HNSWStore:
         *,
         space: str = "cosine",
     ) -> None:
+        import warnings
+
+        warnings.warn(
+            "rexlit.index.hnsw_store.HNSWStore is deprecated; use HNSWAdapter",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.dim = dim
         self.index_path = Path(index_path)
         self.space = space
@@ -145,7 +157,7 @@ class HNSWStore:
             self._metadata = {}
         return self._metadata.get(identifier)
 
-    def _ensure_index(self) -> "hnswlib.Index":
+    def _ensure_index(self) -> hnswlib.Index:
         if hnswlib is None:  # pragma: no cover - dependency missing runtime path
             raise RuntimeError(
                 "hnswlib is required for dense search. Install it with 'pip install hnswlib'."
