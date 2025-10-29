@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from rexlit.index.build import create_schema
 from rexlit.index.hnsw_store import HNSWStore  # compatibility shim
 from rexlit.index.kanon2_embedder import QUERY_TASK, embed_texts  # compatibility shim
 from rexlit.index.metadata import IndexMetadata
+from rexlit.ingest.extract import extract_document
 
 
 class SearchResult(BaseModel):
@@ -33,6 +35,90 @@ class SearchResult(BaseModel):
     strategy: str = Field("lexical", description="Search strategy that produced the score.")
     snippet: str | None = Field(None, description="Text snippet")
     metadata: str | None = Field(None, description="Document metadata")
+
+
+def _extract_snippet(
+    text: str,
+    query: str,
+    max_length: int = 200,
+    context_chars: int = 80,
+) -> str:
+    """Extract a snippet from text showing the query term in context.
+
+    Args:
+        text: Full document text
+        query: Search query string (may contain operators like AND, OR, quotes)
+        max_length: Maximum snippet length in characters (default: 200)
+        context_chars: Characters to show before/after match (default: 80)
+
+    Returns:
+        Snippet with search term in context, or start of text if no match
+
+    Examples:
+        >>> _extract_snippet("This is a long document about contracts.", "contract")
+        '...long document about contracts.'
+        >>> _extract_snippet("Short text", "missing")
+        'Short text'
+    """
+    if not text or not query:
+        return ""
+
+    # Normalize whitespace
+    text = " ".join(text.split())
+
+    # Extract search terms from query (remove Tantivy operators)
+    # Remove field specifiers (e.g., "body:", "path:")
+    query_cleaned = re.sub(r"\w+:", "", query)
+    # Remove operators and special characters
+    query_cleaned = re.sub(r"[+\-!(){}[\]^\"~*?:\\|&]", " ", query_cleaned)
+    # Remove common query operators
+    query_cleaned = re.sub(r"\b(AND|OR|NOT)\b", " ", query_cleaned, flags=re.IGNORECASE)
+
+    # Extract individual terms (words 2+ chars)
+    terms = [term.strip() for term in query_cleaned.split() if len(term.strip()) >= 2]
+
+    if not terms:
+        # No valid search terms, return start of document
+        if len(text) <= max_length:
+            return text
+        return text[:max_length] + "..."
+
+    # Find first occurrence of any term (case-insensitive)
+    best_match_pos = None
+    best_term = None
+    for term in terms:
+        pattern = re.compile(re.escape(term), re.IGNORECASE)
+        match = pattern.search(text)
+        if match:
+            pos = match.start()
+            if best_match_pos is None or pos < best_match_pos:
+                best_match_pos = pos
+                best_term = term
+
+    if best_match_pos is None:
+        # No match found, return start of document
+        if len(text) <= max_length:
+            return text
+        return text[:max_length] + "..."
+
+    # Calculate snippet boundaries
+    # Center around the match, but don't exceed max_length
+    start = max(0, best_match_pos - context_chars)
+    end = min(len(text), best_match_pos + len(best_term or "") + context_chars)
+
+    # Adjust if snippet would be too long
+    if end - start > max_length:
+        end = start + max_length
+
+    snippet = text[start:end]
+
+    # Add ellipsis if truncated
+    if start > 0:
+        snippet = "..." + snippet
+    if end < len(text):
+        snippet = snippet + "..."
+
+    return snippet.strip()
 
 
 def search_index(
@@ -179,6 +265,20 @@ def search_index(
             doctype = doctype_values[0] if doctype_values else None
             metadata = metadata_values[0] if metadata_values else None
 
+        # Extract snippet from document
+        snippet = None
+        if path:
+            try:
+                doc_path = Path(path)
+                if doc_path.exists():
+                    extracted = extract_document(doc_path)
+                    if extracted.text:
+                        snippet = _extract_snippet(extracted.text, query)
+            except Exception:
+                # Silently ignore snippet extraction errors
+                # (document may be moved/deleted, or extraction may fail)
+                pass
+
         # Create result
         result = SearchResult(
             path=path,
@@ -189,7 +289,7 @@ def search_index(
             lexical_score=score,
             dense_score=None,
             strategy="lexical",
-            snippet=None,  # TODO: Extract snippet from body
+            snippet=snippet,
             metadata=metadata if metadata else None,
         )
         results.append(result)
