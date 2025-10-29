@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import time
+from collections.abc import Iterator
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import cpu_count
 from pathlib import Path
@@ -12,8 +13,8 @@ from typing import TypedDict
 import numpy as np
 import tantivy
 
+from rexlit.app.adapters.hnsw import HNSWAdapter
 from rexlit.app.ports import EmbeddingPort, LedgerPort, VectorStorePort
-from rexlit.index.hnsw_store import HNSWStore  # compatibility shim
 from rexlit.index.kanon2_embedder import (
     DOCUMENT_TASK,
     EmbeddingResult,  # legacy DTO used by _aggregate_usage
@@ -33,6 +34,20 @@ class DenseDocument(TypedDict):
     custodian: str | None
     doctype: str | None
     text: str
+
+
+class WorkerDocumentPayload(TypedDict, total=False):
+    """Serialized document record produced by worker processes."""
+
+    path: str
+    sha256: str
+    custodian: str
+    doctype: str
+    text: str
+    metadata: str
+    custodian_raw: str | None
+    doctype_raw: str | None
+    error: str
 
 
 def create_schema() -> tantivy.Schema:
@@ -56,7 +71,7 @@ def create_schema() -> tantivy.Schema:
     return schema_builder.build()
 
 
-def _process_document_worker(doc_meta: DocumentMetadata) -> dict | None:
+def _process_document_worker(doc_meta: DocumentMetadata) -> WorkerDocumentPayload | None:
     """Worker function to process a single document in parallel.
 
     This function is designed to be pickled and executed in a worker process.
@@ -73,7 +88,7 @@ def _process_document_worker(doc_meta: DocumentMetadata) -> dict | None:
         extracted = extract_document(Path(doc_meta.path))
 
         # Return serializable data (not Tantivy Document objects)
-        return {
+        payload: WorkerDocumentPayload = {
             "path": doc_meta.path,
             "sha256": doc_meta.sha256,
             "custodian": doc_meta.custodian or "",
@@ -84,12 +99,14 @@ def _process_document_worker(doc_meta: DocumentMetadata) -> dict | None:
             "custodian_raw": doc_meta.custodian,
             "doctype_raw": doc_meta.doctype,
         }
+        return payload
     except Exception as e:
         # Return error information instead of raising
-        return {
+        error_payload: WorkerDocumentPayload = {
             "error": str(e),
             "path": doc_meta.path,
         }
+        return error_payload
 
 
 def build_index(
@@ -168,19 +185,19 @@ def build_index(
     start_time = time.time()
     commit_interval = max(1000, batch_size * 4)
 
-    def document_stream():
+    def document_stream() -> Iterator[DocumentMetadata]:
         nonlocal discovered_count
         for doc_meta in discover_documents(root, recursive=True):
             discovered_count += 1
             yield doc_meta
 
-    documents_iter = document_stream()
+    documents_iter: Iterator[DocumentMetadata] = document_stream()
 
     # Process documents in parallel
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         for result in executor.map(_process_document_worker, documents_iter, chunksize=batch_size):
             try:
-                if not result:
+                if result is None:
                     skipped_count += 1
                     continue
 
@@ -193,12 +210,19 @@ def build_index(
 
                 # Create Tantivy document from processed data
                 doc = tantivy.Document()
-                doc.add_text("path", result["path"])
-                doc.add_text("sha256", result["sha256"])
-                doc.add_text("custodian", result["custodian"])
-                doc.add_text("doctype", result["doctype"])
-                doc.add_text("body", result["text"])
-                doc.add_text("metadata", result["metadata"])
+                path_value = result["path"]
+                sha_value = result["sha256"]
+                custodian_value = result["custodian"]
+                doctype_value = result["doctype"]
+                text_value = result["text"]
+                metadata_value = result["metadata"]
+
+                doc.add_text("path", path_value)
+                doc.add_text("sha256", sha_value)
+                doc.add_text("custodian", custodian_value)
+                doc.add_text("doctype", doctype_value)
+                doc.add_text("body", text_value)
+                doc.add_text("metadata", metadata_value)
 
                 # Add document to index
                 writer.add_document(doc)
@@ -206,19 +230,19 @@ def build_index(
 
                 # Update metadata cache
                 metadata_cache.update(
-                    custodian=result["custodian_raw"],
-                    doctype=result["doctype_raw"],
+                    custodian=result.get("custodian_raw"),
+                    doctype=result.get("doctype_raw"),
                 )
 
-                if dense_collector is not None and result["text"]:
+                if dense_collector is not None and text_value:
                     dense_collector.append(
                         {
-                            "identifier": result["sha256"],
-                            "path": result["path"],
-                            "sha256": result["sha256"],
-                            "custodian": result["custodian"] or None,
-                            "doctype": result["doctype"] or None,
-                            "text": result["text"],
+                            "identifier": sha_value,
+                            "path": path_value,
+                            "sha256": sha_value,
+                            "custodian": custodian_value or None,
+                            "doctype": doctype_value or None,
+                            "text": text_value,
                         }
                     )
 
@@ -351,9 +375,19 @@ def get_index_stats(index_dir: Path) -> dict[str, int] | None:
         index = tantivy.Index(schema, str(index_dir))
         searcher = index.searcher()
 
+        segment_attr = getattr(searcher, "segment_readers", None)
+        if callable(segment_attr):
+            segments = segment_attr()
+        elif isinstance(segment_attr, (list, tuple)):
+            segments = segment_attr
+        else:
+            segments = []
+
+        segment_count = len(segments)
+
         return {
             "num_docs": searcher.num_docs,
-            "num_segments": len(searcher.segment_readers),
+            "num_segments": segment_count,
         }
     except Exception:
         return None
@@ -400,7 +434,7 @@ def build_dense_index(
     telemetry_records: list[EmbeddingResult] = []
     embeddings: list[list[float]] = []
     identifiers: list[str] = []
-    doc_metadata: dict[str, dict] = {}
+    doc_metadata: dict[str, dict[str, str | None]] = {}
     batch_sizes: list[int] = []
 
     for start in range(0, len(filtered_docs), batch_size):
@@ -449,14 +483,14 @@ def build_dense_index(
     array = np.asarray(embeddings, dtype=np.float32)
     dense_dir = index_dir / "dense"
     if vector_store is None:
-        store = HNSWStore(dim=dim, index_path=dense_dir / f"kanon2_{dim}.hnsw")
+        store = HNSWAdapter(index_path=dense_dir / f"kanon2_{dim}.hnsw", dimensions=dim)
         store.build(
             array,
             identifiers,
-            doc_metadata=doc_metadata,
+            metadata=doc_metadata,
         )
         index_path = store.index_path
-        metadata_path = store.metadata_path
+        metadata_path = Path(str(index_path) + ".meta.json")
     else:
         vs = vector_store
         # Try to capture index path if adapter exposes it

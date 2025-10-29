@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import tantivy
 from pydantic import BaseModel, Field
 
+from rexlit.app.adapters.hnsw import HNSWAdapter
 from rexlit.app.ports import EmbeddingPort, VectorStorePort
 from rexlit.index.build import create_schema
-from rexlit.index.hnsw_store import HNSWStore  # compatibility shim
 from rexlit.index.kanon2_embedder import QUERY_TASK, embed_texts  # compatibility shim
 from rexlit.index.metadata import IndexMetadata
 from rexlit.ingest.extract import extract_document
@@ -212,11 +212,12 @@ def search_index(
         return [_coerce_value(raw)]
 
     # Convert to SearchResult objects
-    results = []
+    results: list[SearchResult] = []
     for score, doc_address in search_results.hits[offset : offset + limit]:
         doc = searcher.doc(doc_address)
-        if hasattr(index.schema, "to_named_doc"):
-            doc_dict = index.schema.to_named_doc(doc)  # type: ignore[attr-defined]
+        to_named_doc = getattr(index.schema, "to_named_doc", None)
+        if callable(to_named_doc):
+            doc_dict = to_named_doc(doc)
             path = doc_dict.get("path", [""])[0] if "path" in doc_dict else ""
             sha256 = doc_dict.get("sha256", [""])[0] if "sha256" in doc_dict else ""
             custodian = doc_dict.get("custodian", [""])[0] if "custodian" in doc_dict else None
@@ -316,25 +317,43 @@ def dense_search_index(
     store_path = dense_dir / f"kanon2_{dim}.hnsw"
 
     if vector_store is None:
-        store = HNSWStore(dim=dim, index_path=store_path)
+        store = HNSWAdapter(index_path=store_path, dimensions=dim)
         store.load()
-        resolve_meta = store.resolve_metadata
 
-        def _query(v: np.ndarray) -> list:
+        def resolve_meta(identifier: str) -> dict[str, Any]:
+            return {}
+
+        def query_fn(v: np.ndarray) -> list[Any]:
             return store.query(v, top_k=limit)
 
     else:
         vs = vector_store
         vs.load()
-        resolve_meta = lambda ident: getattr(vs, "_doc_meta", {}).get(ident) if hasattr(vs, "_doc_meta") else {}  # type: ignore[assignment]
 
-        def _query(v: np.ndarray) -> list:
+        def resolve_meta(identifier: str) -> dict[str, Any]:
+            if hasattr(vs, "resolve_metadata"):
+                resolver = vs.resolve_metadata
+                if callable(resolver):
+                    resolved = resolver(identifier)
+                    if isinstance(resolved, dict):
+                        return dict(resolved)
+            try:
+                doc_meta = vs._doc_meta  # type: ignore[attr-defined]
+            except AttributeError:
+                doc_meta = None
+            if isinstance(doc_meta, dict):
+                value = doc_meta.get(identifier, {})
+                if isinstance(value, dict):
+                    return dict(value)
+            return {}
+
+        def query_fn(v: np.ndarray) -> list[Any]:
             return vs.query(v, top_k=limit)
 
     if embedder is not None:
         emb_vec = embedder.embed_query(query, dimensions=dim)
         embeddings = [emb_vec] if emb_vec else []
-        telemetry = {"usage": {}}
+        telemetry: dict[str, Any] = {"usage": {}}
         latency = 0.0
     else:
         embedding = embed_texts(
@@ -352,13 +371,13 @@ def dense_search_index(
         return [], {"latency_ms": latency, "usage": telemetry.get("usage", {})}
 
     query_vector = np.asarray(embeddings[0], dtype=np.float32)
-    hits = _query(query_vector)
+    hits = query_fn(query_vector)
 
     results: list[SearchResult] = []
-    for rank, hit in enumerate(hits, 1):
+    for _, hit in enumerate(hits, 1):
         # Handle both shim and adapter hits
         if hasattr(hit, "metadata"):
-            metadata = hit.metadata or {}
+            metadata = cast(dict[str, Any], getattr(hit, "metadata", {}) or {})
         else:
             metadata = resolve_meta(hit.identifier) or {}
         result = SearchResult(
@@ -427,7 +446,9 @@ def hybrid_search_index(
         }
 
     for rank, result in enumerate(lexical_results, 1):
-        entry = fusion.setdefault(result.sha256, {})
+        if result.sha256 not in fusion:
+            fusion[result.sha256] = {}
+        entry = fusion[result.sha256]
         entry["lexical"] = result
         entry["lexical_rank"] = rank
         entry["score"] = entry.get("score", 0.0) + _rrf(rank, fusion_k)
