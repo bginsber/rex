@@ -7,6 +7,7 @@ Complete command reference for RexLit M0.
 - [Global Options](#global-options)
 - [Ingest Commands](#ingest-commands)
 - [Index Commands](#index-commands)
+- [OCR Commands](#ocr-commands)
 - [Audit Commands](#audit-commands)
 - [Common Workflows](#common-workflows)
 
@@ -306,6 +307,62 @@ Metadata Cache:
   Document Types: 4
   Last Updated: 2025-10-23 14:32:15
 ```
+
+---
+
+## OCR Commands
+
+### `rexlit ocr run`
+
+Run optical character recognition on PDFs or scanned images.
+
+#### Synopsis
+
+```bash
+rexlit ocr run PATH [OPTIONS]
+```
+
+#### Arguments
+
+- `PATH` - Path to a PDF/image file or directory (required)
+
+#### Options
+
+- `--provider, -p [tesseract|paddle]` - OCR provider (default: `tesseract`)
+- `--output, -o PATH` - Output text file or directory
+- `--preflight/--no-preflight` - Detect native text layers before OCR (default: enabled)
+- `--language, -l CODE` - OCR language code (default: `eng`)
+- `--confidence` - Show OCR confidence score
+- `--online` - Enable online providers (future adapters)
+
+#### Examples
+
+```bash
+# OCR a single PDF with preflight and save to text
+rexlit ocr run contract.pdf --output contract.txt
+
+# Batch process an entire directory into ./text/
+rexlit ocr run ./scans --output ./text
+
+# Force OCR on every page (skip preflight detection)
+rexlit ocr run exhibit.pdf --no-preflight
+
+# Show OCR confidence score for quality control
+rexlit ocr run invoice.pdf --confidence
+
+# Use Spanish language model
+rexlit ocr run documento.pdf --language spa
+```
+
+#### Behavior
+
+- **Preflight optimisation**: Detects pages with existing text layers (>50 characters) and extracts them directly.
+- **Offline-first**: Tesseract adapter runs locally without network access.
+- **Audit logging**: Each run records an `ocr.process` entry with page count, text length, and confidence.
+
+#### Output
+
+When `--output` points to a directory, RexLit mirrors the source structure and writes `.txt` files alongside OCR metrics in the audit ledger. Without `--output`, OCR text stays in-memory while progress and confidence are reported to the console.
 
 ---
 

@@ -11,6 +11,7 @@ from .pack import ZipPackager
 from .pdf_stamper import PDFStamperAdapter
 from .redaction import JSONLineRedactionPlanner, PassthroughRedactionApplier
 from .storage import FileSystemStorageAdapter
+from .tesseract_ocr import TesseractOCRAdapter
 
 __all__ = [
     "SequentialBatesPlanner",
@@ -23,4 +24,5 @@ __all__ = [
     "Kanon2Adapter",
     "HNSWAdapter",
     "PDFStamperAdapter",
+    "TesseractOCRAdapter",
 ]

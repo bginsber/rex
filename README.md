@@ -31,6 +31,7 @@ The CLI wraps these services in an approachable workflow designed for laptops or
 - Secure path resolution and symlink handling to block traversal attacks.
 - ProcessPoolExecutor-powered indexing with configurable batching.
 - Metadata cache for instant custodian and document type lookups.
+- Pluggable OCR pipeline with Tesseract preflight and confidence scoring.
 - Append-only audit log with SHA-256 hash chaining and fsync durability.
 
 ### Performance Benchmarks
@@ -132,6 +133,22 @@ rexlit index search '"duty to preserve" AND custodian:anderson' --limit 20 --jso
 
 - `ISAACUS_API_KEY`: Kanon 2 access token used when `--dense`/`--mode dense|hybrid` is active.
 - `ISAACUS_API_BASE`: Override API host when running a self-hosted Isaacus deployment.
+
+### `rexlit ocr run`
+
+Perform OCR on scanned PDFs or images with optional preflight to skip native text layers.
+
+```bash
+rexlit ocr run ./scans/binder.pdf --output ./text/binder.txt --confidence
+```
+
+- `--provider`: `tesseract` (default) with future slots for Paddle/online adapters.
+- `--output`: File or directory to persist extracted text (`.txt` mirrored for directories).
+- `--preflight/--no-preflight`: Enable or disable text-layer detection (default: enabled).
+- `--language`: Tesseract language code (default: `eng`).
+- `--confidence`: Display average OCR confidence for QA workflows.
+
+Every run records an `ocr.process` entry in the audit ledger containing page count, text length, and confidence metrics.
 
 ### `rexlit audit show`
 

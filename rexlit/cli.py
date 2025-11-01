@@ -1,8 +1,10 @@
 """RexLit CLI application with Typer."""
 
+import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, TYPE_CHECKING
 
 import typer
 
@@ -11,6 +13,11 @@ from rexlit.bootstrap import bootstrap_application
 from rexlit.config import get_settings, set_settings
 from rexlit.utils.offline import OfflineModeGate
 from rexlit.app.ports.stamp import BatesStampRequest
+
+if TYPE_CHECKING:
+    from rexlit.app.ports import OCRPort
+    from rexlit.app.ports.ocr import OCRResult
+    from rexlit.bootstrap import ApplicationContainer
 
 app = typer.Typer(
     name="rexlit",
@@ -635,29 +642,305 @@ app.add_typer(ocr_app, name="ocr")
 
 @ocr_app.command("run")
 def ocr_run(
-    path: Annotated[Path, typer.Argument(help="Path to document or directory")],
+    path: Annotated[Path, typer.Argument(help="Path to PDF, image, or directory")],
     provider: Annotated[
-        str,
-        typer.Option("--provider", "-p", help="OCR provider: tesseract, paddle, deepseek"),
+        Literal["tesseract", "paddle"],
+        typer.Option("--provider", "-p", help="OCR provider"),
     ] = "tesseract",
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Output text file or directory"),
+    ] = None,
+    preflight: Annotated[
+        bool,
+        typer.Option("--preflight/--no-preflight", help="Analyze pages before OCR"),
+    ] = True,
+    language: Annotated[
+        str,
+        typer.Option("--language", "-l", help="OCR language code"),
+    ] = "eng",
     online: Annotated[
         bool,
-        typer.Option("--online", help="Enable online OCR (DeepSeek)"),
+        typer.Option("--online", help="Enable online OCR providers"),
+    ] = False,
+    show_confidence: Annotated[
+        bool,
+        typer.Option("--confidence", help="Show OCR confidence scores"),
     ] = False,
 ) -> None:
-    """Run OCR on documents."""
+    """Run OCR on documents with preflight optimisation."""
     settings = get_settings()
-
     if online and not settings.online:
         settings.online = True
         set_settings(settings)
 
-    gate = OfflineModeGate.from_settings(settings)
+    container = bootstrap_application(settings)
 
-    if provider == "deepseek":
-        require_online(gate, "DeepSeek OCR")
+    if provider not in container.ocr_providers:
+        typer.secho(
+            f"Error: OCR provider '{provider}' not available. "
+            f"Options: {', '.join(sorted(container.ocr_providers))}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
 
-    typer.secho(f"OCR not yet implemented (provider: {provider})", fg=typer.colors.YELLOW)
+    ocr_adapter = container.ocr_providers[provider]
+
+    try:
+        container.offline_gate.ensure_supported(
+            feature=f"{provider} OCR",
+            requires_online=ocr_adapter.is_online(),
+        )
+    except RuntimeError as exc:
+        typer.secho(str(exc), fg=typer.colors.YELLOW, err=True)
+        raise typer.Exit(code=2) from exc
+
+    if not path.exists():
+        typer.secho(f"Error: Path not found: {path}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    resolved = path.resolve()
+    typer.secho(f"🔍 OCR provider: {provider}", fg=typer.colors.BLUE)
+
+    with _override_preflight(ocr_adapter, preflight):
+        if resolved.is_file():
+            success = _ocr_single_file(
+                resolved,
+                ocr_adapter,
+                output,
+                language,
+                show_confidence,
+                container,
+                provider,
+            )
+            if not success:
+                raise typer.Exit(code=1)
+        elif resolved.is_dir():
+            _ocr_directory(
+                resolved,
+                ocr_adapter,
+                output,
+                language,
+                show_confidence,
+                container,
+                provider,
+            )
+        else:
+            typer.secho(
+                f"Error: Not a file or directory: {resolved}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+
+def _ocr_single_file(
+    path: Path,
+    ocr_adapter: "OCRPort",
+    output: Path | None,
+    language: str,
+    show_confidence: bool,
+    container: "ApplicationContainer",
+    provider: str,
+    *,
+    output_override: Path | None = None,
+    display_label: str | None = None,
+) -> bool:
+    label = display_label or path.name
+    typer.secho(f"\n📄 {label}", fg=typer.colors.CYAN)
+
+    try:
+        result, elapsed = _execute_ocr(ocr_adapter, path, language)
+    except Exception as exc:  # pragma: no cover - surfaces to CLI
+        typer.secho(f"  ✗ OCR failed: {exc}", fg=typer.colors.RED)
+        return False
+
+    output_path = _write_output_text(result, output, path, output_override)
+
+    typer.secho(
+        f"  ✓ {result.page_count} pages | {len(result.text):,} chars | {elapsed:.2f}s",
+        fg=typer.colors.GREEN,
+    )
+    if show_confidence:
+        typer.echo(f"  Confidence: {result.confidence:.1%}")
+
+    _log_ocr_event(container, path, provider, result, elapsed, output_path)
+    return True
+
+
+def _ocr_directory(
+    directory: Path,
+    ocr_adapter: "OCRPort",
+    output: Path | None,
+    language: str,
+    show_confidence: bool,
+    container: "ApplicationContainer",
+    provider: str,
+) -> None:
+    resolved_root = directory.resolve()
+    allowed_suffixes = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
+
+    files: list[Path] = []
+    for candidate in sorted(resolved_root.rglob("*")):
+        if not candidate.is_file():
+            continue
+        if candidate.suffix.lower() not in allowed_suffixes:
+            continue
+        try:
+            resolved_candidate = candidate.resolve(strict=True)
+        except FileNotFoundError:
+            typer.secho(f"Skipping vanished file: {candidate}", fg=typer.colors.YELLOW)
+            continue
+        try:
+            resolved_candidate.relative_to(resolved_root)
+        except ValueError:
+            typer.secho(
+                f"Skipping {candidate}: resolves outside {resolved_root}",
+                fg=typer.colors.YELLOW,
+            )
+            continue
+        files.append(resolved_candidate)
+
+    if not files:
+        typer.secho("No OCR-compatible files found in directory.", fg=typer.colors.YELLOW)
+        return
+
+    output_dir = None
+    if output is not None:
+        output_dir = output.expanduser()
+        if output_dir.exists() and not output_dir.is_dir():
+            typer.secho(
+                "Output path must be a directory when processing multiple files.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+    successes = 0
+    failures = 0
+    total = len(files)
+
+    for idx, file_path in enumerate(files, 1):
+        try:
+            relative = file_path.relative_to(resolved_root)
+        except ValueError:
+            relative = file_path.name
+
+        typer.echo(f"\n[{idx}/{total}] {relative}")
+
+        target_output = None
+        if output_dir is not None:
+            target_output = (output_dir / Path(relative)).with_suffix(".txt")
+
+        ok = _ocr_single_file(
+            file_path,
+            ocr_adapter,
+            None,
+            language,
+            show_confidence,
+            container,
+            provider,
+            output_override=target_output,
+            display_label=str(relative),
+        )
+
+        if ok:
+            successes += 1
+        else:
+            failures += 1
+
+    typer.echo(f"\n{'=' * 60}")
+    typer.secho(f"✓ Success: {successes}/{total}", fg=typer.colors.GREEN)
+    if failures:
+        typer.secho(f"✗ Failures: {failures}/{total}", fg=typer.colors.RED)
+
+
+def _execute_ocr(
+    ocr_adapter: "OCRPort",
+    path: Path,
+    language: str,
+) -> tuple["OCRResult", float]:
+    started = time.monotonic()
+    result = ocr_adapter.process_document(path, language=language)
+    elapsed = time.monotonic() - started
+    return result, elapsed
+
+
+def _write_output_text(
+    result: "OCRResult",
+    output: Path | None,
+    source_path: Path,
+    output_override: Path | None,
+) -> Path | None:
+    target = output_override
+    if target is None and output is not None:
+        target = _resolve_output_target(output, source_path)
+
+    if target is None:
+        return None
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(result.text, encoding="utf-8")
+    typer.secho(f"  ➜ Saved: {target}", fg=typer.colors.BLUE)
+    return target
+
+
+def _resolve_output_target(base_output: Path, source_path: Path) -> Path:
+    base = base_output.expanduser()
+    if base.exists():
+        if base.is_dir():
+            return base / f"{source_path.stem}.txt"
+        return base
+
+    if base.suffix:
+        base.parent.mkdir(parents=True, exist_ok=True)
+        return base
+
+    base.mkdir(parents=True, exist_ok=True)
+    return base / f"{source_path.stem}.txt"
+
+
+def _log_ocr_event(
+    container: "ApplicationContainer",
+    source: Path,
+    provider: str,
+    result: "OCRResult",
+    elapsed: float,
+    output_path: Path | None,
+) -> None:
+    outputs = [str(output_path)] if output_path else []
+    try:
+        container.ledger_port.log(
+            operation="ocr.process",
+            inputs=[str(source)],
+            outputs=outputs,
+            args={
+                "provider": provider,
+                "language": result.language,
+                "page_count": result.page_count,
+                "text_length": len(result.text),
+                "confidence": round(result.confidence, 4),
+                "elapsed_seconds": round(elapsed, 4),
+            },
+        )
+    except Exception as exc:  # pragma: no cover - logging failures should not stop OCR
+        typer.secho(f"⚠️  Audit log failure: {exc}", fg=typer.colors.YELLOW)
+
+
+@contextmanager
+def _override_preflight(ocr_adapter: "OCRPort", enabled: bool):
+    if not hasattr(ocr_adapter, "preflight"):
+        yield
+        return
+
+    original = getattr(ocr_adapter, "preflight")
+    try:
+        setattr(ocr_adapter, "preflight", enabled)
+        yield
+    finally:
+        setattr(ocr_adapter, "preflight", original)
 
 
 # Audit subcommand

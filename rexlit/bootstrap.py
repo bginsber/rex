@@ -15,8 +15,9 @@ from rexlit.app.adapters import (
     IngestDiscoveryAdapter,
     JSONLineRedactionPlanner,
     Kanon2Adapter,
-    SequentialBatesPlanner,
     PDFStamperAdapter,
+    SequentialBatesPlanner,
+    TesseractOCRAdapter,
     ZipPackager,
 )
 from rexlit.app.audit_service import AuditService
@@ -27,12 +28,14 @@ from rexlit.app.ports import (
     EmbeddingPort,
     IndexPort,
     LedgerPort,
+    OCRPort,
     PackPort,
     StampPort,
     RedactionPlannerPort,
     StoragePort,
     VectorStorePort,
 )
+from rexlit.app.ports.ocr import OCRResult
 from rexlit.audit.ledger import AuditLedger
 from rexlit.config import Settings, get_settings
 from rexlit.index.build import DenseDocument, build_dense_index, build_index
@@ -79,6 +82,7 @@ class ApplicationContainer:
     # New: optional embedding/vector store wiring for dense search
     embedder: EmbeddingPort | None
     vector_store_factory: Callable[[Path, int], VectorStorePort] | None
+    ocr_providers: dict[str, OCRPort]
 
 
 class NoOpLedger:
@@ -154,6 +158,41 @@ class TantivyIndexAdapter(IndexPort):
             self._embedder = _safe_init_embedder(self._offline_gate)
 
         return self._embedder
+
+
+class LazyOCRAdapter(OCRPort):
+    """Lazy wrapper that defers adapter construction until first use."""
+
+    def __init__(self, factory: Callable[[], OCRPort]) -> None:
+        object.__setattr__(self, "_factory", factory)
+        object.__setattr__(self, "_instance", None)
+
+    def _resolve(self) -> OCRPort:
+        instance = object.__getattribute__(self, "_instance")
+        if instance is None:
+            instance = object.__getattribute__(self, "_factory")()
+            object.__setattr__(self, "_instance", instance)
+        return instance
+
+    def process_document(
+        self,
+        path: Path,
+        *,
+        language: str = "eng",
+    ) -> OCRResult:
+        return self._resolve().process_document(path, language=language)
+
+    def is_online(self) -> bool:
+        return self._resolve().is_online()
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._resolve(), item)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in {"_factory", "_instance"}:
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._resolve(), name, value)
 
     def add_document(
         self, path: str, text: str, metadata: dict[str, Any]
@@ -346,6 +385,16 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
     )
     pack_service = PackService(storage_port=storage, ledger_port=ledger_for_services)
     audit_service = AuditService(ledger=ledger)
+    ocr_providers: dict[str, OCRPort] = {
+        "tesseract": LazyOCRAdapter(
+            lambda: TesseractOCRAdapter(
+                lang="eng",
+                preflight=True,
+                dpi_scale=2,
+                min_text_threshold=50,
+            )
+        )
+    }
 
     return ApplicationContainer(
         settings=active_settings,
@@ -383,6 +432,7 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
                 dimensions=int(dim),
             )
         ),
+        ocr_providers=ocr_providers,
     )
 
 
