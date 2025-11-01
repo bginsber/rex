@@ -8,6 +8,7 @@ from .discovery import IngestDiscoveryAdapter
 from .hnsw import HNSWAdapter
 from .kanon2 import Kanon2Adapter
 from .pack import ZipPackager
+from .pdf_stamper import PDFStamperAdapter
 from .redaction import JSONLineRedactionPlanner, PassthroughRedactionApplier
 from .storage import FileSystemStorageAdapter
 
@@ -21,4 +22,5 @@ __all__ = [
     "PassthroughRedactionApplier",
     "Kanon2Adapter",
     "HNSWAdapter",
+    "PDFStamperAdapter",
 ]

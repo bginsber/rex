@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from rexlit.config import Settings
+
 
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
@@ -75,7 +77,7 @@ def nested_files(temp_dir: Path) -> Path:
 
 
 @pytest.fixture
-def override_settings(temp_dir: Path) -> Generator["Settings", None, None]:
+def override_settings(temp_dir: Path) -> Generator[Settings, None, None]:
     """Provide isolated RexLit settings scoped to tests."""
 
     import rexlit.config as config_module

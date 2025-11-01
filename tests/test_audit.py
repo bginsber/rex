@@ -363,7 +363,7 @@ def test_audit_chain_persistence_across_ledger_instances(temp_dir: Path):
 
     # Create first ledger and log entries
     ledger1 = AuditLedger(ledger_path)
-    entry1 = ledger1.log(operation="op1", inputs=["file1.pdf"], outputs=["hash1"])
+    _entry1 = ledger1.log(operation="op1", inputs=["file1.pdf"], outputs=["hash1"])
     entry2 = ledger1.log(operation="op2", inputs=["file2.pdf"], outputs=["hash2"])
 
     # Create new ledger instance and log more entries

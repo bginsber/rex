@@ -252,5 +252,5 @@ class RedactionService:
         except ValueError:
             return False
 
-        current_hash = self.storage.compute_hash(document_path)
+        current_hash = str(self.storage.compute_hash(document_path))
         return current_hash == expected_hash

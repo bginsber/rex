@@ -11,11 +11,12 @@ import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
 try:  # pragma: no cover - optional dependency warning path
     import hnswlib
 except ImportError:  # pragma: no cover - handled at runtime
-    hnswlib = None  # type: ignore[assignment]
+    hnswlib = None
 
 import numpy as np
 
@@ -50,9 +51,9 @@ class HNSWStore:
         self.dim = dim
         self.index_path = Path(index_path)
         self.space = space
-        self._index = None
+        self._index: Any = None
         self._ids: list[str] | None = None
-        self._metadata: dict[str, dict] | None = None
+        self._metadata: dict[str, dict[str, Any]] | None = None
         self._metadata_path = self.index_path.with_suffix(self.index_path.suffix + ".meta.json")
 
     @property
@@ -69,7 +70,7 @@ class HNSWStore:
         m: int = 32,
         ef_construction: int = 200,
         ef_search: int = DEFAULT_EF,
-        doc_metadata: dict[str, dict] | None = None,
+        doc_metadata: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         """Construct a fresh index and persist it alongside metadata."""
         array = np.asarray(embeddings, dtype=np.float32)
@@ -91,16 +92,16 @@ class HNSWStore:
         index.set_ef(ef_search)
         index.save_index(str(self.index_path))
 
-        metadata = {
+        metadata: dict[str, Any] = {
             "dim": self.dim,
             "space": self.space,
             "ids": ids,
             "ef_search": ef_search,
             "doc_metadata": doc_metadata or {},
         }
-        self._metadata_path.write_text(json.dumps(metadata))
+        self._metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
         self._ids = ids
-        self._metadata = metadata["doc_metadata"]
+        self._metadata = cast(dict[str, dict[str, Any]], metadata["doc_metadata"])
 
     def load(self, *, ef_search: int = DEFAULT_EF) -> None:
         """Load an index from disk."""
@@ -114,14 +115,24 @@ class HNSWStore:
         index.load_index(str(self.index_path))
         index.set_ef(ef_search)
 
-        metadata = json.loads(self._metadata_path.read_text())
-        if metadata.get("dim") != self.dim:
+        metadata_raw = json.loads(self._metadata_path.read_text(encoding="utf-8"))
+        if metadata_raw.get("dim") != self.dim:
             raise ValueError(
-                f"Stored dimension {metadata.get('dim')} does not match expected {self.dim}"
+                f"Stored dimension {metadata_raw.get('dim')} does not match expected {self.dim}"
             )
 
-        self._ids = list(metadata.get("ids", []))
-        self._metadata = metadata.get("doc_metadata", {})
+        ids_raw = metadata_raw.get("ids", [])
+        if not isinstance(ids_raw, list):
+            ids_raw = []
+        self._ids = [str(identifier) for identifier in ids_raw]
+
+        metadata = metadata_raw.get("doc_metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        self._metadata = {
+            str(key): value if isinstance(value, dict) else {}
+            for key, value in metadata.items()
+        }
 
     def is_ready(self) -> bool:
         """Return True when the index and metadata exist on disk."""
@@ -144,20 +155,20 @@ class HNSWStore:
         index = self._ensure_index()
         labels, distances = index.knn_query(query_vector, k=top_k)
         hits: list[DenseHit] = []
-        for label, distance in zip(labels[0], distances[0]):
+        for label, distance in zip(labels[0], distances[0], strict=True):
             identifier = self._ids[int(label)]
             # Convert cosine distance (0 == identical, 2 == opposite) to similarity score
             score = 1.0 - float(distance)
             hits.append(DenseHit(identifier=identifier, score=score))
         return hits
 
-    def resolve_metadata(self, identifier: str) -> dict | None:
+    def resolve_metadata(self, identifier: str) -> dict[str, Any] | None:
         """Return stored metadata for ``identifier`` if present."""
-        if not hasattr(self, "_metadata"):
-            self._metadata = {}
+        if self._metadata is None:
+            return None
         return self._metadata.get(identifier)
 
-    def _ensure_index(self) -> hnswlib.Index:
+    def _ensure_index(self) -> Any:
         if hnswlib is None:  # pragma: no cover - dependency missing runtime path
             raise RuntimeError(
                 "hnswlib is required for dense search. Install it with 'pip install hnswlib'."

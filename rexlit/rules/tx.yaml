@@ -1,0 +1,55 @@
+state: TX
+schema_version: "1.0"
+date_created: "2025-10-28"
+last_updated: "2025-10-28"
+source: "Texas Rules of Civil Procedure"
+note: "v1.0: Core civil deadlines. Reviewed by legal counsel."
+
+events:
+  served_petition:
+    description: "Service of petition on defendant"
+    deadlines:
+      - name: answer_due
+        cite: "Tex. R. Civ. P. 99(b)"
+        last_reviewed: "2025-10-28"
+        offset:
+          days: 20
+          skip_weekends: true
+          skip_holidays: ["US", "TX"]
+        time_of_day: "10:00"
+        notes: "Answer due 20 days after service (Monday if weekend). Mail service adds 3 days per Rule 21.002(b)."
+
+      - name: special_exception_due
+        cite: "Tex. R. Civ. P. 92.008"
+        last_reviewed: "2025-10-28"
+        offset:
+          days: 3
+          skip_weekends: false
+        time_of_day: "10:00"
+        notes: "Special exceptions due 3 days before answer deadline."
+
+  discovery_served:
+    description: "Discovery request served"
+    deadlines:
+      - name: discovery_response_due
+        cite: "Tex. R. Civ. P. 193.2(c)"
+        last_reviewed: "2025-10-28"
+        offset:
+          days: 30
+          skip_weekends: true
+        time_of_day: "10:00"
+        notes: "Responses due 30 days after service (extends to Monday if weekend)."
+
+  motion_filed:
+    description: "Motion filed with court"
+    deadlines:
+      - name: response_due
+        cite: "Tex. R. Civ. P. 21.002"
+        last_reviewed: "2025-10-28"
+        offset:
+          days: 7
+          skip_weekends: true
+        time_of_day: "10:00"
+        notes: "Response due 7 business days before hearing."
+
+holidays: ["US", "TX"]

@@ -11,7 +11,13 @@ from rexlit.bootstrap import TantivyIndexAdapter
 from rexlit.config import Settings
 from rexlit.index.build import build_dense_index, build_index
 from rexlit.index.metadata import IndexMetadata
-from rexlit.index.search import SearchResult, _extract_snippet, get_custodians, get_doctypes, search_index
+from rexlit.index.search import (
+    SearchResult,
+    _extract_snippet,
+    get_custodians,
+    get_doctypes,
+    search_index,
+)
 
 
 class TestIndexMetadata:

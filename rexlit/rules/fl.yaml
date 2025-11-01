@@ -1,0 +1,46 @@
+state: FL
+schema_version: "1.0"
+date_created: "2025-10-28"
+last_updated: "2025-10-28"
+source: "Florida Rules of Civil Procedure"
+note: "v1.0: Core civil deadlines. Reviewed by legal counsel."
+
+events:
+  served_petition:
+    description: "Service of petition on defendant"
+    deadlines:
+      - name: answer_due
+        cite: "Fla. R. Civ. P. 1.140(a)"
+        last_reviewed: "2025-10-28"
+        offset:
+          days: 20
+          skip_weekends: true
+          skip_holidays: ["US", "FL"]
+        time_of_day: "10:00"
+        notes: "Answer due 20 days after service."
+
+  discovery_served:
+    description: "Discovery request served"
+    deadlines:
+      - name: discovery_response_due
+        cite: "Fla. R. Civ. P. 1.340(b)"
+        last_reviewed: "2025-10-28"
+        offset:
+          days: 30
+          skip_weekends: true
+        time_of_day: "10:00"
+        notes: "Responses due 30 days after service."
+
+  trial_notice_served:
+    description: "Notice of trial served"
+    deadlines:
+      - name: pretrialconf_required
+        cite: "Fla. R. Civ. P. 1.200"
+        last_reviewed: "2025-10-28"
+        offset:
+          days: 30
+          skip_weekends: true
+        time_of_day: "14:00"
+        notes: "Pretrial conference required at least 30 days before trial."
+
+holidays: ["US", "FL"]

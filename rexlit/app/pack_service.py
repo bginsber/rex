@@ -3,6 +3,7 @@
 Generates production packages (RexPack format) with manifests and artifacts.
 """
 
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,8 @@ from pydantic import BaseModel
 
 from rexlit.ingest.discover import discover_documents
 from rexlit.utils.deterministic import deterministic_order_documents
+
+logger = logging.getLogger(__name__)
 
 
 class PackManifest(BaseModel):
@@ -104,9 +107,9 @@ class PackService:
                 try:
                     self.storage.copy_file(doc_path, dest_native)
                     artifacts.append(str(dest_native.relative_to(output_path)))
-                except Exception as e:
+                except Exception as exc:
                     # Log error but continue processing other documents
-                    print(f"Warning: Failed to copy native file {doc_path}: {e}")
+                    logger.warning("Failed to copy native file %s: %s", doc_path, exc, exc_info=True)
 
             # Copy extracted text if available
             if include_text:
@@ -142,8 +145,10 @@ class PackService:
                     metadata_jsonl, iter(metadata_records)
                 )
                 artifacts.append(str(metadata_jsonl.relative_to(output_path)))
-            except Exception as e:
-                print(f"Warning: Failed to write metadata JSONL: {e}")
+            except Exception as exc:
+                logger.warning(
+                    "Failed to write metadata JSONL for pack %s: %s", output_path, exc, exc_info=True
+                )
 
         # 5. Write manifest via storage_port
         # Generate pack_id from input path and timestamp
@@ -195,6 +200,83 @@ class PackService:
         )
 
         return manifest
+
+    def create_production(
+        self,
+        stamped_dir: Path,
+        *,
+        name: str,
+        format: str = "dat",
+        bates_prefix: str = "",
+        output_dir: Path | None = None,
+    ) -> dict[str, Any]:
+        """Generate DAT or Opticon production load file from stamped PDFs."""
+
+        source_dir = Path(stamped_dir).resolve()
+        if not source_dir.exists() or not source_dir.is_dir():
+            raise FileNotFoundError(f"Stamped directory not found: {source_dir}")
+
+        manifest_path = source_dir / "bates_manifest.jsonl"
+        if not manifest_path.exists():
+            raise FileNotFoundError(
+                f"Bates stamping manifest not found at: {manifest_path}"
+            )
+
+        records = list(self.storage.read_jsonl(manifest_path))
+        if not records:
+            raise ValueError("Bates stamping manifest is empty; cannot build production set")
+
+        if bates_prefix:
+            mismatches = [
+                record
+                for record in records
+                if not str(record.get("start_label", "")).startswith(bates_prefix)
+            ]
+            if mismatches:
+                raise ValueError(
+                    "Bates manifest contains labels that do not match the expected prefix"
+                )
+
+        normalized_format = format.lower()
+        if normalized_format not in {"dat", "opticon"}:
+            raise ValueError(
+                f"Unsupported production format '{format}'. Choose 'dat' or 'opticon'."
+            )
+
+        output_root = (
+            Path(output_dir).resolve()
+            if output_dir is not None
+            else source_dir / "production" / name
+        )
+        output_root.mkdir(parents=True, exist_ok=True)
+
+        if normalized_format == "dat":
+            loadfile_path = output_root / f"{name}.dat"
+            loadfile_content = self._render_dat_loadfile(records, source_dir)
+        else:
+            loadfile_path = output_root / f"{name}.opt"
+            loadfile_content = self._render_opticon_loadfile(records, source_dir)
+
+        self.storage.write_text(loadfile_path, loadfile_content)
+
+        self.ledger.log(
+            operation="production_create",
+            inputs=[str(source_dir)],
+            outputs=[str(loadfile_path)],
+            args={
+                "format": normalized_format,
+                "record_count": len(records),
+                "name": name,
+                "output_dir": str(output_root),
+            },
+        )
+
+        return {
+            "output_path": loadfile_path,
+            "document_count": len(records),
+            "format": normalized_format,
+            "manifest_path": manifest_path,
+        }
 
     def validate_pack(self, pack_path: Path) -> bool:
         """Validate production package integrity.
@@ -399,5 +481,60 @@ class PackService:
 
             line = "|".join(values)
             lines.append(line)
+
+        return "\n".join(lines) + "\n"
+
+    def _render_dat_loadfile(
+        self, manifest_records: list[dict[str, Any]], base_dir: Path
+    ) -> str:
+        header = ["DOCID", "BEGDOC", "ENDDOC", "PAGECOUNT", "FILEPATH", "SHA256"]
+        lines = ["|".join(header)]
+
+        for record in sorted(manifest_records, key=lambda r: str(r.get("start_label", ""))):
+            start_label = str(record.get("start_label", record.get("label", "")))
+            end_label = str(record.get("end_label", start_label))
+            page_count = int(record.get("pages_stamped", record.get("page_count", 0)) or 0)
+            doc_path_str = str(record.get("output_path", record.get("path", "")))
+            doc_path = Path(doc_path_str)
+            sha256 = str(record.get("output_sha256", record.get("sha256", "")))
+
+            try:
+                relative_path = doc_path.resolve().relative_to(base_dir)
+            except Exception:
+                relative_path = doc_path.name
+
+            fields = [
+                start_label,
+                start_label,
+                end_label,
+                str(page_count),
+                str(relative_path).replace("|", "\\|"),
+                sha256,
+            ]
+            lines.append("|".join(fields))
+
+        return "\n".join(lines) + "\n"
+
+    def _render_opticon_loadfile(
+        self, manifest_records: list[dict[str, Any]], base_dir: Path
+    ) -> str:
+        lines: list[str] = []
+        for record in sorted(manifest_records, key=lambda r: str(r.get("start_label", ""))):
+            start_label = str(record.get("start_label", record.get("label", "")))
+            doc_path_str = str(record.get("output_path", record.get("path", "")))
+            doc_path = Path(doc_path_str)
+            page_count = int(record.get("pages_stamped", record.get("page_count", 0)) or 0)
+
+            try:
+                relative_path = doc_path.resolve().relative_to(base_dir)
+            except Exception:
+                relative_path = doc_path.name
+
+            lines.append("IMAGE")
+            lines.append(start_label)
+            lines.append(str(relative_path))
+            lines.append("Y")
+            lines.append(str(page_count))
+            lines.append("")
 
         return "\n".join(lines) + "\n"

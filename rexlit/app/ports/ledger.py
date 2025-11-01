@@ -46,11 +46,11 @@ class LedgerPort(Protocol):
         """
         ...
 
-    def verify(self) -> bool:
+    def verify(self) -> tuple[bool, str | None]:
         """Verify audit ledger integrity.
 
         Returns:
-            True if hash chain is valid, False otherwise
+            Tuple of (is_valid, error_message). error_message is None if valid.
         """
         ...
 

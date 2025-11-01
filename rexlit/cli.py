@@ -1,7 +1,8 @@
 """RexLit CLI application with Typer."""
 
+from datetime import datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, Literal
 
 import typer
 
@@ -9,6 +10,7 @@ from rexlit import __version__
 from rexlit.bootstrap import bootstrap_application
 from rexlit.config import get_settings, set_settings
 from rexlit.utils.offline import OfflineModeGate
+from rexlit.app.ports.stamp import BatesStampRequest
 
 app = typer.Typer(
     name="rexlit",
@@ -33,6 +35,26 @@ def require_online(gate: OfflineModeGate, feature_name: str) -> None:
     except RuntimeError as exc:
         typer.secho(f"\n{exc}\nAborting.", fg=typer.colors.YELLOW)
         raise typer.Exit(code=2) from exc
+
+
+def _parse_rgb_hex(value: str) -> tuple[float, float, float]:
+    color = value.strip().lstrip("#")
+    if len(color) != 6:
+        raise ValueError("Color must be a 6-digit hexadecimal string")
+    try:
+        components = tuple(int(color[i : i + 2], 16) / 255 for i in (0, 2, 4))
+    except ValueError as exc:  # pragma: no cover - handled by CLI validation
+        raise ValueError("Invalid hexadecimal color value") from exc
+    return components  # type: ignore[return-value]
+
+
+def _collect_pdf_documents(container, source: Path) -> list:
+    records = []
+    for record in container.discovery_port.discover(source, recursive=True):
+        extension = getattr(record, "extension", "").lower()
+        if extension == ".pdf":
+            records.append(record)
+    return records
 
 
 @app.callback()
@@ -222,7 +244,6 @@ def index_search(
     import json
 
     container = bootstrap_application()
-    settings = container.settings
     mode_normalized = mode.lower()
 
     if mode_normalized not in {"lexical", "dense", "hybrid"}:
@@ -249,16 +270,16 @@ def index_search(
             api_key=isaacus_api_key,
             api_base=isaacus_api_base,
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
         typer.secho(
             "Error: Index not found. Run 'rexlit index build' first.",
             fg=typer.colors.RED,
             err=True,
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from exc
     except ValueError as exc:
         typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from exc
 
     if json_output:
         typer.echo(json.dumps([r.model_dump(mode="json") for r in results], indent=2))
@@ -289,6 +310,322 @@ def index_search(
         typer.echo(f"\n{i}. {result.path} [{strategy}] (score: {score_repr})")
         if result.snippet:
             typer.echo(f"   {result.snippet}")
+
+
+# Bates subcommand
+bates_app = typer.Typer(help="Bates numbering utilities")
+app.add_typer(bates_app, name="bates")
+
+
+@bates_app.command("stamp")
+def bates_stamp(
+    path: Annotated[Path, typer.Argument(help="PDF file or directory to stamp")],
+    prefix: Annotated[str, typer.Option("--prefix", "-p", help="Bates prefix (e.g. 'ABC')")],
+    width: Annotated[
+        int,
+        typer.Option("--width", "-w", help="Zero-pad width for numeric portion", min=1),
+    ] = 7,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Destination directory or PDF for stamped output"),
+    ] = None,
+    font_size: Annotated[int, typer.Option("--font-size", help="Font size in points", min=6)] = 10,
+    color: Annotated[str, typer.Option("--color", help="RGB hex color (e.g. '000000')") ] = "000000",
+    position: Annotated[
+        Literal["bottom-right", "bottom-center", "top-right"],
+        typer.Option("--position", help="Stamp placement"),
+    ] = "bottom-right",
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Preview assignments without stamping")]
+    = False,
+) -> None:
+    """Apply Bates numbers to PDF documents with layout-aware placement."""
+
+    container = bootstrap_application()
+    resolved_path = path.resolve()
+
+    if not resolved_path.exists():
+        typer.secho(f"Error: Path not found: {resolved_path}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        rgb = _parse_rgb_hex(color)
+    except ValueError as exc:
+        typer.secho(f"Invalid color value: {color} ({exc})", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    documents = _collect_pdf_documents(container, resolved_path)
+
+    if resolved_path.is_file() and not documents:
+        typer.secho("Input file must be a PDF for stamping", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    if not documents:
+        typer.secho("No PDF documents discovered for stamping", fg=typer.colors.YELLOW)
+        raise typer.Exit(code=1)
+
+    plan = container.bates_planner.plan_with_families(
+        documents,
+        prefix=prefix,
+        width=width,
+        separator="",
+    )
+
+    record_by_sha = {record.sha256: record for record in documents}
+    ordered_documents = list(plan.get("ordered_documents", []))
+
+    if dry_run:
+        preview_labels: list[str] = []
+        current_number = 1
+        total_pages = 0
+        for entry in ordered_documents:
+            sha256 = str(entry.get("sha256"))
+            record = record_by_sha.get(sha256)
+            if record is None:
+                continue
+            page_count = container.bates_stamper.get_page_count(Path(record.path))
+            total_pages += page_count
+            for _ in range(page_count):
+                if len(preview_labels) < 5:
+                    preview_labels.append(f"{prefix}{current_number:0{width}d}")
+                current_number += 1
+
+        typer.secho("✓ Dry-run preview", fg=typer.colors.GREEN)
+        typer.echo(f"  Documents: {plan['total_documents']}")
+        typer.echo(f"  Total pages: {total_pages}")
+        typer.echo(f"  Prefix: {prefix}")
+        typer.echo(f"  Position: {position}")
+        if preview_labels:
+            typer.echo("\n  First labels:")
+            for idx, label in enumerate(preview_labels, start=1):
+                typer.echo(f"    {idx}. {label}")
+            remaining = max(total_pages - len(preview_labels), 0)
+            if remaining:
+                typer.echo(f"    … and {remaining} more")
+        raise typer.Exit(code=0)
+
+    if resolved_path.is_dir():
+        output_root = (output.resolve() if output else (resolved_path / "stamped")).resolve()
+        output_root.mkdir(parents=True, exist_ok=True)
+        base_dir = resolved_path
+    else:
+        output_root = None
+        if output is None:
+            destination = resolved_path.with_name(
+                f"{resolved_path.stem}_stamped{resolved_path.suffix}"
+            )
+        else:
+            destination = output.resolve()
+            if destination.is_dir():
+                destination = destination / resolved_path.name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+
+    current_number = 1
+    total_pages = 0
+    manifest_records: list[dict[str, Any]] = []
+
+    for entry in ordered_documents:
+        sha256 = str(entry.get("sha256"))
+        record = record_by_sha.get(sha256)
+        if record is None:
+            continue
+
+        input_path = Path(record.path)
+        if output_root is not None:
+            relative_path = input_path.relative_to(resolved_path)
+            output_path = (output_root / relative_path).with_suffix(input_path.suffix)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            output_path = destination
+
+        request = BatesStampRequest(
+            input_path=input_path,
+            output_path=output_path,
+            prefix=prefix,
+            start_number=current_number,
+            width=width,
+            position=position,
+            font_size=font_size,
+            color=rgb,
+            background=True,
+        )
+
+        result = container.bates_stamper.stamp(request)
+        total_pages += result.pages_stamped
+        current_number = result.end_number + 1
+
+        output_hash = container.storage_port.compute_hash(result.output_path)
+        manifest_records.append(
+            {
+                "input_path": str(result.input_path),
+                "output_path": str(result.output_path),
+                "sha256": record.sha256,
+                "family_id": entry.get("family_id"),
+                "prefix": result.prefix,
+                "width": result.width,
+                "start_number": result.start_number,
+                "end_number": result.end_number,
+                "start_label": result.start_label,
+                "end_label": result.end_label,
+                "pages_stamped": result.pages_stamped,
+                "coordinates": [coord.model_dump(mode="json") for coord in result.coordinates],
+                "output_sha256": output_hash,
+            }
+        )
+
+    if not manifest_records:
+        typer.secho("No PDFs were stamped.", fg=typer.colors.YELLOW)
+        raise typer.Exit(code=1)
+
+    manifest_parent = (
+        output_root if output_root is not None else destination.parent
+    )
+    manifest_path = manifest_parent / "bates_manifest.jsonl"
+    container.storage_port.write_jsonl(manifest_path, iter(manifest_records))
+
+    typer.secho(
+        f"✓ Stamped {total_pages} pages across {len(manifest_records)} document(s)",
+        fg=typer.colors.GREEN,
+    )
+    typer.echo(f"  Manifest: {manifest_path}")
+    if output_root is not None:
+        typer.echo(f"  Output directory: {output_root}")
+    else:
+        typer.echo(f"  Output file: {destination}")
+
+
+# Production subcommand
+produce_app = typer.Typer(help="Production load file exports")
+app.add_typer(produce_app, name="produce")
+
+
+@produce_app.command("create")
+def produce_create(
+    path: Annotated[Path, typer.Argument(help="Directory containing stamped PDFs")],
+    name: Annotated[str, typer.Option("--name", "-n", help="Production set name")],
+    format: Annotated[
+        Literal["dat", "opticon"],
+        typer.Option("--format", "-f", help="Production load file format"),
+    ] = "dat",
+    bates_prefix: Annotated[
+        str,
+        typer.Option("--bates", help="Expected Bates prefix for validation"),
+    ] = "",
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Output directory for production set"),
+    ] = None,
+) -> None:
+    """Generate DAT or Opticon production files from stamped documents."""
+
+    container = bootstrap_application()
+    resolved_path = path.resolve()
+
+    if not resolved_path.exists() or not resolved_path.is_dir():
+        typer.secho(f"Error: Directory not found: {resolved_path}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        result = container.pack_service.create_production(
+            resolved_path,
+            name=name,
+            format=format,
+            bates_prefix=bates_prefix,
+            output_dir=output.resolve() if output is not None else None,
+        )
+    except (FileNotFoundError, ValueError, NotImplementedError) as exc:
+        typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.secho(f"✓ Production set created: {result['output_path']}", fg=typer.colors.GREEN)
+    typer.echo(f"  Documents: {result['document_count']}")
+    typer.echo(f"  Format: {format.upper()}")
+
+
+# Rules subcommand
+rules_app = typer.Typer(help="Rules and deadline calculations")
+app.add_typer(rules_app, name="rules")
+
+
+@rules_app.command("calc")
+def rules_calc(
+    jurisdiction: Annotated[
+        Literal["TX", "FL"],
+        typer.Option("--jurisdiction", "-j", help="Jurisdiction"),
+    ],
+    event: Annotated[
+        str,
+        typer.Option("--event", "-e", help="Triggering event (e.g. 'served_petition')"),
+    ],
+    date: Annotated[
+        str,
+        typer.Option("--date", "-d", help="Base date (YYYY-MM-DD)"),
+    ],
+    service_method: Annotated[
+        Literal["personal", "mail", "eservice"],
+        typer.Option("--service", "-s", help="Service method"),
+    ] = "personal",
+    explain: Annotated[
+        bool,
+        typer.Option("--explain", help="Show calculation trace"),
+    ] = False,
+    ics_output: Annotated[
+        Path | None,
+        typer.Option("--ics", help="Export deadlines to an ICS calendar file"),
+    ] = None,
+) -> None:
+    """Calculate litigation deadlines for Texas or Florida civil rules."""
+
+    container = bootstrap_application()
+
+    try:
+        base_date = datetime.fromisoformat(date)
+    except ValueError as exc:
+        typer.secho(f"Invalid date format: {date}. Use YYYY-MM-DD.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.secho(f"\n📅 {jurisdiction} Rules Calculator", fg=typer.colors.BLUE, bold=True)
+
+    try:
+        deadlines = container.rules_engine.calculate_deadline(
+            jurisdiction=jurisdiction,
+            event=event,
+            base_date=base_date,
+            service_method=service_method,
+            explain=explain,
+        )
+    except ValueError as exc:
+        typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.secho(f"   Event: {event}", fg=typer.colors.CYAN)
+    typer.secho(f"   Base date: {base_date.strftime('%Y-%m-%d')}", fg=typer.colors.CYAN)
+    typer.secho(f"   Service: {service_method}\n", fg=typer.colors.CYAN)
+
+    deadline_items = deadlines.get("deadlines", {})
+    if not deadline_items:
+        typer.secho("No deadlines defined for this event.", fg=typer.colors.YELLOW)
+    else:
+        for name, info in deadline_items.items():
+            typer.secho(f"  ✓ {name}", fg=typer.colors.GREEN, bold=True)
+            deadline_dt = datetime.fromisoformat(info["date"])
+            typer.echo(f"    Date:   {deadline_dt.strftime('%A, %B %d, %Y @ %H:%M')}")
+            typer.echo(f"    Rule:   {info['cite']}")
+            if explain and info.get("trace"):
+                typer.echo(f"    Calc:   {info['trace']}")
+            if info.get("notes"):
+                typer.echo(f"    Notes:  {info['notes']}")
+            if info.get("last_reviewed"):
+                typer.echo(f"    Reviewed: {info['last_reviewed']}")
+            typer.echo()
+
+    if ics_output is not None:
+        output_path = ics_output.resolve()
+        typer.secho("📋 Exporting to ICS...", fg=typer.colors.BLUE)
+        from rexlit.rules.export import export_deadlines_to_ics
+
+        export_deadlines_to_ics(deadlines, output_path)
+        typer.secho(f"✓ Calendar exported: {output_path}", fg=typer.colors.GREEN)
+        typer.echo("   Drag-drop into Calendar app to import")
 
 
 # OCR subcommand (Phase 2)

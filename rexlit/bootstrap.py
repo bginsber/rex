@@ -16,6 +16,7 @@ from rexlit.app.adapters import (
     JSONLineRedactionPlanner,
     Kanon2Adapter,
     SequentialBatesPlanner,
+    PDFStamperAdapter,
     ZipPackager,
 )
 from rexlit.app.audit_service import AuditService
@@ -27,6 +28,7 @@ from rexlit.app.ports import (
     IndexPort,
     LedgerPort,
     PackPort,
+    StampPort,
     RedactionPlannerPort,
     StoragePort,
     VectorStorePort,
@@ -49,6 +51,7 @@ from rexlit.index.search import (
 from rexlit.index.search import (
     search_index as lexical_search_index,
 )
+from rexlit.rules import RulesEngine
 from rexlit.utils.offline import OfflineModeGate
 
 
@@ -61,6 +64,7 @@ class ApplicationContainer:
     report_service: ReportService
     redaction_service: RedactionService
     pack_service: PackService
+    rules_engine: RulesEngine
     audit_service: AuditService
     ledger_port: LedgerPort
     storage_port: StoragePort
@@ -68,6 +72,7 @@ class ApplicationContainer:
     deduper_port: DeduperPort | None
     redaction_planner: RedactionPlannerPort
     bates_planner: BatesPlannerPort
+    bates_stamper: StampPort
     pack_port: PackPort
     index_port: IndexPort
     offline_gate: OfflineModeGate
@@ -312,6 +317,9 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
     redaction_planner = JSONLineRedactionPlanner(settings=active_settings)
     bates_planner = SequentialBatesPlanner(settings=active_settings)
     pack_adapter = ZipPackager(active_settings.get_data_dir() / "packs")
+    bates_stamper = PDFStamperAdapter()
+    rules_dir = Path(__file__).resolve().parent / "rules"
+    rules_engine = RulesEngine(rules_dir)
 
     ledger = _create_ledger(active_settings)
     ledger_for_services: LedgerPort = ledger or NoOpLedger()  # type: ignore[assignment]
@@ -345,6 +353,7 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
         report_service=report_service,
         redaction_service=redaction_service,
         pack_service=pack_service,
+        rules_engine=rules_engine,
         audit_service=audit_service,
         ledger_port=ledger if ledger is not None else ledger_for_services,
         storage_port=storage,
@@ -352,6 +361,7 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
         deduper_port=deduper,
         redaction_planner=redaction_planner,
         bates_planner=bates_planner,
+        bates_stamper=bates_stamper,
         pack_port=pack_adapter,
         index_port=TantivyIndexAdapter(
             active_settings,

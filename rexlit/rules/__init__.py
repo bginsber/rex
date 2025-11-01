@@ -1,3 +1,5 @@
 """Rules engine and deadline calculation."""
 
-__all__: list[str] = []
+from .engine import RulesEngine
+
+__all__ = ["RulesEngine"]

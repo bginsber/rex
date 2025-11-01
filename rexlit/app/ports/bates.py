@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -27,11 +27,30 @@ class BatesPlan(BaseModel):
         default_factory=list,
         description="Ordered Bates assignments covering the input documents",
     )
+    prefix: str | None = Field(default=None, description="Prefix used for numbering")
+    width: int | None = Field(default=None, description="Zero-padding width for numbering")
 
 
 class BatesPlannerPort(Protocol):
     """Port interface for Bates plan generation."""
 
-    def plan(self, documents: Iterable[DocumentRecord]) -> BatesPlan:
+    def plan(
+        self,
+        documents: Iterable[DocumentRecord],
+        *,
+        prefix: str | None = None,
+        width: int | None = None,
+    ) -> BatesPlan:
         """Produce a Bates numbering plan for ``documents``."""
+        ...
+
+    def plan_with_families(
+        self,
+        documents: Iterable[DocumentRecord],
+        *,
+        prefix: str,
+        width: int,
+        separator: str = "-",
+    ) -> dict[str, Any]:
+        """Generate an ordered Bates plan that respects email family ordering."""
         ...

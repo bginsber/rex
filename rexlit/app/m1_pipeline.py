@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -92,7 +92,7 @@ class M1Pipeline:
         self,
         stages: list[PipelineStage],
         name: str,
-    ) -> PipelineStage:
+    ) -> Iterator[PipelineStage]:
         """Context manager to standardize pipeline stage error handling."""
 
         stage = PipelineStage(name=name)
@@ -206,7 +206,7 @@ class M1Pipeline:
         include_extensions: set[str] | None,
         exclude_extensions: set[str] | None,
     ) -> Iterable[DocumentRecord]:
-        with self._stage(stages, "discover") as stage:
+        with self._stage(stages, "discover") as stage:  # type: PipelineStage
             count = 0
             stage.detail = "Streaming discovery..."
 
@@ -231,7 +231,7 @@ class M1Pipeline:
         documents: Iterable[DocumentRecord],
         stages: list[PipelineStage],
     ) -> list[DocumentRecord]:
-        with self._stage(stages, "dedupe") as stage:
+        with self._stage(stages, "dedupe") as stage:  # type: PipelineStage
             docs = deterministic_order_documents(list(documents))
 
             if not docs:
@@ -259,7 +259,7 @@ class M1Pipeline:
         documents: Iterable[DocumentRecord],
         stages: list[PipelineStage],
     ) -> tuple[dict[str, Path], dict[str, str]]:
-        with self._stage(stages, "redaction_plan") as stage:
+        with self._stage(stages, "redaction_plan") as stage:  # type: PipelineStage
             plans: dict[str, Path] = {}
             fingerprints: dict[str, str] = {}
             count = 0
@@ -286,7 +286,7 @@ class M1Pipeline:
         documents: Iterable[DocumentRecord],
         stages: list[PipelineStage],
     ) -> BatesPlan | None:
-        with self._stage(stages, "bates_plan") as stage:
+        with self._stage(stages, "bates_plan") as stage:  # type: PipelineStage
             docs = list(documents)
             if not docs:
                 stage.status = "skipped"
@@ -303,7 +303,7 @@ class M1Pipeline:
         documents: Iterable[DocumentRecord],
         stages: list[PipelineStage],
     ) -> None:
-        with self._stage(stages, "manifest") as stage:
+        with self._stage(stages, "manifest") as stage:  # type: PipelineStage
             atomic_write_jsonl(
                 manifest_path,
                 (record.model_dump(mode="json") for record in documents),
@@ -317,7 +317,7 @@ class M1Pipeline:
         artifact_dir: Path,
         stages: list[PipelineStage],
     ) -> Path | None:
-        with self._stage(stages, "pack") as stage:
+        with self._stage(stages, "pack") as stage:  # type: PipelineStage
             if not artifact_dir.exists():
                 stage.status = "skipped"
                 stage.detail = "Artifact directory missing; skip packaging"
@@ -378,8 +378,8 @@ class M1Pipeline:
 
         requires_online = False
         if hasattr(adapter, "is_online"):
-            requires_online = bool(adapter.is_online())  # type: ignore[call-arg]
+            requires_online = bool(cast(Any, adapter).is_online())
         elif hasattr(adapter, "requires_online"):
-            requires_online = bool(adapter.requires_online())  # type: ignore[call-arg]
+            requires_online = bool(cast(Any, adapter).requires_online())
 
         self._offline_gate.ensure_supported(feature=feature, requires_online=requires_online)

@@ -1,6 +1,9 @@
 """Document content extraction for various file formats."""
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -10,7 +13,7 @@ class ExtractedContent(BaseModel):
 
     path: str = Field(..., description="Source document path")
     text: str = Field(..., description="Extracted text content")
-    page_count: int | None = Field(None, description="Number of pages (if applicable)")
+    page_count: int | None = Field(default=None, description="Number of pages (if applicable)")
     metadata: dict[str, str] = Field(
         default_factory=dict, description="Additional document metadata"
     )
@@ -35,6 +38,7 @@ def extract_text_file(file_path: Path) -> ExtractedContent:
     return ExtractedContent(
         path=str(file_path.absolute()),
         text=text,
+        page_count=None,
         metadata={"format": "text"},
     )
 
@@ -59,7 +63,7 @@ def extract_pdf(file_path: Path) -> ExtractedContent:
             "PyMuPDF is required for PDF extraction. " "Install with: pip install pymupdf"
         ) from e
 
-    doc = fitz.open(file_path)
+    doc = fitz.open(str(file_path))
     text_parts = []
     metadata_dict = {}
 
@@ -75,12 +79,13 @@ def extract_pdf(file_path: Path) -> ExtractedContent:
             if value:
                 metadata_dict[key.lower()] = str(value)
 
+    page_count = doc.page_count
     doc.close()
 
     return ExtractedContent(
         path=str(file_path.absolute()),
         text="\n\n".join(text_parts),
-        page_count=len(doc),
+        page_count=page_count,
         metadata={"format": "pdf", **metadata_dict},
     )
 
@@ -105,7 +110,7 @@ def extract_docx(file_path: Path) -> ExtractedContent:
             "python-docx is required for DOCX extraction. " "Install with: pip install python-docx"
         ) from e
 
-    doc = Document(file_path)
+    doc = Document(str(file_path))
     text_parts = []
 
     # Extract text from paragraphs
@@ -121,7 +126,7 @@ def extract_docx(file_path: Path) -> ExtractedContent:
                 text_parts.append(row_text)
 
     # Extract core properties metadata
-    metadata_dict = {}
+    metadata_dict: dict[str, str] = {}
     core_props = doc.core_properties
     if core_props.author:
         metadata_dict["author"] = core_props.author
@@ -134,9 +139,12 @@ def extract_docx(file_path: Path) -> ExtractedContent:
     if core_props.modified:
         metadata_dict["modified"] = core_props.modified.isoformat()
 
+    total_pages: int | None = None
+
     return ExtractedContent(
         path=str(file_path.absolute()),
         text="\n\n".join(text_parts),
+        page_count=total_pages,
         metadata={"format": "docx", **metadata_dict},
     )
 
@@ -162,15 +170,15 @@ def extract_image(file_path: Path) -> ExtractedContent:
         ) from e
 
     img = Image.open(file_path)
-    metadata_dict = {
-        "format": img.format or "unknown",
-        "mode": img.mode,
+    metadata_dict: dict[str, str] = {
+        "format": str(img.format or "unknown"),
+        "mode": str(img.mode),
         "size": f"{img.width}x{img.height}",
     }
 
     # Extract EXIF data if available
     if hasattr(img, "_getexif") and img._getexif():
-        exif = img._getexif()
+        exif: Any = img._getexif()
         if exif:
             metadata_dict["has_exif"] = "true"
 
@@ -179,6 +187,7 @@ def extract_image(file_path: Path) -> ExtractedContent:
     return ExtractedContent(
         path=str(file_path.absolute()),
         text="",  # Images require OCR for text extraction
+        page_count=None,
         metadata=metadata_dict,
     )
 

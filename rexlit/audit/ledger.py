@@ -232,7 +232,10 @@ class AuditLedger:
         except FileNotFoundError:
             return None
 
-        data = json.loads(raw)
+        data_raw = json.loads(raw)
+        if not isinstance(data_raw, dict):
+            raise ValueError("Audit metadata payload must be a JSON object.")
+        data: dict[str, Any] = dict(data_raw)
         expected_hmac = self._compute_metadata_hmac(
             int(data.get("last_sequence", 0)), data.get("last_hash")
         )

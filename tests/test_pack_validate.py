@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from rexlit.bootstrap import bootstrap_application
 from rexlit.config import Settings
 

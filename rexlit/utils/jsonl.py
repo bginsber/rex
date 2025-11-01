@@ -8,13 +8,14 @@ import tempfile
 from collections.abc import Iterable
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from rexlit.utils.schema import SchemaStamp, build_schema_stamp
 
 
 def _normalize_record(record: Any, *, schema_stamp: SchemaStamp | None = None) -> str:
     """Convert supported record types into a JSON string."""
+    typed_payload: dict[str, Any]
     if isinstance(record, str):
         line = record.rstrip("\n")
         if not line:
@@ -27,17 +28,23 @@ def _normalize_record(record: Any, *, schema_stamp: SchemaStamp | None = None) -
         return line
 
     if hasattr(record, "model_dump"):
-        payload = record.model_dump(mode="json")
+        payload = cast(Any, record).model_dump(mode="json")
+        if not isinstance(payload, dict):
+            raise TypeError("Pydantic model_dump did not return a mapping.")
+        typed_payload = dict(payload)
     elif hasattr(record, "model_dump_json"):
-        line = record.model_dump_json()
+        line_str = cast(str, cast(Any, record).model_dump_json())
         if schema_stamp is not None:
-            payload = json.loads(line)
+            decoded = json.loads(line_str)
+            if not isinstance(decoded, dict):
+                raise TypeError("Pydantic model_dump_json did not yield an object.")
+            typed_payload = dict(decoded)
         else:
-            return line
-    elif is_dataclass(record):
-        payload = asdict(record)
+            return line_str
+    elif is_dataclass(record) and not isinstance(record, type):
+        typed_payload = dict(asdict(record))
     elif isinstance(record, dict):
-        payload = record
+        typed_payload = dict(record)
     else:
         raise TypeError(
             "Unsupported record type for JSONL serialization: "
@@ -45,9 +52,12 @@ def _normalize_record(record: Any, *, schema_stamp: SchemaStamp | None = None) -
         )
 
     if schema_stamp is not None:
-        payload = schema_stamp.apply(payload)
+        typed_payload = schema_stamp.apply(typed_payload)
 
-    return json.dumps(payload, separators=(",", ":"), sort_keys=True, ensure_ascii=False)
+    serialized = json.dumps(
+        typed_payload, separators=(",", ":"), sort_keys=True, ensure_ascii=False
+    )
+    return serialized
 
 
 def _build_schema_stamp(

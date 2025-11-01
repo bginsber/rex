@@ -42,7 +42,7 @@ def benchmark_metadata_queries(index_dir: Path, num_iterations: int = 10):
 
     # Benchmark custodians query
     custodian_times = []
-    for i in range(num_iterations):
+    for _ in range(num_iterations):
         start = time.time()
         custodians = get_custodians(index_dir)
         duration = time.time() - start
@@ -50,7 +50,7 @@ def benchmark_metadata_queries(index_dir: Path, num_iterations: int = 10):
 
     # Benchmark doctypes query
     doctype_times = []
-    for i in range(num_iterations):
+    for _ in range(num_iterations):
         start = time.time()
         doctypes = get_doctypes(index_dir)
         duration = time.time() - start

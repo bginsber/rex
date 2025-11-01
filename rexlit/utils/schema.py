@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from rexlit import __version__
 
@@ -83,8 +83,11 @@ def load_schema(schema_id: str, version: int = 1) -> dict[str, Any]:
         FileNotFoundError: If schema file not found
     """
     schema_path = get_schema_path(schema_id, version)
-    with open(schema_path) as f:
-        return json.load(f)
+    with open(schema_path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    if not isinstance(data, dict):
+        raise ValueError(f"Schema {schema_id}@{version} must be a JSON object.")
+    return cast(dict[str, Any], data)
 
 
 def build_schema_stamp(

@@ -13,17 +13,16 @@ import time
 import warnings
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
-try:  # pragma: no cover - optional dependency guard
-    from isaacus import Isaacus
-except ImportError:  # pragma: no cover - handled when client initialises
-    Isaacus = None  # type: ignore[assignment]
+if TYPE_CHECKING:  # pragma: no cover - type checking only
+    from isaacus import Isaacus as IsaacusClient
+else:  # pragma: no cover - runtime fallback
+    IsaacusClient = Any
 
-
-MODEL_ID = "kanon-2-embedder"
-DOCUMENT_TASK = "retrieval/document"
-QUERY_TASK = "retrieval/query"
+MODEL_ID: Literal["kanon-2-embedder"] = "kanon-2-embedder"
+DOCUMENT_TASK: Literal["retrieval/document"] = "retrieval/document"
+QUERY_TASK: Literal["retrieval/query"] = "retrieval/query"
 
 
 @dataclass(slots=True)
@@ -40,9 +39,15 @@ def _normalise_usage(usage: Any) -> dict[str, Any] | None:
     if usage is None:
         return None
     if hasattr(usage, "model_dump"):
-        return usage.model_dump()  # type: ignore[no-any-return]
+        result = cast(Any, usage).model_dump()
+        if isinstance(result, dict):
+            return dict(result)
+        return {"raw": repr(result)}
     if hasattr(usage, "to_dict"):
-        return usage.to_dict()  # type: ignore[no-any-return]
+        result = cast(Any, usage).to_dict()
+        if isinstance(result, dict):
+            return dict(result)
+        return {"raw": repr(result)}
     if isinstance(usage, dict):
         return usage
     # Best-effort string representation for unexpected types
@@ -53,26 +58,29 @@ def _init_client(
     *,
     api_key: str | None,
     api_base: str | None,
-) -> Isaacus:
+) -> IsaacusClient:
     """Initialise the Isaacus client with optional self-host base URL."""
-    if Isaacus is None:  # pragma: no cover - dependency missing runtime path
+    try:
+        from isaacus import Isaacus as IsaacusCtor
+    except ImportError as exc:  # pragma: no cover - dependency missing runtime path
         raise RuntimeError(
             "The 'isaacus' package is required for dense embeddings. Install it with 'pip install isaacus'."
-        )
+        ) from exc
     client_kwargs: dict[str, Any] = {}
     if api_key:
         client_kwargs["api_key"] = api_key
-    client = Isaacus(**client_kwargs)
+    client: IsaacusClient = IsaacusCtor(**client_kwargs)
 
     if api_base:
         # Isaacus SDK exposes api_base and/or base_url depending on version.
-        if hasattr(client, "api_base"):
-            client.api_base = api_base
-        elif hasattr(client, "base_url"):
-            client.base_url = api_base
+        client_any = cast(Any, client)
+        if hasattr(client_any, "api_base"):
+            client_any.api_base = api_base
+        elif hasattr(client_any, "base_url"):
+            client_any.base_url = api_base
         else:  # pragma: no cover - defensive branch
             # Fallback to attribute assignment for forward compatibility.
-            client.api_base = api_base
+            client_any.api_base = api_base
 
     return client
 
@@ -80,7 +88,7 @@ def _init_client(
 def embed_texts(
     texts: Sequence[str] | Iterable[str],
     *,
-    task: str,
+    task: Literal["retrieval/document", "retrieval/query"],
     dimensions: int = 768,
     api_key: str | None = None,
     api_base: str | None = None,
@@ -117,20 +125,21 @@ def embed_texts(
     try:
         response = client.embeddings.create(
             model=MODEL_ID,
-            input=materialised,
-            task=task,
-            dimensions=dimensions,
-        )
-        embeddings = [item.embedding for item in getattr(response, "data", [])]
-        usage_raw = getattr(response, "usage", None)
-    except TypeError:
-        response = client.embeddings.create(
-            model=MODEL_ID,
             texts=materialised,
             task=task,
             dimensions=dimensions,
         )
         embeddings = [entry.embedding for entry in getattr(response, "embeddings", [])]
+        usage_raw = getattr(response, "usage", None)
+    except TypeError:
+        embeddings_api = cast(Any, client.embeddings)
+        response = embeddings_api.create(
+            model=MODEL_ID,
+            input=materialised,
+            task=task,
+            dimensions=dimensions,
+        )
+        embeddings = [item.embedding for item in getattr(response, "data", [])]
         usage_raw = getattr(response, "usage", None)
     elapsed_ms = (time.perf_counter() - start) * 1000.0
 

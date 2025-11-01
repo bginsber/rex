@@ -1,7 +1,9 @@
 """Deterministic ordering utilities for reproducible workflows."""
 
+from __future__ import annotations
+
 import hashlib
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -49,9 +51,9 @@ def deterministic_sort_paths(paths: Iterable[Path]) -> list[Path]:
 
 
 def deterministic_sort_records(
-    records: Iterable[dict],
+    records: Iterable[Mapping[str, Any]],
     key_field: str = "sha256",
-) -> list[dict]:
+) -> list[Mapping[str, Any]]:
     """Sort records deterministically by key field.
 
     Args:
@@ -84,7 +86,14 @@ def compute_input_hash(inputs: list[str]) -> str:
     return hashlib.sha256(combined.encode()).hexdigest()
 
 
-def verify_determinism(func, inputs: Iterable[T], runs: int = 3) -> bool:
+R = TypeVar("R")
+
+
+def verify_determinism(
+    func: Callable[[Iterable[T]], R],
+    inputs: Iterable[T],
+    runs: int = 3,
+) -> bool:
     """Verify function produces deterministic output.
 
     Useful for testing pipeline determinism.
@@ -102,7 +111,7 @@ def verify_determinism(func, inputs: Iterable[T], runs: int = 3) -> bool:
         ...     return process(docs)
         >>> assert verify_determinism(my_pipeline, test_docs)
     """
-    results = []
+    results: list[R] = []
 
     for _ in range(runs):
         result = func(inputs)
@@ -129,4 +138,4 @@ def document_sort_key(document: Any) -> tuple[str, str]:
 def deterministic_order_documents(documents: Iterable[T]) -> list[T]:
     """Sort documents deterministically by (sha256, path)."""
 
-    return sorted(list(documents), key=document_sort_key)
+    return sorted(documents, key=document_sort_key)

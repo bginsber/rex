@@ -1,11 +1,21 @@
 """Metadata caching for search index performance optimization."""
 
+from __future__ import annotations
+
 import json
 import logging
 from bisect import bisect_left
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any, TypedDict
 
 logger = logging.getLogger(__name__)
+
+
+class CachePayload(TypedDict):
+    custodians: list[str]
+    doctypes: list[str]
+    doc_count: int
 
 
 class IndexMetadata:
@@ -26,9 +36,9 @@ class IndexMetadata:
         """
         self.index_dir = index_dir
         self.cache_file = index_dir / ".metadata_cache.json"
-        self._cache = self._load_cache()
+        self._cache: CachePayload = self._load_cache()
 
-    def _load_cache(self) -> dict:
+    def _load_cache(self) -> CachePayload:
         """Load cache from disk or return empty cache.
 
         Returns:
@@ -36,26 +46,22 @@ class IndexMetadata:
         """
         if self.cache_file.exists():
             try:
-                with open(self.cache_file) as f:
-                    data = json.load(f)
+                with open(self.cache_file, encoding="utf-8") as fh:
+                    data = json.load(fh)
                     return self._normalize_loaded_cache(data)
             except (OSError, json.JSONDecodeError) as exc:
                 return self._handle_corrupt_cache(f"{exc}")
         return self._empty_cache()
 
-    def _empty_cache(self) -> dict:
+    def _empty_cache(self) -> CachePayload:
         """Create an empty cache structure.
 
         Returns:
             Empty cache dictionary
         """
-        return {
-            "custodians": [],
-            "doctypes": [],
-            "doc_count": 0,
-        }
+        return CachePayload(custodians=[], doctypes=[], doc_count=0)
 
-    def _normalize_loaded_cache(self, data: dict) -> dict:
+    def _normalize_loaded_cache(self, data: Mapping[str, Any]) -> CachePayload:
         """Normalize cache payloads loaded from disk."""
         custodians = data.get("custodians", [])
         doctypes = data.get("doctypes", [])
@@ -68,13 +74,13 @@ class IndexMetadata:
         if not isinstance(doc_count, int):
             doc_count = 0
 
-        return {
-            "custodians": sorted(dict.fromkeys(custodians)),
-            "doctypes": sorted(dict.fromkeys(doctypes)),
-            "doc_count": doc_count,
-        }
+        return CachePayload(
+            custodians=sorted(dict.fromkeys(custodians)),
+            doctypes=sorted(dict.fromkeys(doctypes)),
+            doc_count=doc_count,
+        )
 
-    def _handle_corrupt_cache(self, reason: str) -> dict:
+    def _handle_corrupt_cache(self, reason: str) -> CachePayload:
         """Handle corrupted cache files by logging and backing up the payload."""
 
         logger.warning(
@@ -95,14 +101,14 @@ class IndexMetadata:
             logger.debug("Failed to backup corrupted cache %s", self.cache_file)
         return self._empty_cache()
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset cache to empty state.
 
         Called when rebuilding index from scratch.
         """
         self._cache = self._empty_cache()
 
-    def update(self, custodian: str | None, doctype: str | None):
+    def update(self, custodian: str | None, doctype: str | None) -> None:
         """Update metadata incrementally during indexing.
 
         Args:
@@ -126,18 +132,20 @@ class IndexMetadata:
         # Increment document count
         self._cache["doc_count"] += 1
 
-    def save(self):
+    def save(self) -> None:
         """Persist cache to disk.
 
         Writes cache as JSON to .metadata_cache.json in index directory.
         Should be called after index build/update completes.
         """
         try:
-            with open(self.cache_file, "w") as f:
-                json.dump(self._cache, f, indent=2)
-        except OSError as e:
+            with open(self.cache_file, "w", encoding="utf-8") as fh:
+                json.dump(self._cache, fh, indent=2)
+        except OSError as exc:
             # Log error but don't fail the indexing process
-            print(f"Warning: Failed to save metadata cache: {e}")
+            logger.warning(
+                "Failed to save metadata cache to %s: %s", self.cache_file, exc, exc_info=True
+            )
 
     def get_custodians(self) -> set[str]:
         """Get all unique custodians from cache.

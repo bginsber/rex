@@ -120,7 +120,7 @@ class HNSWAdapter(VectorStorePort):
         index = self._ensure_index()
         labels, distances = index.knn_query(q, k=top_k)
         hits: list[VectorHit] = []
-        for label, distance in zip(labels[0], distances[0]):
+        for label, distance in zip(labels[0], distances[0], strict=True):
             doc_id = self._ids[int(label)]
             score = 1.0 - float(distance)
             meta = self._doc_meta.get(doc_id, {}) if isinstance(self._doc_meta, dict) else {}
