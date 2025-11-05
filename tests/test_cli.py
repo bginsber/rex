@@ -73,6 +73,53 @@ def test_cli_ingest_emits_manifest_and_logs(
     assert audit_entry["args"]["redaction_plans"]
 
 
+def test_cli_ingest_writes_methods_appendix(
+    temp_dir: Path,
+    override_settings,
+) -> None:
+    """`rexlit ingest run --methods-appendix` emits appendix JSON alongside manifest."""
+
+    settings = override_settings
+
+    docs_dir = temp_dir / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "sample.txt").write_text("appendix test")
+
+    manifest_path = temp_dir / "manifest.jsonl"
+    appendix_path = temp_dir / "methods.json"
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "run",
+            str(docs_dir),
+            "--manifest",
+            str(manifest_path),
+            "--methods-appendix",
+            str(appendix_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Methods appendix written to" in result.stdout
+    assert manifest_path.exists()
+    assert appendix_path.exists()
+
+    appendix = json.loads(appendix_path.read_text())
+    assert appendix["schema_version"] == "1.0.0"
+    assert appendix["manifest_path"] == str(manifest_path.resolve())
+    assert appendix["dedupe"]["policy"] == "sha256"
+    assert appendix["command_history"]
+    assert any("--methods-appendix" in entry["command_line"] for entry in appendix["command_history"])
+
+    audit_path = settings.get_audit_path()
+    assert audit_path.exists()
+    audit_entries = [json.loads(line) for line in audit_path.read_text().splitlines() if line.strip()]
+    assert any(entry["operation"] == "cli.invoke" for entry in audit_entries)
+
+
 def test_cli_ingest_writes_impact_report(
     temp_dir: Path,
     override_settings,
@@ -171,6 +218,56 @@ def test_cli_ingest_writes_impact_report(
 
     # Manifest path
     assert report_data["manifest_path"]
+
+
+def test_cli_report_methods_generates_appendix(
+    temp_dir: Path,
+    override_settings,
+) -> None:
+    """`rexlit report methods` builds appendix from existing manifest."""
+
+    docs_dir = temp_dir / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "sample.txt").write_text("report methods test")
+
+    manifest_path = temp_dir / "manifest.jsonl"
+    appendix_path = temp_dir / "methods.json"
+    output_path = temp_dir / "replay-methods.json"
+
+    runner = CliRunner()
+
+    ingest_result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "run",
+            str(docs_dir),
+            "--manifest",
+            str(manifest_path),
+            "--methods-appendix",
+            str(appendix_path),
+        ],
+    )
+    assert ingest_result.exit_code == 0, ingest_result.stdout
+    assert appendix_path.exists()
+
+    report_result = runner.invoke(
+        app,
+        [
+            "report",
+            "methods",
+            str(manifest_path),
+            "--output",
+            str(output_path),
+        ],
+    )
+    assert report_result.exit_code == 0, report_result.stdout
+    assert output_path.exists()
+
+    replay = json.loads(output_path.read_text())
+    assert replay["manifest_path"] == str(manifest_path.resolve())
+    assert replay["command_history"]
+    assert replay["audit"]["verified"] in (True, False)
 
 
 def test_cli_ingest_rejects_invalid_review_rates(temp_dir: Path, override_settings) -> None:

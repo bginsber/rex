@@ -6,10 +6,9 @@ Read-only service that consumes manifests and artifacts to generate reports.
 import csv
 import html
 import io
-import json
 import os
 import tempfile
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +17,12 @@ from pydantic import BaseModel
 from rexlit import __version__
 from rexlit.app.m1_pipeline import PipelineStage
 from rexlit.app.ports import DocumentRecord, LedgerPort, StoragePort
+from rexlit.utils.methods import (
+    compute_input_set_hash,
+    extract_command_history,
+    extract_search_activity,
+    format_dedupe_policy,
+)
 
 
 class ReportMetadata(BaseModel):
@@ -48,6 +53,26 @@ class ImpactReport(BaseModel):
     errors: dict[str, Any]
     manifest_path: str | None
     generated_at: str
+
+
+class MethodsAppendix(BaseModel):
+    """Methods appendix capturing defensible discovery methodology.
+
+    Aggregates deterministic inputs, CLI and search activity, and audit status.
+    """
+
+    schema_version: str = "1.0.0"
+    tool_version: str
+    generated_at: str
+    manifest_path: str
+    manifest_content_hash: str
+    input_set_hash: str
+    discovery: dict[str, Any] | None
+    dedupe: dict[str, Any]
+    search_activity: list[dict[str, Any]]
+    command_history: list[dict[str, Any]]
+    pipeline_stages: list[dict[str, Any]] | None
+    audit: dict[str, Any]
 
 
 class ReportService:
@@ -103,7 +128,7 @@ class ReportService:
             bates_range = f"{bates_numbers[0]} - {bates_numbers[-1]}"
 
         # Extract date range from document mtimes
-        mtimes = [doc.get("mtime") for doc in documents if doc.get("mtime")]
+        mtimes: list[str] = [str(doc.get("mtime")) for doc in documents if doc.get("mtime")]
         date_range = None
         if mtimes:
             sorted_mtimes = sorted(mtimes)
@@ -647,7 +672,7 @@ class ReportService:
             stages=stages_summary,
             errors={"count": error_count, "skip_reasons": {}},
             manifest_path=str(manifest_path),
-            generated_at=datetime.now(timezone.utc).isoformat(),
+            generated_at=datetime.now(UTC).isoformat(),
         )
 
     def write_impact_report(self, output: Path, report: ImpactReport) -> None:
@@ -672,6 +697,118 @@ class ReportService:
         try:
             with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
                 json_str = report.model_dump_json(indent=2)
+                f.write(json_str)
+                f.write("\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, output)
+        except Exception:
+            if Path(temp_path).exists():
+                Path(temp_path).unlink()
+            raise
+
+    # ------------------------------------------------------------------#
+    # Methods appendix
+    # ------------------------------------------------------------------#
+
+    def build_methods_appendix(
+        self,
+        manifest_path: Path,
+        *,
+        stages: list[PipelineStage] | None = None,
+    ) -> MethodsAppendix:
+        """Build a JSON methods appendix summarizing discovery methodology.
+
+        Args:
+            manifest_path: Path to manifest JSONL
+            stages: Optional pipeline stages to include
+
+        Returns:
+            MethodsAppendix model
+        """
+        manifest_path = manifest_path.resolve()
+
+        # Hashes
+        manifest_content_hash = self.storage.compute_hash(manifest_path)
+        input_set_hash = compute_input_set_hash(manifest_path, self.storage)
+
+        # Discovery defaults (best-effort inference in absence of explicit args)
+        discovery = {
+            "root": str(manifest_path.parent),
+            "recursive": True,
+        }
+
+        # Audit summary
+        try:
+            verified, error = self.ledger.verify()
+        except Exception:
+            verified, error = False, "verification_error"
+
+        try:
+            entries = self.ledger.read_all()
+        except Exception:
+            entries = []
+
+        entry_count = len(entries)
+        last_timestamp: str | None = None
+        tip_hash: str | None = None
+        if entries:
+            last = entries[-1]
+            last_timestamp = getattr(last, "timestamp", None)
+            tip_hash = getattr(last, "entry_hash", None)
+
+        audit_summary: dict[str, Any] = {
+            "verified": bool(verified),
+            "entry_count": entry_count,
+            "last_timestamp": str(last_timestamp) if last_timestamp is not None else None,
+        }
+        if tip_hash:
+            audit_summary["tip_hash"] = str(tip_hash)
+        if error:
+            audit_summary["error"] = error
+
+        # Search and CLI history
+        command_history = extract_command_history(self.ledger)
+        search_activity = extract_search_activity(self.ledger)
+
+        # Stage summaries (optional)
+        stage_summaries = None
+        if stages is not None:
+            stage_summaries = [
+                {
+                    "name": s.name,
+                    "status": s.status,
+                    "duration_seconds": s.duration_seconds,
+                    "detail": s.detail,
+                }
+                for s in stages
+            ]
+
+        return MethodsAppendix(
+            tool_version=__version__,
+            generated_at=datetime.now(UTC).isoformat(),
+            manifest_path=str(manifest_path),
+            manifest_content_hash=manifest_content_hash,
+            input_set_hash=input_set_hash,
+            discovery=discovery,
+            dedupe=format_dedupe_policy(),
+            search_activity=search_activity,
+            command_history=command_history,
+            pipeline_stages=stage_summaries,
+            audit=audit_summary,
+        )
+
+    def write_methods_appendix(self, output: Path, appendix: MethodsAppendix) -> None:
+        """Write methods appendix atomically (temp file + replace)."""
+        output = output.resolve()
+        output.parent.mkdir(parents=True, exist_ok=True)
+
+        temp_fd, temp_path = tempfile.mkstemp(
+            dir=output.parent, prefix=f".{output.name}.", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
+                json_str = appendix.model_dump_json(indent=2)
                 f.write(json_str)
                 f.write("\n")
                 f.flush()

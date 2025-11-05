@@ -149,17 +149,16 @@ class SequentialBatesPlanner(BatesPlannerPort):
 
     def _resolve_family_id(self, record: DocumentRecord) -> str:
         metadata: dict[str, object] = {}
-        if hasattr(record, "metadata"):
-            maybe_metadata = getattr(record, "metadata")
-            if isinstance(maybe_metadata, dict):
-                metadata = maybe_metadata
+        metadata_attr = record.metadata if hasattr(record, "metadata") else None
+        if isinstance(metadata_attr, dict):
+            metadata = metadata_attr
 
         for key in ("thread_id", "family_id", "conversation_id"):
             value = metadata.get(key)
             if isinstance(value, str) and value.strip():
                 return value
 
-        inferred = getattr(record, "family_id", None)
+        inferred = record.family_id if hasattr(record, "family_id") else None
         if isinstance(inferred, str) and inferred.strip():
             return inferred
 

@@ -1,18 +1,22 @@
 """RexLit CLI application with Typer."""
 
+import sys
 import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Any, Literal, TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
+import click
 import typer
+from typer import Context as TyperContext
 
 from rexlit import __version__
+from rexlit.app.ports.stamp import BatesStampRequest
 from rexlit.bootstrap import bootstrap_application
 from rexlit.config import get_settings, set_settings
+from rexlit.utils.methods import sanitize_argv
 from rexlit.utils.offline import OfflineModeGate
-from rexlit.app.ports.stamp import BatesStampRequest
 
 if TYPE_CHECKING:
     from rexlit.app.ports import OCRPort
@@ -42,6 +46,77 @@ def require_online(gate: OfflineModeGate, feature_name: str) -> None:
     except RuntimeError as exc:
         typer.secho(f"\n{exc}\nAborting.", fg=typer.colors.YELLOW)
         raise typer.Exit(code=2) from exc
+
+
+def _resolve_invocation_tokens() -> list[str]:
+    """Reconstruct CLI invocation using Typer context for audit logging."""
+
+    ctx = click.get_current_context(silent=True)
+    if ctx is None:
+        return list(sys.argv)
+
+    chain: list[TyperContext] = []
+    current: TyperContext | None = cast(TyperContext, ctx)
+    while current is not None:
+        chain.append(current)
+        parent = getattr(current, "parent", None)
+        current = cast(TyperContext | None, parent)
+    chain.reverse()
+
+    tokens: list[str] = []
+    if chain:
+        command_path = chain[-1].command_path or ""
+        if command_path:
+            tokens.extend(command_path.split())
+
+    for context in chain:
+        command = context.command
+        if command is None:
+            continue
+
+        params = context.params
+        for param in command.params:
+            name = param.name
+            if name not in params:
+                continue
+            value = params[name]
+            default = getattr(param, "default", None)
+
+            if isinstance(param, click.Argument):
+                if value is None:
+                    continue
+                if getattr(param, "multiple", False) or isinstance(value, (list, tuple, set)):
+                    tokens.extend(str(item) for item in value)
+                else:
+                    tokens.append(str(value))
+                continue
+
+            if isinstance(param, click.Option):
+                opts = param.opts or param.secondary_opts
+                if not opts:
+                    continue
+                flag = opts[-1]  # Prefer long-form flag when available
+                if isinstance(value, bool):
+                    if value != default and value:
+                        tokens.append(flag)
+                    elif value != default and not value and param.secondary_opts:
+                        tokens.append(param.secondary_opts[-1])
+                    continue
+                if value is None:
+                    continue
+                if (
+                    not getattr(param, "multiple", False)
+                    and default is not None
+                    and value == default
+                ):
+                    continue
+                if getattr(param, "multiple", False) or isinstance(value, (list, tuple, set)):
+                    for item in value:
+                        tokens.extend([flag, str(item)])
+                else:
+                    tokens.extend([flag, str(value)])
+
+    return tokens
 
 
 def _parse_rgb_hex(value: str) -> tuple[float, float, float]:
@@ -113,6 +188,10 @@ def ingest_run(
         Path | None,
         typer.Option("--impact-report", help="Generate JSON impact discovery summary (Sedona-aligned)"),
     ] = None,
+    methods_appendix: Annotated[
+        Path | None,
+        typer.Option("--methods-appendix", help="Generate JSON methods appendix (cooperation)")
+    ] = None,
     review_docs_per_hour_low: Annotated[
         int,
         typer.Option("--review-docs-per-hour-low", help="Low estimate for document review rate"),
@@ -132,6 +211,17 @@ def ingest_run(
 ) -> None:
     """Ingest documents from path and extract metadata."""
     container = bootstrap_application()
+    # Log sanitized CLI invocation
+    try:
+        tokens = _resolve_invocation_tokens()
+        container.ledger_port.log(
+            operation="cli.invoke",
+            inputs=[str(Path.cwd())],
+            outputs=[],
+            args={"command_line": sanitize_argv(tokens)},
+        )
+    except Exception:
+        pass
 
     if not path.exists():
         typer.secho(f"Error: Path not found: {path}", fg=typer.colors.RED, err=True)
@@ -198,7 +288,7 @@ def ingest_run(
                 fg=typer.colors.RED,
                 err=True,
             )
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
 
         impact_report.parent.mkdir(parents=True, exist_ok=True)
 
@@ -223,6 +313,28 @@ def ingest_run(
         # Write atomically
         container.report_service.write_impact_report(impact_report, report)
         typer.secho(f"Impact report written to {impact_report}", fg=typer.colors.BLUE)
+
+    # Generate methods appendix if requested
+    if methods_appendix:
+        appendix_path = methods_appendix.resolve()
+
+        allowed_root = result.manifest_path.parent.resolve()
+        try:
+            appendix_path.relative_to(allowed_root)
+        except ValueError:
+            typer.secho(
+                f"Error: Methods appendix path must reside within {allowed_root}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1) from None
+
+        appendix_path.parent.mkdir(parents=True, exist_ok=True)
+        appendix = container.report_service.build_methods_appendix(
+            result.manifest_path, stages=result.stages
+        )
+        container.report_service.write_methods_appendix(appendix_path, appendix)
+        typer.secho(f"Methods appendix written to {appendix_path}", fg=typer.colors.BLUE)
 
     if watch:
         typer.secho("Watch mode not yet implemented", fg=typer.colors.YELLOW)
@@ -340,6 +452,17 @@ def index_search(
     import json
 
     container = bootstrap_application()
+    # Log sanitized CLI invocation
+    try:
+        tokens = _resolve_invocation_tokens()
+        container.ledger_port.log(
+            operation="cli.invoke",
+            inputs=[str(Path.cwd())],
+            outputs=[],
+            args={"command_line": sanitize_argv(tokens)},
+        )
+    except Exception:
+        pass
     mode_normalized = mode.lower()
 
     if mode_normalized not in {"lexical", "dense", "hybrid"}:
@@ -366,6 +489,21 @@ def index_search(
             api_key=isaacus_api_key,
             api_base=isaacus_api_base,
         )
+        # Log query parameters to audit ledger for methods appendix
+        try:
+            container.ledger_port.log(
+                operation="index.search",
+                inputs=[],
+                outputs=[],
+                args={
+                    "query": query,
+                    "mode": mode_normalized,
+                    "limit": limit,
+                    "dim": dim,
+                },
+            )
+        except Exception:
+            pass
     except FileNotFoundError as exc:
         typer.secho(
             "Error: Index not found. Run 'rexlit index build' first.",
@@ -406,6 +544,54 @@ def index_search(
         typer.echo(f"\n{i}. {result.path} [{strategy}] (score: {score_repr})")
         if result.snippet:
             typer.echo(f"   {result.snippet}")
+
+
+# Report subcommand
+report_app = typer.Typer(help="Report generation utilities")
+app.add_typer(report_app, name="report")
+
+
+@report_app.command("methods")
+def report_methods(
+    manifest: Annotated[Path, typer.Argument(help="Path to manifest JSONL")],
+    output: Annotated[Path, typer.Option("--output", "-o", help="Output methods JSON path")],
+) -> None:
+    """Generate a Methods Appendix from existing manifest + audit ledger."""
+    container = bootstrap_application()
+
+    # Log sanitized CLI invocation
+    try:
+        tokens = _resolve_invocation_tokens()
+        container.ledger_port.log(
+            operation="cli.invoke",
+            inputs=[str(Path.cwd())],
+            outputs=[],
+            args={"command_line": sanitize_argv(tokens)},
+        )
+    except Exception:
+        pass
+
+    if not manifest.exists():
+        typer.secho(f"Error: Manifest not found: {manifest}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    output = output.resolve()
+
+    allowed_root = manifest.resolve().parent
+    try:
+        output.relative_to(allowed_root)
+    except ValueError:
+        typer.secho(
+            f"Error: Output path must reside within {allowed_root}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1) from None
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    appendix = container.report_service.build_methods_appendix(manifest)
+    container.report_service.write_methods_appendix(output, appendix)
+    typer.secho(f"Methods appendix written to {output}", fg=typer.colors.BLUE)
 
 
 # Bates subcommand
@@ -502,7 +688,6 @@ def bates_stamp(
     if resolved_path.is_dir():
         output_root = (output.resolve() if output else (resolved_path / "stamped")).resolve()
         output_root.mkdir(parents=True, exist_ok=True)
-        base_dir = resolved_path
     else:
         output_root = None
         if output is None:
@@ -1024,12 +1209,13 @@ def _override_preflight(ocr_adapter: "OCRPort", enabled: bool):
         yield
         return
 
-    original = getattr(ocr_adapter, "preflight")
+    typed_adapter = cast(Any, ocr_adapter)
+    original = typed_adapter.preflight
     try:
-        setattr(ocr_adapter, "preflight", enabled)
+        typed_adapter.preflight = enabled
         yield
     finally:
-        setattr(ocr_adapter, "preflight", original)
+        typed_adapter.preflight = original
 
 
 # Audit subcommand

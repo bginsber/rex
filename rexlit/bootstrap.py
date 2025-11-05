@@ -30,8 +30,8 @@ from rexlit.app.ports import (
     LedgerPort,
     OCRPort,
     PackPort,
-    StampPort,
     RedactionPlannerPort,
+    StampPort,
     StoragePort,
     VectorStorePort,
 )

@@ -10,7 +10,7 @@ pytesseract = pytest.importorskip("pytesseract", reason="pytesseract not availab
 
 try:
     pytesseract.get_tesseract_version()
-except pytesseract.TesseractNotFoundError as exc:  # pragma: no cover - environment check
+except pytesseract.TesseractNotFoundError:  # pragma: no cover - environment check
     pytest.skip("Tesseract binary not installed", allow_module_level=True)  # type: ignore[arg-type]
 
 import fitz  # type: ignore[import]  # noqa: E402
