@@ -89,6 +89,36 @@ RexLit automatically extracts:
 - **SHA-256 Hash**: Cryptographic fingerprint
 - **File Path**: Absolute path to document
 
+#### Impact Discovery Reports
+
+Generate Sedona Conference-aligned discovery impact summaries for proportionality analysis:
+
+```bash
+rexlit ingest /case-docs \
+  --manifest case-manifest.jsonl \
+  --impact-report impact.json \
+  --review-docs-per-hour-low 60 \
+  --review-docs-per-hour-high 120 \
+  --review-cost-low 100 \
+  --review-cost-high 250
+```
+
+**Output fields** (JSON):
+- `schema_version`: Format version for compatibility
+- `tool_version`: RexLit version used
+- `summary`: total files, unique documents, dedupe rate, total size
+- `estimated_review`: hours and costs at different review rates
+- `culling_rationale`: human-readable reduction summary
+- `by_custodian`: count and size breakdown per custodian
+- `by_doctype`: distribution across document types
+- `by_extension`: distribution across file extensions
+- `date_range`: earliest/latest document date and span
+- `size_distribution`: bucketing by document size
+- `stages`: pipeline execution timing and status
+- `errors`: count of failed operations
+
+**Use case**: Proportionality negotiations, active case management, early case conferences
+
 ---
 
 ## Index Commands

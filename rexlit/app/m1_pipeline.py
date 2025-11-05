@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -40,6 +41,8 @@ class PipelineStage:
     name: str
     status: StageStatus = "pending"
     detail: str | None = None
+    duration_seconds: float | None = None
+    metrics: dict[str, Any] | None = None
 
 
 class M1PipelineResult(BaseModel):
@@ -97,6 +100,7 @@ class M1Pipeline:
 
         stage = PipelineStage(name=name)
         stages.append(stage)
+        start_time = time.monotonic()
         try:
             yield stage
         except Exception as exc:  # pragma: no cover - surfaced to caller
@@ -106,6 +110,8 @@ class M1Pipeline:
         else:
             if stage.status == "pending":
                 stage.status = "completed"
+        finally:
+            stage.duration_seconds = time.monotonic() - start_time
 
     def run(
         self,
@@ -223,6 +229,7 @@ class M1Pipeline:
                         yield record
                 finally:
                     stage.detail = f"{count} documents discovered"
+                    stage.metrics = {"discovered_count": count}
 
             return stream()
 

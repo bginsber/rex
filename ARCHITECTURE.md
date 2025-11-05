@@ -342,6 +342,112 @@ def append(self, action: str, details: dict):
 
 ---
 
+## Impact Reporting
+
+### Purpose
+
+Generate Sedona Conference-aligned discovery impact summaries for proportionality analysis during early case management.
+
+### Design
+
+**Module**: `rexlit/app/report_service.py`
+
+**Key characteristics**:
+- **Manifest streaming**: O(k) memory usage where k = number of distinct custodians/doctypes/extensions
+- **No re-processing**: Compute from written manifest, not raw files
+- **Offline computation**: Pure local aggregation, no network/AI calls
+- **Atomic writes**: Temp file + `os.replace()` for crash safety
+- **Schema versioning**: Support forward compatibility
+
+### Algorithm
+
+1. Open manifest JSONL file
+2. Stream each document record:
+   - Accumulate total size, count
+   - Group by custodian, doctype, extension
+   - Track min/max mtime (O(1) not list)
+   - Bucket size distributions
+3. Compute deduplication rate from stage metrics
+4. Calculate estimated review hours/costs
+5. Build human-readable culling rationale
+6. Serialize to JSON with atomic write
+
+### Output Structure
+
+```json
+{
+  "schema_version": "1.0.0",
+  "tool_version": "0.1.0",
+  "summary": {
+    "total_discovered": 1500,
+    "unique_documents": 1485,
+    "duplicates_removed": 15,
+    "dedupe_rate_pct": 1.0,
+    "total_size_bytes": 5242880000,
+    "total_size_mb": 5000.0
+  },
+  "estimated_review": {
+    "hours_low": 10.0,
+    "hours_high": 30.0,
+    "cost_low_usd": 750.0,
+    "cost_high_usd": 6000.0,
+    "assumptions": "50-150 docs/hr, $75-$200/hr"
+  },
+  "by_custodian": {
+    "alice": {
+      "count": 750,
+      "size_bytes": 2621440000,
+      "doctypes": { "pdf": 500, "docx": 250 }
+    }
+  },
+  "by_doctype": {
+    "pdf": { "count": 900, "size_bytes": 3932160000 },
+    "docx": { "count": 585, "size_bytes": 1310720000 }
+  },
+  "date_range": {
+    "earliest": "2024-01-15T10:00:00Z",
+    "latest": "2024-06-30T17:45:00Z",
+    "span_days": 166
+  },
+  "size_distribution": {
+    "under_1mb": 1000,
+    "1mb_to_10mb": 400,
+    "over_10mb": 85
+  },
+  "stages": [
+    {
+      "name": "discover",
+      "status": "completed",
+      "duration_seconds": 12.5,
+      "detail": "1500 documents discovered"
+    }
+  ],
+  "errors": { "count": 0, "skip_reasons": {} },
+  "manifest_path": "/output/manifest.jsonl",
+  "generated_at": "2025-11-04T10:30:00Z"
+}
+```
+
+### Proportionality Use Cases
+
+**Early case conference**:
+- Volume: "1,485 unique documents, 5 GB"
+- Deduplication: "15 duplicates removed (1%)"
+- Distribution: "60% PDFs, 40% Office, 5% emails"
+- Cost: "10-30 hours at $75-200/hr = $750-6,000"
+
+**Negotiated discovery**:
+- "By custodian" breakdown for phased production
+- Date range for temporal scoping
+- Doctype distribution for format feasibility
+
+**Proportionality objections**:
+- Culling rationale documents reductions
+- Error counts justify sampling if needed
+- Cost estimates support burden arguments
+
+---
+
 ## Data Flow
 
 ### Document Indexing Flow

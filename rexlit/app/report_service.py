@@ -4,12 +4,20 @@ Read-only service that consumes manifests and artifacts to generate reports.
 """
 
 import csv
+import html
 import io
-from datetime import UTC, datetime
+import json
+import os
+import tempfile
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
+
+from rexlit import __version__
+from rexlit.app.m1_pipeline import PipelineStage
+from rexlit.app.ports import DocumentRecord, LedgerPort, StoragePort
 
 
 class ReportMetadata(BaseModel):
@@ -23,6 +31,25 @@ class ReportMetadata(BaseModel):
     bates_range: str | None
 
 
+class ImpactReport(BaseModel):
+    """Sedona Conference-aligned discovery impact summary."""
+
+    schema_version: str = "1.0.0"
+    tool_version: str
+    summary: dict[str, Any]
+    estimated_review: dict[str, Any]
+    culling_rationale: str
+    by_custodian: dict[str, dict[str, Any]]
+    by_doctype: dict[str, dict[str, Any]]
+    by_extension: dict[str, int]
+    date_range: dict[str, Any] | None
+    size_distribution: dict[str, int]
+    stages: list[dict[str, Any]]
+    errors: dict[str, Any]
+    manifest_path: str | None
+    generated_at: str
+
+
 class ReportService:
     """Read-only report generation service.
 
@@ -32,8 +59,8 @@ class ReportService:
 
     def __init__(
         self,
-        storage_port: Any,  # Will be typed with port interface in Workstream 2
-        ledger_port: Any,
+        storage_port: StoragePort,
+        ledger_port: LedgerPort,
     ):
         """Initialize report service.
 
@@ -150,22 +177,32 @@ class ReportService:
         # Build document table rows
         doc_rows = []
         for idx, doc in enumerate(documents, 1):
-            path = doc.get("path", "Unknown")
-            filename = Path(path).name
+            path_raw = doc.get("path", "Unknown")
+            filename_raw = Path(path_raw).name
             size = doc.get("size", 0)
             size_kb = f"{size / 1024:.1f} KB" if size else "0 KB"
-            mime_type = doc.get("mime_type", "Unknown")
-            custodian = doc.get("custodian", "N/A")
-            doctype = doc.get("doctype", "N/A")
-            sha256 = doc.get("sha256", "N/A")
-            sha256_short = sha256[:16] + "..." if len(sha256) > 16 else sha256
-            bates = doc.get("bates_number", "N/A")
+            mime_type_raw = doc.get("mime_type", "Unknown")
+            custodian_raw = doc.get("custodian", "N/A")
+            doctype_raw = doc.get("doctype", "N/A")
+            sha256_raw = doc.get("sha256", "N/A")
+            sha256_short_raw = sha256_raw[:16] + "..." if len(sha256_raw) > 16 else sha256_raw
+            bates_raw = doc.get("bates_number", "N/A")
             pages = doc.get("metadata", {}).get("pages") or "N/A"
 
             # Optional thumbnail column
             thumbnail_cell = ""
             if include_thumbnails:
                 thumbnail_cell = "<td>[Thumbnail]</td>"
+
+            path = html.escape(path_raw)
+            filename = html.escape(filename_raw)
+            mime_type = html.escape(mime_type_raw or "Unknown")
+            custodian = html.escape(custodian_raw or "N/A")
+            doctype = html.escape(doctype_raw or "N/A")
+            sha256 = html.escape(sha256_raw or "N/A")
+            sha256_short = html.escape(sha256_short_raw or "N/A")
+            bates = html.escape(bates_raw or "N/A")
+            pages_display = html.escape(str(pages))
 
             doc_rows.append(
                 f"""
@@ -176,7 +213,7 @@ class ReportService:
                     <td>{mime_type}</td>
                     <td>{custodian}</td>
                     <td>{doctype}</td>
-                    <td>{pages}</td>
+                    <td>{pages_display}</td>
                     <td title="{sha256}">{sha256_short}</td>
                     <td>{bates}</td>
                     {thumbnail_cell}
@@ -190,7 +227,7 @@ class ReportService:
         thumbnail_header = "<th>Thumbnail</th>" if include_thumbnails else ""
 
         # Build HTML
-        html = f"""<!DOCTYPE html>
+        html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -330,11 +367,11 @@ class ReportService:
             </div>
             <div class="summary-card">
                 <h3>Bates Range</h3>
-                <div class="value" style="font-size: 16px;">{bates_range or "N/A"}</div>
+                <div class="value" style="font-size: 16px;">{html.escape(bates_range or "N/A")}</div>
             </div>
             <div class="summary-card">
                 <h3>Date Range</h3>
-                <div class="value" style="font-size: 16px;">{date_range or "N/A"}</div>
+                <div class="value" style="font-size: 16px;">{html.escape(date_range or "N/A")}</div>
             </div>
         </section>
 
@@ -369,7 +406,7 @@ class ReportService:
 </body>
 </html>"""
 
-        return html
+        return html_content
 
     def build_csv_report(
         self,
@@ -454,3 +491,193 @@ class ReportService:
         )
 
         return row_count
+
+    def build_impact_report(
+        self,
+        manifest_path: Path,
+        *,
+        discovered_count: int | None,
+        stages: list[PipelineStage],
+        review_rate_low: int = 50,
+        review_rate_high: int = 150,
+        cost_low: float = 75.0,
+        cost_high: float = 200.0,
+    ) -> ImpactReport:
+        """Build impact discovery report by streaming manifest.
+
+        Computes Sedona Conference-aligned metrics for proportionality negotiation
+        by aggregating document metadata from the manifest.
+
+        Args:
+            manifest_path: Path to manifest.jsonl
+            discovered_count: Total documents discovered (before dedupe), from stage metrics
+            stages: Pipeline stages with timing/status
+            review_rate_low: Low estimate for documents per hour
+            review_rate_high: High estimate for documents per hour
+            cost_low: Low hourly cost estimate (USD)
+            cost_high: High hourly cost estimate (USD)
+
+        Returns:
+            ImpactReport with aggregated metrics
+        """
+        # Initialize O(1) accumulators
+        unique_count = 0
+        total_bytes = 0
+        by_custodian: dict[str, dict[str, Any]] = {}
+        by_doctype: dict[str, dict[str, Any]] = {}
+        by_extension: dict[str, int] = {}
+        earliest_mtime: str | None = None
+        latest_mtime: str | None = None
+        size_buckets = {"under_1mb": 0, "1mb_to_10mb": 0, "over_10mb": 0}
+
+        # Stream manifest (O(k) memory where k = distinct categories)
+        for record_dict in self.storage.read_jsonl(manifest_path):
+            doc = DocumentRecord.model_validate(record_dict)
+            unique_count += 1
+            total_bytes += doc.size
+
+            # Group by custodian
+            custodian = doc.custodian or "unknown"
+            if custodian not in by_custodian:
+                by_custodian[custodian] = {"count": 0, "size_bytes": 0, "doctypes": {}}
+            by_custodian[custodian]["count"] += 1
+            by_custodian[custodian]["size_bytes"] += doc.size
+            doctype = doc.doctype or "other"
+            doctype_dict = by_custodian[custodian]["doctypes"]
+            doctype_dict[doctype] = doctype_dict.get(doctype, 0) + 1
+
+            # Group by doctype
+            if doctype not in by_doctype:
+                by_doctype[doctype] = {"count": 0, "size_bytes": 0}
+            by_doctype[doctype]["count"] += 1
+            by_doctype[doctype]["size_bytes"] += doc.size
+
+            # Group by extension
+            ext = doc.extension.lower()
+            by_extension[ext] = by_extension.get(ext, 0) + 1
+
+            # Track date range (min/max only, O(1))
+            if doc.mtime:
+                if earliest_mtime is None or doc.mtime < earliest_mtime:
+                    earliest_mtime = doc.mtime
+                if latest_mtime is None or doc.mtime > latest_mtime:
+                    latest_mtime = doc.mtime
+
+            # Size buckets
+            size_mb = doc.size / (1024 * 1024)
+            if size_mb < 1:
+                size_buckets["under_1mb"] += 1
+            elif size_mb <= 10:
+                size_buckets["1mb_to_10mb"] += 1
+            else:
+                size_buckets["over_10mb"] += 1
+
+        # Compute dedupe metrics
+        if discovered_count is not None:
+            duplicates_removed = discovered_count - unique_count
+            dedupe_rate_pct = (
+                (duplicates_removed / discovered_count * 100)
+                if discovered_count > 0
+                else 0.0
+            )
+            culling_rationale = f"{duplicates_removed} duplicates removed ({dedupe_rate_pct:.1f}% reduction). Original volume: {discovered_count} documents."
+        else:
+            duplicates_removed = None
+            dedupe_rate_pct = None
+            culling_rationale = "Deduplication metrics unavailable (discovered_count not tracked)."
+
+        # Estimated review
+        hours_low = unique_count / review_rate_high if review_rate_high > 0 else 0
+        hours_high = unique_count / review_rate_low if review_rate_low > 0 else 0
+        cost_low_usd = hours_low * cost_low
+        cost_high_usd = hours_high * cost_high
+
+        # Date range
+        date_range = None
+        if earliest_mtime and latest_mtime:
+            from datetime import datetime as dt
+
+            earliest_dt = dt.fromisoformat(earliest_mtime.replace("Z", "+00:00"))
+            latest_dt = dt.fromisoformat(latest_mtime.replace("Z", "+00:00"))
+            span_days = (latest_dt - earliest_dt).days
+            date_range = {
+                "earliest": earliest_mtime,
+                "latest": latest_mtime,
+                "span_days": span_days,
+            }
+
+        # Stages summary (extract duration, status, detail)
+        stages_summary = [
+            {
+                "name": s.name,
+                "status": s.status,
+                "duration_seconds": s.duration_seconds,
+                "detail": s.detail,
+            }
+            for s in stages
+        ]
+
+        # Error count from failed stages
+        error_count = sum(1 for s in stages if s.status == "failed")
+
+        # Build report
+        return ImpactReport(
+            tool_version=__version__,
+            summary={
+                "total_discovered": discovered_count,
+                "unique_documents": unique_count,
+                "duplicates_removed": duplicates_removed,
+                "dedupe_rate_pct": dedupe_rate_pct,
+                "total_size_bytes": total_bytes,
+                "total_size_mb": round(total_bytes / (1024 * 1024), 2),
+            },
+            estimated_review={
+                "hours_low": round(hours_low, 1),
+                "hours_high": round(hours_high, 1),
+                "cost_low_usd": round(cost_low_usd, 2),
+                "cost_high_usd": round(cost_high_usd, 2),
+                "assumptions": f"{review_rate_low}-{review_rate_high} docs/hr, ${cost_low:.0f}-${cost_high:.0f}/hr",
+            },
+            culling_rationale=culling_rationale,
+            by_custodian=by_custodian,
+            by_doctype=by_doctype,
+            by_extension=by_extension,
+            date_range=date_range,
+            size_distribution=size_buckets,
+            stages=stages_summary,
+            errors={"count": error_count, "skip_reasons": {}},
+            manifest_path=str(manifest_path),
+            generated_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+    def write_impact_report(self, output: Path, report: ImpactReport) -> None:
+        """Write impact report atomically (temp file + replace).
+
+        Args:
+            output: Output path for impact report JSON
+            report: ImpactReport to write
+
+        Raises:
+            IOError: If write fails
+        """
+        output = output.resolve()
+
+        # Ensure parent directory exists
+        output.parent.mkdir(parents=True, exist_ok=True)
+
+        # Atomic write pattern (temp file + os.replace)
+        temp_fd, temp_path = tempfile.mkstemp(
+            dir=output.parent, prefix=f".{output.name}.", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
+                json_str = report.model_dump_json(indent=2)
+                f.write(json_str)
+                f.write("\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, output)
+        except Exception:
+            if Path(temp_path).exists():
+                Path(temp_path).unlink()
+            raise

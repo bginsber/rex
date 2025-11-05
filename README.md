@@ -1,38 +1,59 @@
 # RexLit
 
-[![Status: M0 Ready](https://img.shields.io/badge/status-M0%20ready-brightgreen.svg)](#)
+[![Status: M1 Ready](https://img.shields.io/badge/status-M1%20ready-brightgreen.svg)](#)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](#)
 [![License: TBD](https://img.shields.io/badge/license-TBD-lightgrey.svg)](#)
 
-Offline-first UNIX litigation toolkit for secure discovery, indexing, and audit-ready timelines.
+Offline-first UNIX litigation toolkit for e-discovery, Bates stamping, OCR, deadline tracking, and production exports.
 
 ## Status
 
-✅ **Phase 1 (M0) Complete** – Production-ready foundation with document ingest, parallel indexing, and tamper-evident audit trail.  
-🚧 **Phase 2 (M1)** – OCR, Bates stamping, and redaction coming next.
+✅ **Phase 1 (M0) Complete** – Document ingest, parallel indexing, tamper-evident audit trail
+✅ **Phase 2 (M1) Complete** – Bates stamping, OCR, TX/FL rules engine, production exports
+🚧 **Phase 3 (M2)** – Redaction, email threading, advanced analytics
 
-**Latest Release:** v0.1.0-m0  
-**Tests:** 63/63 passing (`pytest -v --no-cov`)  
-**Performance:** 100K documents indexed in 4-6 hours (≈20× faster)
+**Latest Release:** v0.2.0-m1
+**Tests:** 146/146 passing (`pytest -v --no-cov`)
+**Performance:** 100K documents indexed in 4-6 hours | OCR: 2-5s per page
 
 ## Overview
 
-RexLit packages the core tooling litigation teams need to process large evidence sets entirely offline:
+RexLit is a comprehensive e-discovery toolkit that handles the complete document processing lifecycle entirely offline:
 
-- **Streaming ingest** guards the filesystem boundary while extracting metadata and text from PDFs, DOCX, and text files.
-- **Tantivy-backed indexing** delivers sub-second full-text search across 100K+ documents with parallel workers.
-- **Tamper-evident audit ledger** records every ingest and index action for defensible chain-of-custody.
+- **Document Processing**: Streaming ingest with metadata extraction from PDFs, DOCX, emails, and text files
+- **Search & Indexing**: Tantivy-backed full-text search with optional Kanon 2 dense/hybrid retrieval (100K+ docs)
+- **OCR Processing**: Tesseract integration with smart preflight to skip pages with native text layers
+- **Bates Stamping**: Layout-aware PDF stamping with rotation handling and safe-area detection
+- **Rules Engine**: TX/FL civil procedure deadline calculations with ICS calendar export
+- **Production Exports**: Court-ready DAT/Opticon load files for discovery productions
+- **Audit Trail**: Tamper-evident ledger with SHA-256 hash chaining for defensible workflows
 
-The CLI wraps these services in an approachable workflow designed for laptops or air-gapped review rooms.
+The CLI wraps these services in an intuitive workflow designed for solo practitioners, small firms, or air-gapped review rooms.
 
 ## Features
 
-- Offline-first CLI with Typer-based UX and rich progress reporting.
-- Secure path resolution and symlink handling to block traversal attacks.
-- ProcessPoolExecutor-powered indexing with configurable batching.
-- Metadata cache for instant custodian and document type lookups.
-- Pluggable OCR pipeline with Tesseract preflight and confidence scoring.
-- Append-only audit log with SHA-256 hash chaining and fsync durability.
+### Core Discovery
+- **Offline-first CLI** with Typer-based UX and rich progress reporting
+- **Streaming ingest** with secure path resolution and symlink validation
+- **ProcessPoolExecutor indexing** with configurable workers and batching
+- **Metadata cache** for instant custodian and document type lookups
+- **Dense/hybrid search** via Kanon 2 embeddings (requires online mode)
+
+### Production Workflows
+- **Bates stamping** with layout-aware placement, rotation handling, and position presets
+- **OCR processing** via Tesseract with preflight optimization and confidence scoring
+- **DAT/Opticon exports** for court-ready production load files
+- **Rules engine** for TX/FL civil procedure deadlines with ICS calendar integration
+
+### Security & Audit
+- **Path traversal defense** with root-bound resolution and 13 regression tests
+- **Append-only audit log** with SHA-256 hash chaining and fsync durability
+- **Deterministic processing** for reproducible outputs across runs
+
+### Discovery & Case Management
+- **Impact discovery reports** (Sedona Conference-aligned) with proportionality metrics, dedupe analysis, and estimated review costs
+- **Offline-first design** with no network/AI calls for data privacy
+- **Court-friendly outputs** (manifests, audit logs) for early case conferences
 
 ### Performance Benchmarks
 
@@ -62,27 +83,73 @@ source .venv/bin/activate
 pip install -e '.[dev]'
 ```
 
-Run `pytest -v --no-cov` after installation to validate your environment.
+### Optional: OCR Support
+
+For Tesseract OCR functionality:
+
+```bash
+# Install Tesseract system binary
+brew install tesseract  # macOS
+# or
+apt-get install tesseract-ocr  # Ubuntu
+
+# Install Python dependencies
+pip install -e '.[ocr-tesseract]'
+
+# Verify installation
+tesseract --version
+```
+
+Run `pytest -v --no-cov` after installation to validate your environment (69 tests require Tesseract).
 
 ## Quick Start
 
-1. Prepare a working directory with your document corpus (for example `./sample-docs`).
-2. Generate a manifest while ingesting:
-   ```bash
-   rexlit ingest ./sample-docs --manifest out/manifest.jsonl
-   ```
-3. Build the Tantivy index (lexical only):
-   ```bash
-   rexlit index build ./sample-docs
-   ```
-4. Search across the corpus (lexical):
-   ```bash
-   rexlit index search "privileged AND contract"
-   ```
-5. Verify the audit chain before handing evidence to counsel:
-   ```bash
-   rexlit audit verify --ledger out/audit/log.jsonl
-   ```
+### Basic Discovery Workflow
+
+```bash
+# 1. Ingest documents with metadata extraction
+rexlit ingest ./evidence --manifest out/manifest.jsonl
+
+# 2. Build full-text search index
+rexlit index build ./evidence
+
+# 3. Search the corpus
+rexlit index search "privileged AND contract" --limit 20
+
+# 4. Verify audit trail
+rexlit audit verify
+```
+
+### Production Workflow (Bates + OCR)
+
+```bash
+# 1. OCR scanned documents (preflight skips native text)
+rexlit ocr run ./scans --output ./text --confidence
+
+# 2. Apply Bates numbers to PDFs
+rexlit bates stamp ./evidence --prefix ABC --width 7 --output ./stamped
+
+# 3. Create court-ready production set
+rexlit produce create ./stamped --name "Production_001" --format dat
+
+# 4. Check audit trail
+rexlit audit show --tail 10
+```
+
+### Deadline Tracking
+
+```bash
+# Calculate TX deadlines with ICS calendar export
+rexlit rules calc \
+  --jurisdiction TX \
+  --event served_petition \
+  --date 2025-11-01 \
+  --service mail \
+  --explain \
+  --ics deadlines.ics
+
+# Import deadlines.ics into Calendar app
+```
 
 ## CLI Usage
 
@@ -150,6 +217,78 @@ rexlit ocr run ./scans/binder.pdf --output ./text/binder.txt --confidence
 
 Every run records an `ocr.process` entry in the audit ledger containing page count, text length, and confidence metrics.
 
+### `rexlit bates stamp`
+
+Apply Bates numbers to PDF documents with layout-aware placement.
+
+```bash
+rexlit bates stamp ./documents --prefix ABC --width 7 --output ./stamped
+```
+
+- `--prefix`: Bates number prefix (e.g., `ABC`, `PROD001`)
+- `--width`: Zero-padding width for numbers (default: 7, e.g., `ABC0000001`)
+- `--output`: Output directory for stamped PDFs
+- `--position`: Stamp placement (`bottom-right`, `bottom-center`, `top-right`)
+- `--font-size`: Font size in points (default: 10)
+- `--color`: RGB hex color (default: `000000` black)
+- `--dry-run`: Preview Bates sequence without stamping
+
+Features:
+- **Layout-aware**: Detects page rotation and respects safe margins (0.5" bleed)
+- **Deterministic**: Processes files in SHA-256 hash order for reproducible numbering
+- **Audit trail**: Logs Bates assignments with coordinates for verification
+
+### `rexlit produce create`
+
+Generate court-ready production load files (DAT or Opticon format).
+
+```bash
+rexlit produce create ./stamped --name "Production_001" --format dat
+```
+
+- `--name`: Production set identifier
+- `--format`: Output format (`dat` or `opticon`)
+- `--output`: Output directory (default: `~/.local/share/rexlit/productions/`)
+- `--bates-prefix`: Expected Bates prefix for validation
+
+Outputs:
+- **DAT format**: Delimited text file with document-level metadata
+- **Opticon format**: Image-based production with page references
+- Both formats include full audit provenance
+
+### `rexlit rules calc`
+
+Calculate litigation deadlines for Texas or Florida civil procedure rules.
+
+```bash
+rexlit rules calc \
+  --jurisdiction TX \
+  --event served_petition \
+  --date 2025-11-01 \
+  --service mail \
+  --explain \
+  --ics deadlines.ics
+```
+
+- `--jurisdiction` / `-j`: State rules (`TX` or `FL`)
+- `--event` / `-e`: Triggering event (e.g., `served_petition`, `discovery_served`, `motion_filed`)
+- `--date` / `-d`: Base date in YYYY-MM-DD format
+- `--service` / `-s`: Service method (`personal`, `mail`, `eservice`)
+- `--explain`: Show step-by-step calculation trace
+- `--ics`: Export deadlines to ICS calendar file
+
+Features:
+- **Provenance**: Every deadline includes rule citation (e.g., `Tex. R. Civ. P. 99(b)`)
+- **Service modifiers**: Mail service automatically adds 3 days per rule
+- **Holiday awareness**: Skips weekends and US/state holidays
+- **Calendar integration**: ICS export for drag-and-drop into Outlook/Calendar
+
+Supported events:
+- `served_petition`: Answer deadline, special exceptions
+- `discovery_served`: Interrogatory/RFP response deadlines
+- `motion_filed`: Response and hearing deadlines
+- `trial_notice_served`: Pretrial conference requirements (FL)
+
 ### `rexlit audit show`
 
 Inspect recent audit entries for ingest and index actions.
@@ -200,36 +339,77 @@ Notes:
 
 See also: `docs/SELF_HOSTED_EMBEDDINGS.md` and `docs/adr/0007-dense-retrieval-design.md`.
 
-## Phase 1 Deliverables (M0)
+## Deliverables by Phase
 
-### Core Infrastructure
+### Phase 1 (M0) - Core Discovery Platform ✅
+
+**Infrastructure:**
 - ✅ Typer-based CLI with intuitive subcommands
-- ✅ Pydantic configuration layer with XDG + env overrides
-- ✅ Structured logging and rich progress reporting
+- ✅ Pydantic configuration with XDG + env overrides
+- ✅ Ports/adapters architecture with import linting
 
-### Document Processing
+**Document Processing:**
 - ✅ Parallel ingest pipeline (15-20× throughput gains)
 - ✅ Streaming discovery with O(1) memory profile
-- ✅ PDF, DOCX, TXT, and Markdown extraction
-- ✅ Automatic custodian and document type metadata
+- ✅ PDF, DOCX, TXT, Markdown extraction
 
-### Search & Indexing
-- ✅ Tantivy-backed full-text indexing
-- ✅ Metadata cache for constant-time lookups
-- ✅ Configurable worker pools and batching knobs
-- ✅ 100K+ document capacity validated
+**Search & Indexing:**
+- ✅ Tantivy full-text indexing (100K+ docs)
+- ✅ Kanon 2 dense/hybrid search (online mode)
+- ✅ Metadata cache for O(1) lookups
 
-### Security & Audit
-- ✅ Root-bound path resolution with symlink defense
-- ✅ Append-only audit ledger with SHA-256 hash chaining
-- ✅ Fsync durability for legal defensibility
-- ✅ 13 dedicated path traversal regression tests
+**Security & Audit:**
+- ✅ Root-bound path resolution + 13 traversal tests
+- ✅ Append-only SHA-256 hash chain ledger
+- ✅ Deterministic processing for reproducibility
 
-### Quality Assurance
-- ✅ 63 integration and unit tests (100% passing)
-- ✅ Performance benchmarks automated via `benchmark_metadata.py`
-- ✅ Attack simulations covering traversal and tampering
-- ✅ Zero critical regressions outstanding
+**Testing:** 63 integration/unit tests (100% passing)
+
+### Phase 2 (M1) - Production Workflows ✅
+
+**OCR Processing:**
+- ✅ Tesseract adapter with preflight optimization
+- ✅ Confidence scoring and audit integration
+- ✅ Directory batch processing
+- ✅ 6 integration tests
+
+**Bates Stamping:**
+- ✅ Layout-aware PDF stamping with rotation handling
+- ✅ Safe-area detection (0.5" margins)
+- ✅ Position presets and color/font customization
+- ✅ Deterministic sequencing by SHA-256 hash
+
+**Rules Engine:**
+- ✅ TX/FL civil procedure deadline calculations
+- ✅ ICS calendar export for Outlook/Calendar
+- ✅ Service method modifiers (mail +3 days)
+- ✅ Holiday awareness (US + state holidays)
+- ✅ Rule citations with provenance
+
+**Production Exports:**
+- ✅ DAT load file generation
+- ✅ Opticon format support
+- ✅ Bates prefix validation
+- ✅ Full audit trail integration
+
+**Testing:** 146 integration/unit tests (100% passing)
+
+### Phase 3 (M2) - Advanced Analytics 🚧
+
+**Redaction (Planned):**
+- 🚧 PII detection via Presidio
+- 🚧 Interactive redaction review TUI
+- 🚧 Redaction plan versioning
+
+**Email Analytics (Planned):**
+- 🚧 Email threading and family detection
+- 🚧 Custodian communication graphs
+- 🚧 Timeline visualization
+
+**Advanced Features (Planned):**
+- 🚧 Claude integration for privilege review
+- 🚧 Paddle OCR provider (better accuracy)
+- 🚧 Multi-language support (Spanish, French)
 
 ## Configuration
 
@@ -246,16 +426,31 @@ RexLit reads settings from `rexlit.config.AppConfig`, environment variables, and
 
 ## Troubleshooting
 
-- **`PathOutsideRootError` during ingest**: Verify the supplied directory is within the allowed root and that symlinks resolve inside the boundary.
+### Discovery & Indexing
+- **`PathOutsideRootError` during ingest**: Verify the directory is within the allowed root and that symlinks resolve inside the boundary.
 - **`tantivy` import failures**: Ensure system dependencies for Tantivy bindings are installed; reinstall with `pip install -e '.[dev]'`.
 - **Slow indexing performance**: Increase `--workers` or reduce `--batch-size` to match available cores and memory; monitor disk throughput.
 - **Audit verification fails**: Run `rexlit audit show --tail 20` to locate the first failing entry and regenerate the ledger from trusted manifests.
+
+### OCR & Bates
+- **`TesseractNotFoundError`**: Install Tesseract binary: `brew install tesseract` (macOS) or `apt-get install tesseract-ocr` (Ubuntu).
+- **Low OCR confidence (<60%)**: Check scan DPI (300+ recommended), use `--no-preflight` to force OCR, or try preprocessing (deskew, contrast).
+- **Bates numbers not visible**: Increase `--font-size` or change `--position` to avoid page content overlap.
+- **Wrong Bates sequence**: Files are processed in SHA-256 hash order (deterministic); check with `--dry-run` first.
+
+### Rules & Production
+- **Missing deadline events**: Check `rexlit/rules/{tx,fl}.yaml` for available events; only core civil procedure rules included in M1.
+- **ICS file won't import**: Ensure `.ics` extension; some calendar apps require drag-and-drop instead of double-click.
+- **DAT file encoding issues**: Production files use UTF-8; legacy tools may need Latin-1 conversion.
+
+### General
 - **Permission errors on output directories**: Confirm RexLit has write access to `out/` paths or set `--data-dir` to a writable location.
+- **Import errors after upgrade**: Reinstall with `pip install -e '.[dev,ocr-tesseract]'` to pick up new dependencies.
 
 ## Testing
 
 ```bash
-# Run the complete suite
+# Run the complete suite (146 tests)
 pytest -v --no-cov
 
 # Focus on security hardening
@@ -263,6 +458,15 @@ pytest tests/test_security_path_traversal.py -v
 
 # Exercise indexing flows
 pytest tests/test_index.py -v
+
+# Test OCR adapter (requires Tesseract installed)
+pytest tests/test_ocr_tesseract.py -v
+
+# Test rules engine
+pytest tests/test_rules_engine.py -v
+
+# Test Bates stamping
+pytest tests/test_app_adapters.py::test_sequential_bates_planner -v
 ```
 
 ## Performance Tuning

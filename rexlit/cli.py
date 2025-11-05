@@ -109,12 +109,62 @@ def ingest_run(
         bool,
         typer.Option("--recursive", "-r", help="Recursively scan directories"),
     ] = True,
+    impact_report: Annotated[
+        Path | None,
+        typer.Option("--impact-report", help="Generate JSON impact discovery summary (Sedona-aligned)"),
+    ] = None,
+    review_docs_per_hour_low: Annotated[
+        int,
+        typer.Option("--review-docs-per-hour-low", help="Low estimate for document review rate"),
+    ] = 50,
+    review_docs_per_hour_high: Annotated[
+        int,
+        typer.Option("--review-docs-per-hour-high", help="High estimate for document review rate"),
+    ] = 150,
+    review_cost_low: Annotated[
+        float,
+        typer.Option("--review-cost-low", help="Low hourly cost estimate (USD)"),
+    ] = 75.0,
+    review_cost_high: Annotated[
+        float,
+        typer.Option("--review-cost-high", help="High hourly cost estimate (USD)"),
+    ] = 200.0,
 ) -> None:
     """Ingest documents from path and extract metadata."""
     container = bootstrap_application()
 
     if not path.exists():
         typer.secho(f"Error: Path not found: {path}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    # Validate review parameter ranges before running pipeline
+    if review_docs_per_hour_low <= 0 or review_docs_per_hour_high <= 0:
+        typer.secho(
+            "Error: Review docs-per-hour values must be greater than zero.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if review_docs_per_hour_low > review_docs_per_hour_high:
+        typer.secho(
+            "Error: --review-docs-per-hour-low cannot exceed --review-docs-per-hour-high.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if review_cost_low < 0 or review_cost_high < 0:
+        typer.secho(
+            "Error: Review cost estimates must be non-negative.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if review_cost_low > review_cost_high:
+        typer.secho(
+            "Error: --review-cost-low cannot exceed --review-cost-high.",
+            fg=typer.colors.RED,
+            err=True,
+        )
         raise typer.Exit(code=1)
 
     typer.secho(f"Discovering documents in {path}...", fg=typer.colors.BLUE)
@@ -134,6 +184,45 @@ def ingest_run(
     if result.notes:
         for note in result.notes:
             typer.secho(f"NOTE: {note}", fg=typer.colors.YELLOW)
+
+    # Generate impact report if requested
+    if impact_report:
+        impact_report = impact_report.resolve()
+
+        allowed_root = result.manifest_path.parent.resolve()
+        try:
+            impact_report.relative_to(allowed_root)
+        except ValueError:
+            typer.secho(
+                f"Error: Impact report path must reside within {allowed_root}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        impact_report.parent.mkdir(parents=True, exist_ok=True)
+
+        # Extract discovered_count from discover stage
+        discovered_count = None
+        for stage in result.stages:
+            if stage.name == "discover" and stage.metrics:
+                discovered_count = stage.metrics.get("discovered_count")
+                break
+
+        # Build report
+        report = container.report_service.build_impact_report(
+            result.manifest_path,
+            discovered_count=discovered_count,
+            stages=result.stages,
+            review_rate_low=review_docs_per_hour_low,
+            review_rate_high=review_docs_per_hour_high,
+            cost_low=review_cost_low,
+            cost_high=review_cost_high,
+        )
+
+        # Write atomically
+        container.report_service.write_impact_report(impact_report, report)
+        typer.secho(f"Impact report written to {impact_report}", fg=typer.colors.BLUE)
 
     if watch:
         typer.secho("Watch mode not yet implemented", fg=typer.colors.YELLOW)
