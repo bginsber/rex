@@ -9,6 +9,7 @@ from .hnsw import HNSWAdapter
 from .kanon2 import Kanon2Adapter
 from .pack import ZipPackager
 from .pdf_stamper import PDFStamperAdapter
+from .privilege_safeguard import PrivilegeSafeguardAdapter
 from .redaction import JSONLineRedactionPlanner, PassthroughRedactionApplier
 from .storage import FileSystemStorageAdapter
 from .tesseract_ocr import TesseractOCRAdapter
@@ -25,4 +26,5 @@ __all__ = [
     "HNSWAdapter",
     "PDFStamperAdapter",
     "TesseractOCRAdapter",
+    "PrivilegeSafeguardAdapter",
 ]

@@ -26,6 +26,9 @@ __all__ = [
     "EmbeddingPort",
     "VectorHit",
     "VectorStorePort",
+    "PrivilegeReasoningPort",
+    "PolicyDecision",
+    "RedactionSpan",
 ]
 
 from rexlit.app.ports.bates import BatesAssignment, BatesPlan, BatesPlannerPort
@@ -37,6 +40,11 @@ from rexlit.app.ports.ledger import AuditRecord, LedgerPort
 from rexlit.app.ports.ocr import OCRPort
 from rexlit.app.ports.pack import PackPort
 from rexlit.app.ports.pii import PIIPort
+from rexlit.app.ports.privilege_reasoning import (
+    PolicyDecision,
+    PrivilegeReasoningPort,
+    RedactionSpan,
+)
 from rexlit.app.ports.redaction import RedactionApplierPort, RedactionPlannerPort
 from rexlit.app.ports.signer import SignerPort
 from rexlit.app.ports.stamp import StampPort
