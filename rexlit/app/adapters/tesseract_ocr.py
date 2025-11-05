@@ -58,7 +58,7 @@ class TesseractOCRAdapter(OCRPort):
         lang: str = "eng",
         preflight: bool = True,
         dpi_scale: int = 2,
-        min_text_threshold: int = 50,
+        min_text_threshold: int = 10,
     ) -> None:
         self.lang = lang
         self.preflight = preflight

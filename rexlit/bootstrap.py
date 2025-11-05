@@ -159,41 +159,6 @@ class TantivyIndexAdapter(IndexPort):
 
         return self._embedder
 
-
-class LazyOCRAdapter(OCRPort):
-    """Lazy wrapper that defers adapter construction until first use."""
-
-    def __init__(self, factory: Callable[[], OCRPort]) -> None:
-        object.__setattr__(self, "_factory", factory)
-        object.__setattr__(self, "_instance", None)
-
-    def _resolve(self) -> OCRPort:
-        instance = object.__getattribute__(self, "_instance")
-        if instance is None:
-            instance = object.__getattribute__(self, "_factory")()
-            object.__setattr__(self, "_instance", instance)
-        return instance
-
-    def process_document(
-        self,
-        path: Path,
-        *,
-        language: str = "eng",
-    ) -> OCRResult:
-        return self._resolve().process_document(path, language=language)
-
-    def is_online(self) -> bool:
-        return self._resolve().is_online()
-
-    def __getattr__(self, item: str) -> Any:
-        return getattr(self._resolve(), item)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name in {"_factory", "_instance"}:
-            object.__setattr__(self, name, value)
-        else:
-            setattr(self._resolve(), name, value)
-
     def add_document(
         self, path: str, text: str, metadata: dict[str, Any]
     ) -> None:  # pragma: no cover - adapter writes via build
@@ -329,6 +294,42 @@ class LazyOCRAdapter(OCRPort):
         return None
 
 
+class LazyOCRAdapter(OCRPort):
+    """Lazy wrapper that defers adapter construction until first use."""
+
+    def __init__(self, factory: Callable[[], OCRPort]) -> None:
+        object.__setattr__(self, "_factory", factory)
+        object.__setattr__(self, "_instance", None)
+
+    def _resolve(self) -> OCRPort:
+        instance = object.__getattribute__(self, "_instance")
+        if instance is None:
+            instance = object.__getattribute__(self, "_factory")()
+            object.__setattr__(self, "_instance", instance)
+        return instance
+
+    def process_document(
+        self,
+        path: Path,
+        *,
+        language: str = "eng",
+    ) -> OCRResult:
+        return self._resolve().process_document(path, language=language)
+
+    def is_online(self) -> bool:
+        return self._resolve().is_online()
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._resolve(), item)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in {"_factory", "_instance"}:
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._resolve(), name, value)
+
+
+
 def _create_ledger(settings: Settings) -> LedgerPort | None:
     if not settings.audit_enabled:
         return None
@@ -391,7 +392,7 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
                 lang="eng",
                 preflight=True,
                 dpi_scale=2,
-                min_text_threshold=50,
+                min_text_threshold=10,
             )
         )
     }
