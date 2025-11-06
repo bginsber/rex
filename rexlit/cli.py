@@ -1373,17 +1373,11 @@ def privilege_classify(
 
     # Read document text
     try:
-        # Try to extract text (support for PDF/DOCX)
-        if file_path.suffix.lower() == ".pdf":
-            from rexlit.ingest.extract import extract_text_from_pdf
+        # Use extract_document which handles all file types (text, PDF, DOCX, images)
+        from rexlit.ingest.extract import extract_document
 
-            text = extract_text_from_pdf(file_path)
-        elif file_path.suffix.lower() in {".docx", ".doc"}:
-            from rexlit.ingest.extract import extract_text_from_docx
-
-            text = extract_text_from_docx(file_path)
-        else:
-            text = file_path.read_text(encoding="utf-8", errors="replace")
+        extracted = extract_document(file_path)
+        text = extracted.text
     except Exception as e:
         typer.secho(f"❌ Failed to read document: {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
@@ -1487,16 +1481,11 @@ def privilege_explain(
 
     # Read document text
     try:
-        if file_path.suffix.lower() == ".pdf":
-            from rexlit.ingest.extract import extract_text_from_pdf
+        # Use extract_document which handles all file types (text, PDF, DOCX, images)
+        from rexlit.ingest.extract import extract_document
 
-            text = extract_text_from_pdf(file_path)
-        elif file_path.suffix.lower() in {".docx", ".doc"}:
-            from rexlit.ingest.extract import extract_text_from_docx
-
-            text = extract_text_from_docx(file_path)
-        else:
-            text = file_path.read_text(encoding="utf-8", errors="replace")
+        extracted = extract_document(file_path)
+        text = extracted.text
     except Exception as e:
         typer.secho(f"❌ Failed to read document: {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)

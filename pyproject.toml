@@ -78,6 +78,11 @@ pst = [
 agent = [
     "anthropic>=0.34.0",
 ]
+privilege = [
+    "transformers>=4.35.0",
+    "torch>=2.0.0",
+    "accelerate>=0.20.0",
+]
 
 [project.scripts]
 rexlit = "rexlit.cli:app"
@@ -131,6 +136,9 @@ module = [
     "isaacus.*",
     "hnswlib.*",
     "jsonschema.*",
+    "transformers.*",
+    "torch.*",
+    "accelerate.*",
 ]
 ignore_missing_imports = true
 

@@ -162,14 +162,19 @@ class PrivilegeSafeguardAdapter:
         if reasoning_effort == "dynamic":
             reasoning_effort = self._select_reasoning_effort(text)
 
-        # Construct Harmony-format prompt
-        messages = [
-            {"role": "system", "content": self.policy_text},
-            {
-                "role": "user",
-                "content": f"Reasoning effort: {reasoning_effort}\n\nClassify the following document:\n\n{text}",
-            },
-        ]
+        # Construct prompt as single string (transformers text-generation pipeline expects string)
+        # Format: System prompt + User instruction + Document text
+        prompt = f"""{self.policy_text}
+
+---
+
+Reasoning effort: {reasoning_effort}
+
+Classify the following document:
+
+{text}
+
+Provide your classification in JSON format as specified in the policy above."""
 
         # Invoke model with circuit breaker protection
         try:
@@ -177,7 +182,7 @@ class PrivilegeSafeguardAdapter:
             def _run_inference() -> Any:
                 model = self._load_model()
                 result = model(
-                    messages,
+                    prompt,  # Pass string, not list of messages
                     max_new_tokens=self.max_new_tokens,
                     do_sample=False,  # Deterministic
                     return_full_text=False,
