@@ -336,10 +336,11 @@ Output JSON: {"violation": 0/1, "labels": [], "confidence": 0.0, "rationale": ""
                 policy_path="/nonexistent/policy.txt",
             )
 
-    def test_adapter_cot_vault_required_when_logging(self, policy_path):
-        """Test adapter requires vault path when log_full_cot=True."""
+    def test_adapter_cot_vault_required_when_logging(self, policy_path, tmp_path):
+        """Test adapter requires vault path and key path when log_full_cot=True."""
         from rexlit.app.adapters.privilege_safeguard import PrivilegeSafeguardAdapter
 
+        # Missing vault path
         with pytest.raises(ValueError, match="cot_vault_path required"):
             PrivilegeSafeguardAdapter(
                 model_path="/some/model",
@@ -347,6 +348,62 @@ Output JSON: {"violation": 0/1, "labels": [], "confidence": 0.0, "rationale": ""
                 log_full_cot=True,
                 cot_vault_path=None,
             )
+
+        # Missing vault key path
+        with pytest.raises(ValueError, match="vault_key_path required"):
+            PrivilegeSafeguardAdapter(
+                model_path="/some/model",
+                policy_path=policy_path,
+                log_full_cot=True,
+                cot_vault_path=tmp_path / "vault",
+                vault_key_path=None,
+            )
+
+    def test_adapter_vault_encryption(self, policy_path, tmp_path):
+        """Test that vault entries are encrypted and can be decrypted."""
+        import sys
+        from pathlib import Path as PathLib
+
+        # Import adapter directly to avoid tesseract dependency
+        sys.path.insert(0, str(PathLib(__file__).parent.parent))
+        from rexlit.app.adapters.privilege_safeguard import PrivilegeSafeguardAdapter
+
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        key_path = tmp_path / "vault.key"
+
+        # Create adapter with vault enabled
+        adapter = PrivilegeSafeguardAdapter(
+            model_path="/some/model",
+            policy_path=policy_path,
+            log_full_cot=True,
+            cot_vault_path=vault_dir,
+            vault_key_path=key_path,
+        )
+
+        # Test data
+        reasoning = "This is sensitive privileged reasoning with client communications."
+        cot_hash = "test_hash_abc123"
+
+        # Store in vault (should encrypt)
+        adapter._store_in_vault(reasoning, cot_hash)
+
+        # Verify file exists with .enc extension
+        encrypted_file = vault_dir / f"{cot_hash}.enc"
+        assert encrypted_file.exists()
+
+        # Verify file content is NOT plaintext
+        encrypted_content = encrypted_file.read_bytes()
+        assert reasoning.encode("utf-8") not in encrypted_content
+        assert b"sensitive" not in encrypted_content
+        assert b"privileged" not in encrypted_content
+
+        # Retrieve and decrypt
+        decrypted = adapter.retrieve_from_vault(cot_hash)
+        assert decrypted == reasoning
+
+        # Test deduplication (storing same hash again should not error)
+        adapter._store_in_vault(reasoning, cot_hash)
 
     @pytest.mark.skip(reason="Requires gpt-oss-safeguard-20b model installation")
     def test_adapter_classify_privileged_email(self, policy_path, tmp_path):

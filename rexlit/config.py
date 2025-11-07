@@ -145,6 +145,11 @@ class Settings(BaseSettings):
         description="Directory for encrypted CoT storage (required if log_full_cot=True)",
     )
 
+    privilege_cot_vault_key_path: Path | None = Field(
+        default=None,
+        description="Path to Fernet key for CoT vault encryption (auto-generated if not specified)",
+    )
+
     privilege_timeout_seconds: float = Field(
         default=30.0,
         ge=1.0,
@@ -368,6 +373,17 @@ class Settings(BaseSettings):
 
         vault_path.mkdir(parents=True, exist_ok=True)
         return vault_path
+
+    def get_privilege_cot_vault_key_path(self) -> Path:
+        """Get path to CoT vault encryption key.
+
+        Returns default path in config dir if not explicitly configured.
+        """
+        if self.privilege_cot_vault_key_path is not None:
+            return self.privilege_cot_vault_key_path
+
+        # Default to config_dir/cot-vault.key
+        return self.get_config_dir() / "cot-vault.key"
 
 
 # Global settings instance
