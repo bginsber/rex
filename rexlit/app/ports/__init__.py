@@ -26,6 +26,9 @@ __all__ = [
     "EmbeddingPort",
     "VectorHit",
     "VectorStorePort",
+    "PrivilegeReasoningPort",
+    "PolicyDecision",
+    "RedactionSpan",
     "PrivilegeLogEntry",
     "AttorneyList",
     "PrivilegeLogMetadata",
@@ -46,6 +49,11 @@ from rexlit.app.ports.privilege_log import (
     PrivilegeLogEntry,
     PrivilegeLogMetadata,
     PrivilegeLogPort,
+)
+from rexlit.app.ports.privilege_reasoning import (
+    PolicyDecision,
+    PrivilegeReasoningPort,
+    RedactionSpan,
 )
 from rexlit.app.ports.redaction import RedactionApplierPort, RedactionPlannerPort
 from rexlit.app.ports.signer import SignerPort

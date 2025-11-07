@@ -1279,5 +1279,272 @@ def audit_verify() -> None:
     raise typer.Exit(code=1)
 
 
+# Privilege subcommand
+privilege_app = typer.Typer(help="Privilege classification and review")
+app.add_typer(privilege_app, name="privilege")
+
+
+@privilege_app.command("classify")
+def privilege_classify(
+    file_path: Annotated[
+        Path,
+        typer.Argument(help="Document file to classify (text, PDF, or DOCX)", exists=True),
+    ],
+    threshold: Annotated[
+        float,
+        typer.Option("--threshold", "-t", help="Confidence threshold (0.0-1.0)"),
+    ] = 0.75,
+    reasoning_effort: Annotated[
+        str,
+        typer.Option(
+            "--reasoning-effort",
+            "-r",
+            help="Reasoning effort: low, medium, high, or dynamic",
+        ),
+    ] = "dynamic",
+    model_path: Annotated[
+        Path | None,
+        typer.Option("--model-path", help="Override model path"),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output as JSON"),
+    ] = False,
+) -> None:
+    """Classify a document for attorney-client privilege.
+
+    This command uses the self-hosted gpt-oss-safeguard-20b model to classify
+    documents for privilege. All processing is offline (no network calls).
+
+    Privacy note: Full reasoning chain is hashed, not logged. Only redacted
+    summaries appear in audit logs.
+
+    Example:
+        rexlit privilege classify email001.txt
+        rexlit privilege classify --threshold 0.80 --reasoning-effort high doc.pdf
+    """
+    import json
+
+    from rexlit.app.adapters.privilege_safeguard import PrivilegeSafeguardAdapter
+    from rexlit.app.privilege_service import PrivilegeReviewService
+
+    container = bootstrap_application()
+
+    # Determine model path
+    if model_path is None:
+        model_path = container.settings.get_privilege_model_path()
+        if model_path is None:
+            typer.secho(
+                "❌ Privilege model not found. Install gpt-oss-safeguard-20b or configure "
+                "privilege_model_path in settings.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+    # Load policy
+    try:
+        policy_path = container.settings.get_privilege_policy_path(stage=1)
+    except FileNotFoundError as e:
+        typer.secho(f"❌ {e}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    # Initialize adapter
+    try:
+        adapter = PrivilegeSafeguardAdapter(
+            model_path=model_path,
+            policy_path=policy_path,
+            log_full_cot=container.settings.privilege_log_full_cot,
+            cot_vault_path=container.settings.get_privilege_cot_vault_path(),
+            timeout_seconds=container.settings.privilege_timeout_seconds,
+            circuit_breaker_threshold=container.settings.privilege_circuit_breaker_threshold,
+        )
+    except Exception as e:
+        typer.secho(f"❌ Failed to initialize privilege adapter: {e}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    # Initialize service
+    service = PrivilegeReviewService(
+        safeguard_adapter=adapter,
+        ledger_port=container.ledger_port,
+        pattern_skip_threshold=container.settings.privilege_pattern_skip_threshold,
+        pattern_escalate_threshold=container.settings.privilege_pattern_escalate_threshold,
+    )
+
+    # Read document text
+    try:
+        # Use extract_document which handles all file types (text, PDF, DOCX, images)
+        from rexlit.ingest.extract import extract_document
+
+        extracted = extract_document(file_path)
+        text = extracted.text
+    except Exception as e:
+        typer.secho(f"❌ Failed to read document: {e}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    # Classify
+    typer.secho(f"🔍 Classifying {file_path.name}...", fg=typer.colors.CYAN)
+    try:
+        decision = service.review_document(
+            doc_id=str(file_path),
+            text=text,
+            threshold=threshold,
+        )
+    except Exception as e:
+        typer.secho(f"❌ Classification failed: {e}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    # Output results
+    if json_output:
+        typer.echo(json.dumps(decision.model_dump(mode="json"), indent=2))
+    else:
+        if decision.labels:
+            label_str = ", ".join(decision.labels)
+            color = typer.colors.YELLOW if decision.is_privileged else typer.colors.GREEN
+            typer.secho(f"✓ Labels: {label_str}", fg=color)
+        else:
+            typer.secho("✓ Non-privileged", fg=typer.colors.GREEN)
+
+        typer.echo(f"  Confidence: {decision.confidence:.2f}")
+        typer.echo(f"  Needs Review: {decision.needs_review}")
+        typer.echo(f"  Reasoning Hash: {decision.reasoning_hash[:16]}...")
+        typer.echo(f"  Summary: {decision.reasoning_summary[:100]}...")
+
+        if decision.error_message:
+            typer.secho(f"  ⚠️  Error: {decision.error_message}", fg=typer.colors.YELLOW)
+
+
+@privilege_app.command("explain")
+def privilege_explain(
+    file_path: Annotated[
+        Path,
+        typer.Argument(help="Document file to explain", exists=True),
+    ],
+    model_path: Annotated[
+        Path | None,
+        typer.Option("--model-path", help="Override model path"),
+    ] = None,
+) -> None:
+    """Classify document with detailed explanation (verbose mode).
+
+    This command is identical to `classify` but always uses high reasoning effort
+    and displays the full (redacted) reasoning summary.
+
+    Example:
+        rexlit privilege explain email001.txt
+    """
+    import json
+
+    from rexlit.app.adapters.privilege_safeguard import PrivilegeSafeguardAdapter
+    from rexlit.app.privilege_service import PrivilegeReviewService
+
+    container = bootstrap_application()
+
+    # Determine model path
+    if model_path is None:
+        model_path = container.settings.get_privilege_model_path()
+        if model_path is None:
+            typer.secho(
+                "❌ Privilege model not found. Install gpt-oss-safeguard-20b or configure "
+                "privilege_model_path in settings.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+    # Load policy
+    try:
+        policy_path = container.settings.get_privilege_policy_path(stage=1)
+    except FileNotFoundError as e:
+        typer.secho(f"❌ {e}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    # Initialize adapter
+    try:
+        adapter = PrivilegeSafeguardAdapter(
+            model_path=model_path,
+            policy_path=policy_path,
+            log_full_cot=container.settings.privilege_log_full_cot,
+            cot_vault_path=container.settings.get_privilege_cot_vault_path(),
+            timeout_seconds=container.settings.privilege_timeout_seconds,
+            circuit_breaker_threshold=container.settings.privilege_circuit_breaker_threshold,
+        )
+    except Exception as e:
+        typer.secho(f"❌ Failed to initialize privilege adapter: {e}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    # Initialize service
+    service = PrivilegeReviewService(
+        safeguard_adapter=adapter,
+        ledger_port=container.ledger_port,
+    )
+
+    # Read document text
+    try:
+        # Use extract_document which handles all file types (text, PDF, DOCX, images)
+        from rexlit.ingest.extract import extract_document
+
+        extracted = extract_document(file_path)
+        text = extracted.text
+    except Exception as e:
+        typer.secho(f"❌ Failed to read document: {e}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    # Classify with high reasoning effort
+    typer.secho(f"🔍 Explaining privilege classification for {file_path.name}...", fg=typer.colors.CYAN)
+    typer.secho("   (Using high reasoning effort for detailed analysis)", fg=typer.colors.CYAN)
+
+    try:
+        decision = service.review_document(
+            doc_id=str(file_path),
+            text=text,
+            threshold=0.75,
+            force_llm=True,  # Always use LLM with high effort
+        )
+    except Exception as e:
+        typer.secho(f"❌ Classification failed: {e}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    # Display detailed results
+    typer.echo()
+    typer.secho("═" * 80, fg=typer.colors.CYAN)
+    typer.secho("PRIVILEGE CLASSIFICATION REPORT", fg=typer.colors.CYAN, bold=True)
+    typer.secho("═" * 80, fg=typer.colors.CYAN)
+    typer.echo()
+
+    typer.secho(f"Document: {file_path}", bold=True)
+    typer.echo()
+
+    if decision.labels:
+        label_str = ", ".join(decision.labels)
+        color = typer.colors.YELLOW if decision.is_privileged else typer.colors.GREEN
+        typer.secho(f"Classification: {label_str}", fg=color, bold=True)
+    else:
+        typer.secho("Classification: NON-PRIVILEGED", fg=typer.colors.GREEN, bold=True)
+
+    typer.echo(f"Confidence: {decision.confidence:.2%}")
+    typer.echo(f"Needs Review: {'Yes' if decision.needs_review else 'No'}")
+    typer.echo(f"Model: {decision.model_version}")
+    typer.echo(f"Policy: {decision.policy_version}")
+    typer.echo(f"Reasoning Effort: {decision.reasoning_effort}")
+    typer.echo()
+
+    typer.secho("Reasoning Summary:", bold=True)
+    typer.echo(f"  {decision.reasoning_summary}")
+    typer.echo()
+
+    typer.secho("Privacy Note:", fg=typer.colors.YELLOW)
+    typer.echo(f"  Reasoning Hash: {decision.reasoning_hash}")
+    typer.echo(
+        f"  Full CoT Stored: {'Yes' if decision.full_reasoning_available else 'No (hashed only)'}"
+    )
+    typer.echo()
+
+    if decision.error_message:
+        typer.secho("⚠️  Errors/Warnings:", fg=typer.colors.YELLOW)
+        typer.echo(f"  {decision.error_message}")
+        typer.echo()
+
+
 if __name__ == "__main__":
     app()

@@ -114,6 +114,63 @@ class Settings(BaseSettings):
         description="Search backend: tantivy or whoosh",
     )
 
+    # Privilege classification settings
+    privilege_model_path: Path | None = Field(
+        default=None,
+        description="Path to gpt-oss-safeguard-20b model weights (self-hosted)",
+    )
+
+    privilege_policy_stage1: Path | None = Field(
+        default=None,
+        description="Path to Stage 1 privilege policy template",
+    )
+
+    privilege_policy_stage2: Path | None = Field(
+        default=None,
+        description="Path to Stage 2 responsiveness policy template",
+    )
+
+    privilege_policy_stage3: Path | None = Field(
+        default=None,
+        description="Path to Stage 3 redaction policy template",
+    )
+
+    privilege_log_full_cot: bool = Field(
+        default=False,
+        description="Store full chain-of-thought in encrypted vault (privacy risk if enabled)",
+    )
+
+    privilege_cot_vault_path: Path | None = Field(
+        default=None,
+        description="Directory for encrypted CoT storage (required if log_full_cot=True)",
+    )
+
+    privilege_timeout_seconds: float = Field(
+        default=30.0,
+        ge=1.0,
+        description="Timeout for privilege model inference (seconds)",
+    )
+
+    privilege_circuit_breaker_threshold: int = Field(
+        default=5,
+        ge=1,
+        description="Number of failures before circuit breaker opens",
+    )
+
+    privilege_pattern_skip_threshold: float = Field(
+        default=0.85,
+        ge=0.0,
+        le=1.0,
+        description="Pattern confidence above which to skip LLM",
+    )
+
+    privilege_pattern_escalate_threshold: float = Field(
+        default=0.50,
+        ge=0.0,
+        le=1.0,
+        description="Pattern confidence above which to escalate to LLM",
+    )
+
     _api_key_cache: dict[str, str | None] = PrivateAttr(default_factory=dict)
 
     def model_post_init(self, __context: Any) -> None:
@@ -250,6 +307,67 @@ class Settings(BaseSettings):
     def get_deepseek_api_key(self) -> str | None:
         """Convenience accessor for the DeepSeek API key."""
         return self.get_api_key("deepseek")
+
+    def get_privilege_model_path(self) -> Path | None:
+        """Get path to privilege model, checking default location if not configured."""
+        if self.privilege_model_path is not None:
+            return self.privilege_model_path
+
+        # Check default location: ~/.local/share/rexlit/models/gpt-oss-safeguard-20b
+        default_path = self.get_data_dir() / "models" / "gpt-oss-safeguard-20b"
+        if default_path.exists():
+            return default_path
+
+        return None
+
+    def get_privilege_policy_path(self, stage: int = 1) -> Path:
+        """Get path to privilege policy template for given stage.
+
+        Args:
+            stage: Policy stage (1=privilege, 2=responsiveness, 3=redaction)
+
+        Returns:
+            Path to policy template file
+
+        Raises:
+            FileNotFoundError: If policy template not found
+        """
+        if stage == 1:
+            if self.privilege_policy_stage1 is not None:
+                return self.privilege_policy_stage1
+            # Default to bundled policy
+            default_path = Path(__file__).parent / "policies" / "juul_privilege_stage1.txt"
+        elif stage == 2:
+            if self.privilege_policy_stage2 is not None:
+                return self.privilege_policy_stage2
+            default_path = Path(__file__).parent / "policies" / "juul_responsiveness_stage2.txt"
+        elif stage == 3:
+            if self.privilege_policy_stage3 is not None:
+                return self.privilege_policy_stage3
+            default_path = Path(__file__).parent / "policies" / "juul_redaction_stage3.txt"
+        else:
+            raise ValueError(f"Invalid stage: {stage} (must be 1, 2, or 3)")
+
+        if not default_path.exists():
+            raise FileNotFoundError(
+                f"Policy template not found: {default_path}. "
+                f"Configure privilege_policy_stage{stage} in settings."
+            )
+
+        return default_path
+
+    def get_privilege_cot_vault_path(self) -> Path | None:
+        """Get path to CoT vault directory, creating if necessary."""
+        if self.privilege_cot_vault_path is not None:
+            vault_path = self.privilege_cot_vault_path
+        elif self.privilege_log_full_cot:
+            # Default to data_dir/cot-vault if log_full_cot enabled
+            vault_path = self.get_data_dir() / "cot-vault"
+        else:
+            return None
+
+        vault_path.mkdir(parents=True, exist_ok=True)
+        return vault_path
 
 
 # Global settings instance
