@@ -29,6 +29,10 @@ __all__ = [
     "PrivilegeReasoningPort",
     "PolicyDecision",
     "RedactionSpan",
+    "PrivilegeLogEntry",
+    "AttorneyList",
+    "PrivilegeLogMetadata",
+    "PrivilegeLogPort",
 ]
 
 from rexlit.app.ports.bates import BatesAssignment, BatesPlan, BatesPlannerPort
@@ -40,6 +44,12 @@ from rexlit.app.ports.ledger import AuditRecord, LedgerPort
 from rexlit.app.ports.ocr import OCRPort
 from rexlit.app.ports.pack import PackPort
 from rexlit.app.ports.pii import PIIPort
+from rexlit.app.ports.privilege_log import (
+    AttorneyList,
+    PrivilegeLogEntry,
+    PrivilegeLogMetadata,
+    PrivilegeLogPort,
+)
 from rexlit.app.ports.privilege_reasoning import (
     PolicyDecision,
     PrivilegeReasoningPort,
