@@ -10,12 +10,14 @@ from typing import Any
 from rexlit.app import M1Pipeline, PackService, RedactionService, ReportService
 from rexlit.app.adapters import (
     FileSystemStorageAdapter,
+    GroqPrivilegeAdapter,
     HashDeduper,
     HNSWAdapter,
     IngestDiscoveryAdapter,
     JSONLineRedactionPlanner,
     Kanon2Adapter,
     PDFStamperAdapter,
+    PrivilegePatternsAdapter,
     SequentialBatesPlanner,
     TesseractOCRAdapter,
     ZipPackager,
@@ -30,6 +32,7 @@ from rexlit.app.ports import (
     LedgerPort,
     OCRPort,
     PackPort,
+    PrivilegePort,
     RedactionPlannerPort,
     StampPort,
     StoragePort,
@@ -83,6 +86,7 @@ class ApplicationContainer:
     embedder: EmbeddingPort | None
     vector_store_factory: Callable[[Path, int], VectorStorePort] | None
     ocr_providers: dict[str, OCRPort]
+    privilege_port: PrivilegePort | None
 
 
 class NoOpLedger:
@@ -397,6 +401,9 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
         )
     }
 
+    # Create privilege adapter (Groq when online, pattern-based otherwise)
+    privilege_adapter = _create_privilege_adapter(active_settings)
+
     return ApplicationContainer(
         settings=active_settings,
         pipeline=pipeline,
@@ -434,6 +441,7 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
             )
         ),
         ocr_providers=ocr_providers,
+        privilege_port=privilege_adapter,
     )
 
 
@@ -449,7 +457,44 @@ def bootstrap_application_container(settings: Settings | None = None) -> Applica
     return bootstrap_application(settings=settings)
 
 
-# Internal helper to construct the embedder without failing bootstrap
+# Internal helpers for conditional adapter creation
+def _create_privilege_adapter(settings: Settings) -> PrivilegePort:
+    """Create appropriate privilege adapter based on settings.
+
+    When online mode is enabled and Groq API key is available, uses Groq Cloud.
+    Otherwise falls back to pattern-based detection.
+
+    Args:
+        settings: Application settings
+
+    Returns:
+        Privilege port adapter (Groq or pattern-based)
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    # Try Groq adapter when online and API key is configured
+    if settings.online:
+        groq_api_key = settings.get_groq_api_key()
+        if groq_api_key:
+            try:
+                try:
+                    policy_path = settings.get_privilege_policy_path(stage=1)
+                    return GroqPrivilegeAdapter(api_key=groq_api_key, policy_path=policy_path)
+                except FileNotFoundError:
+                    # Policy not found, use adapter without explicit policy (will use default)
+                    return GroqPrivilegeAdapter(api_key=groq_api_key)
+            except Exception as e:
+                logger.warning("Failed to initialize Groq adapter, falling back to pattern-based: %s", e)
+
+    # Fall back to pattern-based adapter
+    from rexlit.utils.profiles import load_profile
+
+    privilege_profile = load_profile(None, settings)
+    return PrivilegePatternsAdapter(profile=privilege_profile.get("privilege", {}))
+
+
 def _safe_init_embedder(
     offline_gate: OfflineModeGate, *, api_key: str | None = None, api_base: str | None = None
 ) -> EmbeddingPort | None:
