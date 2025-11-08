@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from rexlit.app.ports.privilege_reasoning import PolicyDecision, RedactionSpan
 from rexlit.utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
+from rexlit.utils.json_parsing import parse_model_json_response
 
 if TYPE_CHECKING:
     from transformers import Pipeline  # type: ignore[import-untyped]
@@ -312,40 +313,14 @@ Provide your classification in JSON format as specified in the policy above."""
         2. JSON in markdown code block: ```json\n{...}\n```
         3. JSON with explanation prefix: "Here is my analysis:\n{...}"
         """
-        text = generated_text.strip()
-
-        # Try direct JSON parse first
         try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-
-        # Extract JSON from markdown code block
-        if "```json" in text:
-            start = text.find("```json") + 7
-            end = text.find("```", start)
-            if end > start:
-                try:
-                    return json.loads(text[start:end].strip())
-                except json.JSONDecodeError:
-                    pass
-
-        # Extract JSON from last {...} block
-        if "{" in text and "}" in text:
-            start = text.rfind("{")
-            end = text.rfind("}") + 1
-            if end > start:
-                try:
-                    return json.loads(text[start:end])
-                except json.JSONDecodeError:
-                    pass
-
-        # No valid JSON found
-        raise json.JSONDecodeError(
-            f"Could not parse JSON from model output: {text[:200]}...",
-            text,
-            0,
-        )
+            return parse_model_json_response(generated_text)
+        except ValueError as e:
+            raise json.JSONDecodeError(
+                f"Could not parse JSON from model output: {str(e)}",
+                generated_text,
+                0,
+            ) from e
 
     def _store_in_vault(self, reasoning: str, cot_hash: str) -> None:
         """Store full CoT in encrypted vault with hash-based filename."""
