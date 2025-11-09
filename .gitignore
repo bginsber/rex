@@ -46,3 +46,4 @@ data/
 .coverage
 .pytest_cache/
 .worktrees
+.juul_sample_emails
