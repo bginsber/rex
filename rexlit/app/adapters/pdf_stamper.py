@@ -176,6 +176,13 @@ class PDFStamperAdapter(StampPort):
                 if not rect_list:
                     continue
                 page = doc[page_idx]
+                rotation = int(page.rotation or 0)
+                if rotation % 360 != 0:
+                    self._LOG.warning(
+                        "Page %s is rotated %s°, redactions may be skipped or require manual review",
+                        page_idx,
+                        rotation,
+                    )
                 for rect in rect_list:
                     page.add_redact_annot(rect, fill=(0, 0, 0))
                 page.apply_redactions()

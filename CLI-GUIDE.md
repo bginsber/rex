@@ -9,6 +9,7 @@ Complete command reference for RexLit M0.
 - [Index Commands](#index-commands)
 - [OCR Commands](#ocr-commands)
 - [Audit Commands](#audit-commands)
+- [Redaction Commands](#redaction-commands)
 - [Common Workflows](#common-workflows)
 
 ---
@@ -661,3 +662,77 @@ rexlit index stats --json > "stats-$(date +%Y%m%d).json"
 ---
 
 **Last Updated**: 2025-10-23 (M0 Release)
+---
+
+## Redaction Commands
+
+Generate deterministic PII redaction plans and apply them to PDFs. Commands are offline-first and reuse the adapters wired through `bootstrap_application()`.
+
+### `rexlit redaction plan`
+
+Scan a PDF (or collection) for PII and emit an encrypted plan describing every redaction.
+
+#### Synopsis
+
+```bash
+rexlit redaction plan PATH [OPTIONS]
+```
+
+#### Arguments
+
+- `PATH` – PDF file to analyze (required)
+
+#### Options
+
+- `--output PATH` – Destination for the encrypted plan (defaults to `<input>.redaction-plan.enc`)
+- `--pii-types LIST` – Comma-delimited entity list (default: `SSN,EMAIL,PHONE,CREDIT_CARD`)
+
+#### Example
+
+```bash
+rexlit redaction plan ./docs/confidential.pdf \
+  --pii-types SSN,EMAIL \
+  --output plans/confidential.enc
+```
+
+#### Output
+
+```
+✅ Redaction plan created: plans/confidential.enc
+   Plan ID: 41eb3e3c...f5a2
+   Findings: 3
+```
+
+### `rexlit redaction apply`
+
+Apply a previously generated plan, verifying the document hash before writing a redacted PDF.
+
+#### Synopsis
+
+```bash
+rexlit redaction apply PLAN OUTPUT_DIR [OPTIONS]
+```
+
+#### Arguments
+
+- `PLAN` – Encrypted plan file from `redaction plan`
+- `OUTPUT_DIR` – Directory for redacted PDFs
+
+#### Options
+
+- `--preview` – Report how many redactions *would* apply without writing
+- `--force` – Skip hash verification (dangerous—only use if you trust the source)
+
+#### Example
+
+```bash
+rexlit redaction apply plans/confidential.enc ./redacted
+```
+
+#### Output
+
+```
+✅ Applied 3 redactions to /tmp/redacted
+```
+
+---

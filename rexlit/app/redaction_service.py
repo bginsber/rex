@@ -101,10 +101,19 @@ class RedactionService:
         redaction_actions = [self._finding_to_action(finding) for finding in pii_findings]
 
         document_hash = self.storage.compute_hash(resolved_input)
+        pages_with_findings = sorted(
+            {
+                action["page"]
+                for action in redaction_actions
+                if isinstance(action.get("page"), int)
+            }
+        )
         annotations = {
             "pii_types": sorted(pii_types),
             "detector": self.pii.__class__.__name__,
             "finding_count": len(redaction_actions),
+            "pages_with_findings": pages_with_findings,
+            "has_offsets": any(action.get("start") is not None for action in redaction_actions),
         }
 
         plan_id = compute_redaction_plan_id(

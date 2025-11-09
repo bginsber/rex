@@ -1,8 +1,11 @@
 """PII detection adapter using regex patterns and name lists."""
 
+from __future__ import annotations
+
+import logging
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from rexlit.app.ports.pii import PIIFinding, PIIPort
 from rexlit.ingest.extract import extract_document
@@ -150,15 +153,36 @@ class PIIRegexAdapter:
         Returns:
             List of PIIFinding objects with page numbers (if available)
         """
-        try:
-            doc_result = extract_document(Path(path))
-            text = doc_result.text
-        except Exception:
-            return []
+        path_obj = Path(path)
+        page_spans: list[tuple[int, int, int]] | None = None
+
+        if path_obj.suffix.lower() == ".pdf":
+            try:
+                text, page_spans = self._extract_pdf_text_with_offsets(path_obj)
+            except Exception as exc:  # pragma: no cover - fallback path
+                logging.getLogger(__name__).warning(
+                    "PDF extraction fallback for %s due to error: %s", path_obj, exc
+                )
+                try:
+                    text = extract_document(path_obj).text
+                except Exception:
+                    return []
+        else:
+            try:
+                doc_result = extract_document(path_obj)
+                text = doc_result.text
+            except Exception:
+                return []
 
         findings = self.analyze_text(text, language=language, entities=entities)
 
-        # If document has page info, attach it (simplified: no page tracking for now)
+        if page_spans:
+            for finding in findings:
+                if finding.page is None:
+                    page = self._lookup_page(finding.start, page_spans)
+                    if page is not None:
+                        finding.page = page
+
         return findings
 
     def get_supported_entities(self) -> list[str]:
@@ -178,3 +202,42 @@ class PIIRegexAdapter:
         Always returns False for regex-based detection.
         """
         return False
+
+    def _extract_pdf_text_with_offsets(
+        self,
+        path: Path,
+    ) -> tuple[str, list[tuple[int, int, int]]]:
+        """Return concatenated PDF text and per-page character spans."""
+
+        import fitz  # type: ignore[import]
+
+        doc = fitz.open(str(path))
+        try:
+            segments: list[str] = []
+            spans: list[tuple[int, int, int]] = []
+            cursor = 0
+
+            for page_index in range(doc.page_count):
+                page_text = doc[page_index].get_text()
+                segments.append(page_text)
+                start = cursor
+                cursor += len(page_text)
+                spans.append((page_index, start, cursor))
+                if page_index != doc.page_count - 1:
+                    segments.append("\n\n")
+                    cursor += 2
+
+            combined = "".join(segments)
+            return combined, spans
+        finally:
+            doc.close()
+
+    @staticmethod
+    def _lookup_page(
+        offset: int,
+        spans: Iterable[tuple[int, int, int]],
+    ) -> int | None:
+        for page_index, start, end in spans:
+            if start <= offset < end:
+                return page_index
+        return None
