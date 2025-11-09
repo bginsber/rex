@@ -42,15 +42,6 @@ function ensureWithinRoot(filePath: string) {
   throw new Error('Path traversal detected')
 }
 
-// Validate that a document path is safe to read
-function validateDocumentPath(filePath: string): string {
-  const absolute = resolve(filePath)
-  // Reject paths with suspicious patterns
-  if (absolute.includes('..') || !absolute.startsWith('/')) {
-    throw new Error('Invalid document path')
-  }
-  return absolute
-}
 
 const app = new Elysia()
   .use(cors())
@@ -78,36 +69,21 @@ const app = new Elysia()
   .get('/api/documents/:hash/meta', async ({ params }) => {
     return await runRexlit(['index', 'get', params.hash, '--json'])
   })
-  .get('/api/documents/:hash/file', async ({ params, query }: { params: any; query: any }) => {
+  .get('/api/documents/:hash/file', async ({ params }) => {
     try {
-      // First, try to use a provided path (safer if from search results)
-      let pathCandidate = query?.path as string | undefined
+      // Look up document by hash in index (authoritative source)
+      const metadata = await runRexlit(['index', 'get', params.hash, '--json'])
 
-      // If no path provided, search for the document
-      if (!pathCandidate) {
-        const searchResults = await runRexlit(['index', 'search', params.hash, '--limit', '1', '--json'])
-
-        if (!Array.isArray(searchResults) || searchResults.length === 0) {
-          return new Response(JSON.stringify({ error: 'Document not found' }), {
-            status: 404
-          })
-        }
-
-        const doc = searchResults[0]
-        pathCandidate = doc.path
-      }
-
-      if (!pathCandidate) {
-        return new Response(JSON.stringify({ error: 'Document path unavailable' }), {
-          status: 500
+      if (!metadata || !metadata.path) {
+        return new Response(JSON.stringify({ error: 'Document not found' }), {
+          status: 404
         })
       }
 
-      const originPath = isAbsolute(pathCandidate) ? pathCandidate : join(REXLIT_HOME, pathCandidate)
-      const safePath = validateDocumentPath(originPath)
+      // Use ONLY the path from the index (ignore any query parameters)
+      const trustedPath = metadata.path
+      const file = Bun.file(trustedPath)
 
-      // Check if file exists
-      const file = Bun.file(safePath)
       if (!(await file.exists())) {
         return new Response(JSON.stringify({ error: 'File not found on disk' }), {
           status: 404

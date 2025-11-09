@@ -24,7 +24,7 @@ function App() {
   }, [])
 
   const resultCount = useMemo(() => results.length, [results])
-  const documentUrl = selected ? rexlitApi.getDocumentUrl(selected.sha256, selected.path) : undefined
+  const documentUrl = selected ? rexlitApi.getDocumentUrl(selected.sha256) : undefined
 
   async function search(event: FormEvent) {
     event.preventDefault()
