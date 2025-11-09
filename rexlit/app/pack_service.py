@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from rexlit.app.ports import LedgerPort, StoragePort
 from rexlit.ingest.discover import discover_documents
 from rexlit.utils.deterministic import deterministic_order_documents
 
@@ -37,8 +38,8 @@ class PackService:
 
     def __init__(
         self,
-        storage_port: Any,  # Will be typed with port interface in Workstream 2
-        ledger_port: Any,
+        storage_port: StoragePort,
+        ledger_port: LedgerPort | None,
     ):
         """Initialize pack service.
 
