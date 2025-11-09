@@ -1,7 +1,8 @@
-"""PDF stamping adapter using PyMuPDF for Bates numbering."""
+"""PDF stamping adapter using PyMuPDF for Bates numbering and redactions."""
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -28,6 +29,7 @@ class _StampPreset:
 class PDFStamperAdapter(StampPort):
     """Layout-aware Bates stamping backed by PyMuPDF."""
 
+    _LOG = logging.getLogger(__name__)
     _POSITION_PRESETS: dict[Literal["bottom-right", "bottom-center", "top-right"], _StampPreset] = {
         "bottom-right": _StampPreset(x_ratio=0.85, y_ratio=0.85),
         "bottom-center": _StampPreset(x_ratio=0.50, y_ratio=0.85),
@@ -115,7 +117,81 @@ class PDFStamperAdapter(StampPort):
         output_path: Path,
         redactions: list[dict[str, Any]],
     ) -> int:
-        raise NotImplementedError("Redaction application is not yet implemented.")
+        if not redactions:
+            # Still copy the document to the requested destination
+            return self._copy_without_changes(path, output_path)
+
+        doc = fitz.open(str(path))
+        applied = 0
+
+        try:
+            output_path = Path(output_path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Track rectangles per page before applying annotations.
+            page_rects: dict[int, list[fitz.Rect]] = {}
+            unspecified: list[dict[str, Any]] = []
+
+            for entry in redactions:
+                page_idx = entry.get("page")
+                if isinstance(page_idx, int) and page_idx >= 0:
+                    if page_idx >= doc.page_count:
+                        self._LOG.warning(
+                            "Skipping redaction targeting page %s (document has %s pages)",
+                            page_idx,
+                            doc.page_count,
+                        )
+                        continue
+                    rects = self._resolve_rects(doc[page_idx], entry)
+                    if rects:
+                        page_rects.setdefault(page_idx, []).extend(rects)
+                        applied += len(rects)
+                    else:
+                        self._LOG.warning(
+                            "No matching text found for redaction on page %s: %s",
+                            page_idx,
+                            entry.get("entity_type", "unknown"),
+                        )
+                else:
+                    unspecified.append(entry)
+
+            # Attempt to resolve unspecified redactions by scanning all pages.
+            for entry in unspecified:
+                matched = False
+                for page_idx in range(doc.page_count):
+                    rects = self._resolve_rects(doc[page_idx], entry)
+                    if rects:
+                        page_rects.setdefault(page_idx, []).extend(rects)
+                        applied += len(rects)
+                        matched = True
+                        break
+                if not matched:
+                    self._LOG.warning(
+                        "Unable to locate text for redaction entity %s",
+                        entry.get("entity_type", "unknown"),
+                    )
+
+            # Apply annotations page-by-page.
+            for page_idx, rect_list in page_rects.items():
+                if not rect_list:
+                    continue
+                page = doc[page_idx]
+                rotation = int(page.rotation or 0)
+                if rotation % 360 != 0:
+                    self._LOG.warning(
+                        "Page %s is rotated %s°, redactions may be skipped or require manual review",
+                        page_idx,
+                        rotation,
+                    )
+                for rect in rect_list:
+                    page.add_redact_annot(rect, fill=(0, 0, 0))
+                page.apply_redactions()
+
+            doc.save(str(output_path))
+        finally:
+            doc.close()
+
+        return applied
 
     def get_page_count(self, path: Path) -> int:
         doc = fitz.open(str(path))
@@ -200,4 +276,93 @@ class PDFStamperAdapter(StampPort):
         digits = max(1, width)
         return f"{prefix}{number:0{digits}d}"
 
+    # ------------------------------------------------------------------
+    # Redaction helpers
+    # ------------------------------------------------------------------
 
+    def _resolve_rects(self, page: fitz.Page, redaction: dict[str, Any]) -> list[fitz.Rect]:
+        """Return bounding rectangles for a single redaction entry."""
+
+        rects: list[fitz.Rect] = []
+
+        start = redaction.get("start")
+        end = redaction.get("end")
+        if isinstance(start, int) and isinstance(end, int) and end > start:
+            bbox = self._char_offset_to_bbox(page, start, end)
+            if bbox is not None:
+                rects.append(bbox)
+                return rects
+
+        text = (redaction.get("text") or "").strip()
+        if text and text != "***":
+            search_rects = self._find_text_bbox(page, text)
+            if search_rects:
+                rects.extend(search_rects)
+
+        return rects
+
+    def _find_text_bbox(
+        self,
+        page: fitz.Page,
+        search_text: str,
+        *,
+        case_sensitive: bool = False,
+    ) -> list[fitz.Rect]:
+        """Find bounding boxes for occurrences of ``search_text``."""
+
+        try:
+            rects = page.search_for(search_text)
+        except ValueError:
+            rects = []
+        return rects or []
+
+    def _char_offset_to_bbox(
+        self,
+        page: fitz.Page,
+        start_char: int,
+        end_char: int,
+    ) -> fitz.Rect | None:
+        """Convert character offsets on a page to a bounding box."""
+
+        text_dict = page.get_text("dict")
+        char_index = 0
+        rect: fitz.Rect | None = None
+
+        for block in text_dict.get("blocks", []):
+            if block.get("type") != 0:
+                continue
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    span_text = span.get("text", "")
+                    if not span_text:
+                        continue
+                    span_len = len(span_text)
+                    span_start = char_index
+                    span_end = char_index + span_len
+                    if span_end <= start_char:
+                        char_index += span_len
+                        continue
+
+                    if span_start >= end_char:
+                        # We've surpassed the target range.
+                        if rect is not None:
+                            return rect
+                        return None
+
+                    current_rect = fitz.Rect(span["bbox"])
+                    rect = current_rect if rect is None else rect | current_rect
+                    char_index += span_len
+
+        return rect
+
+    def _copy_without_changes(self, source: Path, destination: Path) -> int:
+        """Fallback when no redactions are supplied."""
+
+        destination = Path(destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        doc = fitz.open(str(source))
+        try:
+            doc.save(str(destination))
+        finally:
+            doc.close()
+        return 0

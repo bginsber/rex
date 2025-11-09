@@ -121,3 +121,23 @@ class TestPIIRegexPatterns:
         assert len(findings) == 1
         email_finding = findings[0]
         assert text[email_finding.start:email_finding.end] == "john@example.com"
+
+    def test_pdf_page_mapping(self, tmp_path):
+        """Ensure analyze_document surfaces page metadata for PDFs."""
+        fitz = pytest.importorskip("fitz")
+        pdf_path = tmp_path / "sample.pdf"
+        doc = fitz.open()
+        page1 = doc.new_page()
+        page1.insert_text((100, 100), "Page1 SSN: 123-45-6789", fontsize=12)
+        page2 = doc.new_page()
+        page2.insert_text((100, 100), "Email: user@example.com", fontsize=12)
+        doc.save(str(pdf_path))
+        doc.close()
+
+        adapter = PIIRegexAdapter()
+        findings = adapter.analyze_document(str(pdf_path), entities=["SSN", "EMAIL"])
+
+        assert len(findings) == 2
+        pages = {f.entity_type: f.page for f in findings}
+        assert pages["SSN"] == 0
+        assert pages["EMAIL"] == 1

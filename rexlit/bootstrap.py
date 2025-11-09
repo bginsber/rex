@@ -22,6 +22,7 @@ from rexlit.app.adapters import (
     TesseractOCRAdapter,
     ZipPackager,
 )
+from rexlit.app.adapters.pii_regex import PIIRegexAdapter
 from rexlit.app.audit_service import AuditService
 from rexlit.app.ports import (
     BatesPlannerPort,
@@ -31,6 +32,7 @@ from rexlit.app.ports import (
     IndexPort,
     LedgerPort,
     OCRPort,
+    PIIPort,
     PackPort,
     PrivilegePort,
     RedactionPlannerPort,
@@ -87,6 +89,7 @@ class ApplicationContainer:
     vector_store_factory: Callable[[Path, int], VectorStorePort] | None
     ocr_providers: dict[str, OCRPort]
     privilege_port: PrivilegePort | None
+    pii_port: PIIPort
 
 
 class NoOpLedger:
@@ -368,6 +371,13 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
     ledger = _create_ledger(active_settings)
     ledger_for_services: LedgerPort = ledger or NoOpLedger()  # type: ignore[assignment]
 
+    pii_adapter = PIIRegexAdapter(
+        profile={
+            "enabled_patterns": ["SSN", "EMAIL", "PHONE", "CREDIT_CARD"],
+            "domain_whitelist": [],
+        }
+    )
+
     pipeline = M1Pipeline(
         settings=active_settings,
         discovery_port=discovery,
@@ -378,12 +388,13 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
         offline_gate=offline_gate,
         deduper_port=deduper,
         ledger_port=ledger,
+        pii_port=pii_adapter,
     )
 
     report_service = ReportService(storage_port=storage, ledger_port=ledger_for_services)
     redaction_service = RedactionService(
-        pii_port=None,
-        stamp_port=None,
+        pii_port=pii_adapter,
+        stamp_port=bates_stamper,
         storage_port=storage,
         ledger_port=ledger_for_services,
         settings=active_settings,
@@ -442,6 +453,7 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
         ),
         ocr_providers=ocr_providers,
         privilege_port=privilege_adapter,
+        pii_port=pii_adapter,
     )
 
 

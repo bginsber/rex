@@ -14,7 +14,16 @@ from .privilege_patterns import PrivilegePatternsAdapter
 from .privilege_safeguard import PrivilegeSafeguardAdapter
 from .redaction import JSONLineRedactionPlanner, PassthroughRedactionApplier
 from .storage import FileSystemStorageAdapter
-from .tesseract_ocr import TesseractOCRAdapter
+try:
+    from .tesseract_ocr import TesseractOCRAdapter
+except ModuleNotFoundError as _tesseract_err:  # pragma: no cover - optional dependency
+    class TesseractOCRAdapter:  # type: ignore[no-redef]
+        """Placeholder adapter that surfaces missing optional dependency."""
+
+        def __init__(self, *args, **kwargs) -> None:
+            raise ModuleNotFoundError(
+                "pytesseract is required to use TesseractOCRAdapter"
+            ) from _tesseract_err
 
 __all__ = [
     "SequentialBatesPlanner",

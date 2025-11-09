@@ -10,6 +10,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from rexlit.app.ports import LedgerPort, StampPort, StoragePort
+from rexlit.app.ports.pii import PIIFinding, PIIPort
 from rexlit.config import Settings, get_settings
 from rexlit.utils.plans import (
     compute_redaction_plan_id,
@@ -17,6 +19,8 @@ from rexlit.utils.plans import (
     validate_redaction_plan_entry,
     write_redaction_plan_entry,
 )
+
+DEFAULT_PII_TYPES: tuple[str, ...] = ("SSN", "EMAIL", "PHONE", "CREDIT_CARD")
 
 
 class RedactionPlan(BaseModel):
@@ -40,11 +44,11 @@ class RedactionService:
 
     def __init__(
         self,
-        pii_port: Any,  # Will be typed with port interface in Workstream 2
-        stamp_port: Any,
-        storage_port: Any,
-        ledger_port: Any,
         *,
+        pii_port: PIIPort,
+        stamp_port: StampPort,
+        storage_port: StoragePort,
+        ledger_port: LedgerPort | None,
         settings: Settings | None = None,
     ):
         """Initialize redaction service.
@@ -80,8 +84,11 @@ class RedactionService:
         Returns:
             RedactionPlan with deterministic plan_id
         """
+        if self.pii is None:
+            raise RuntimeError("PII detection port is not configured.")
+
         if pii_types is None:
-            pii_types = ["SSN", "EMAIL", "PHONE", "CREDIT_CARD", "ADDRESS"]
+            pii_types = list(DEFAULT_PII_TYPES)
 
         resolved_input = Path(input_path).resolve()
         if not resolved_input.exists():
@@ -90,12 +97,29 @@ class RedactionService:
         resolved_output = Path(output_plan_path).resolve()
         resolved_output.parent.mkdir(parents=True, exist_ok=True)
 
+        pii_findings = self._run_pii_detection(resolved_input, pii_types)
+        redaction_actions = [self._finding_to_action(finding) for finding in pii_findings]
+
         document_hash = self.storage.compute_hash(resolved_input)
-        annotations = {"pii_types": sorted(pii_types)}
+        pages_with_findings = sorted(
+            {
+                action["page"]
+                for action in redaction_actions
+                if isinstance(action.get("page"), int)
+            }
+        )
+        annotations = {
+            "pii_types": sorted(pii_types),
+            "detector": self.pii.__class__.__name__,
+            "finding_count": len(redaction_actions),
+            "pages_with_findings": pages_with_findings,
+            "has_offsets": any(action.get("start") is not None for action in redaction_actions),
+        }
 
         plan_id = compute_redaction_plan_id(
             document_path=resolved_input,
             content_hash=document_hash,
+            actions=redaction_actions,
             annotations=annotations,
         )
 
@@ -103,9 +127,10 @@ class RedactionService:
             "document": str(resolved_input),
             "sha256": document_hash,
             "plan_id": plan_id,
-            "actions": [],
+            "actions": redaction_actions,
+            "redactions": redaction_actions,
             "annotations": annotations,
-            "notes": "Redaction planning stub. Replace with provider integration.",
+            "notes": f"Found {len(redaction_actions)} PII entities",
         }
 
         write_redaction_plan_entry(resolved_output, plan_entry, key=self._plan_key)
@@ -119,14 +144,15 @@ class RedactionService:
                     "plan_id": plan_id,
                     "document_sha256": document_hash,
                     "pii_types": annotations["pii_types"],
+                    "finding_count": len(redaction_actions),
                 },
             )
 
         return RedactionPlan(
             plan_id=plan_id,
             input_hash=document_hash,
-            redactions=[],
-            rationale="PII detection",
+            redactions=redaction_actions,
+            rationale=f"PII detection via {annotations['detector']}",
         )
 
     def apply(
@@ -183,16 +209,23 @@ class RedactionService:
                     f"Expected {expected_hash}, computed {current_hash}."
                 )
 
-        redactions = entry.get("redactions", [])
-        applied_count = len(redactions)
+        redactions_raw = entry.get("redactions")
+        if not redactions_raw:
+            redactions_raw = entry.get("actions", [])
+        redactions = list(redactions_raw or [])
 
         resolved_output = Path(output_path).resolve()
         destination_path: Path | None = None
+        applied_count = len(redactions)
 
         if not preview:
             resolved_output.mkdir(parents=True, exist_ok=True)
             destination_path = resolved_output / document_path.name
-            self.storage.copy_file(document_path, destination_path)
+            applied_count = self.stamp.apply_redactions(
+                document_path,
+                destination_path,
+                redactions,
+            )
 
         if self.ledger is not None:
             outputs: list[str] = []
@@ -219,6 +252,31 @@ class RedactionService:
         """Load a single redaction plan entry from disk."""
 
         return load_redaction_plan_entry(Path(plan_path), key=self._plan_key)
+
+    def _run_pii_detection(
+        self,
+        input_path: Path,
+        pii_types: list[str],
+    ) -> list[PIIFinding]:
+        """Execute configured PII adapter and return findings."""
+
+        return self.pii.analyze_document(
+            path=str(input_path),
+            entities=pii_types,
+        )
+
+    @staticmethod
+    def _finding_to_action(finding: PIIFinding) -> dict[str, Any]:
+        """Convert a PIIFinding into a plan action dictionary."""
+
+        return {
+            "entity_type": finding.entity_type,
+            "start": finding.start,
+            "end": finding.end,
+            "text": finding.text,
+            "confidence": finding.score,
+            "page": finding.page,
+        }
 
     def validate_plan(self, plan_path: Path) -> bool:
         """Validate redaction plan against current PDFs.
