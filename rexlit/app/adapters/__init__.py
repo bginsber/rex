@@ -10,6 +10,7 @@ from .kanon2 import Kanon2Adapter
 from .pack import ZipPackager
 from .pdf_stamper import PDFStamperAdapter
 from .groq_privilege import GroqPrivilegeAdapter
+from .privilege_patterns import PrivilegePatternsAdapter
 from .privilege_safeguard import PrivilegeSafeguardAdapter
 from .redaction import JSONLineRedactionPlanner, PassthroughRedactionApplier
 from .storage import FileSystemStorageAdapter
@@ -28,5 +29,6 @@ __all__ = [
     "PDFStamperAdapter",
     "TesseractOCRAdapter",
     "PrivilegeSafeguardAdapter",
+    "PrivilegePatternsAdapter",
     "GroqPrivilegeAdapter",
 ]

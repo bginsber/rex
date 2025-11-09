@@ -36,6 +36,7 @@ DETECTABLE_EXTENSIONS = {
     ".log",
     ".md",
     ".markdown",
+    ".ocr",
     ".eml",
     ".msg",
 }

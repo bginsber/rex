@@ -151,6 +151,23 @@ rexlit rules calc \
 # Import deadlines.ics into Calendar app
 ```
 
+## Web UI (Experimental)
+
+An offline-friendly React UI can wrap the CLI via the Bun/Elysia bridge documented in `docs/UI_*`.
+
+```bash
+# API (Bun + Elysia)
+cd api
+bun install
+REXLIT_HOME=${REXLIT_HOME:-$HOME/.local/share/rexlit} bun run index.ts
+
+# UI (Vite + React)
+cd ../ui
+VITE_API_URL=${VITE_API_URL:-http://localhost:3000/api} bun dev
+```
+
+Searches, privileged decisions, and stats are forwarded to the RexLit CLI, so CLI + UI stay perfectly aligned.
+
 ## CLI Usage
 
 ### `rexlit ingest`

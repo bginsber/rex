@@ -77,6 +77,7 @@ def classify_doctype(mime_type: str | None, extension: str) -> str | None:
         ".doc": "doc",
         ".txt": "text",
         ".md": "text",
+        ".ocr": "text",
         ".png": "image",
         ".jpg": "image",
         ".jpeg": "image",
