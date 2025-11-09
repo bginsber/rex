@@ -44,14 +44,18 @@ The CLI wraps these services in an intuitive workflow designed for solo practiti
 - **OCR processing** via Tesseract with preflight optimization and confidence scoring
 - **DAT/Opticon exports** for court-ready production load files
 - **Rules engine** for TX/FL civil procedure deadlines with ICS calendar integration
+- **Privilege classification** with pattern-based pre-filtering and LLM escalation (Groq/OpenAI)
 
 ### Security & Audit
 - **Path traversal defense** with root-bound resolution and 13 regression tests
 - **Append-only audit log** with SHA-256 hash chaining and fsync durability
 - **Deterministic processing** for reproducible outputs across runs
+- **Privacy-preserving audit** with hashed chain-of-thought reasoning for privilege decisions
 
 ### Discovery & Case Management
 - **Impact discovery reports** (Sedona Conference-aligned) with proportionality metrics, dedupe analysis, and estimated review costs
+- **Methods appendix** for Cooperation Appendix compliance and defensible methodology documentation
+- **EDRM privilege log** protocol compliance for court-ready privilege logging
 - **Offline-first design** with no network/AI calls for data privacy
 - **Court-friendly outputs** (manifests, audit logs) for early case conferences
 
