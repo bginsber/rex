@@ -44,14 +44,18 @@ The CLI wraps these services in an intuitive workflow designed for solo practiti
 - **OCR processing** via Tesseract with preflight optimization and confidence scoring
 - **DAT/Opticon exports** for court-ready production load files
 - **Rules engine** for TX/FL civil procedure deadlines with ICS calendar integration
+- **Privilege classification** with pattern-based pre-filtering and LLM escalation (Groq/OpenAI)
 
 ### Security & Audit
 - **Path traversal defense** with root-bound resolution and 13 regression tests
 - **Append-only audit log** with SHA-256 hash chaining and fsync durability
 - **Deterministic processing** for reproducible outputs across runs
+- **Privacy-preserving audit** with hashed chain-of-thought reasoning for privilege decisions
 
 ### Discovery & Case Management
 - **Impact discovery reports** (Sedona Conference-aligned) with proportionality metrics, dedupe analysis, and estimated review costs
+- **Methods appendix** for Cooperation Appendix compliance and defensible methodology documentation
+- **EDRM privilege log** protocol compliance for court-ready privilege logging
 - **Offline-first design** with no network/AI calls for data privacy
 - **Court-friendly outputs** (manifests, audit logs) for early case conferences
 
@@ -151,24 +155,62 @@ rexlit rules calc \
 # Import deadlines.ics into Calendar app
 ```
 
-## Web UI (Experimental)
+## Web UI
 
-An offline-friendly React UI can wrap the CLI via the Bun/Elysia bridge documented in `docs/UI_*`.
+A production-ready React UI wraps the CLI via the Bun/Elysia bridge using the CLI-as-API pattern.
 
 ```bash
 # API (Bun + Elysia)
 cd api
 bun install
-REXLIT_HOME=${REXLIT_HOME:-$HOME/.local/share/rexlit} bun run index.ts
+REXLIT_BIN=$(which rexlit) bun run index.ts
 
 # UI (Vite + React)
 cd ../ui
-VITE_API_URL=${VITE_API_URL:-http://localhost:3000/api} bun dev
+npm install  # or bun install
+npm run dev  # or bun dev
 ```
 
-Searches, privileged decisions, and stats are forwarded to the RexLit CLI, so CLI + UI stay perfectly aligned.
+**Features:**
+- Full-text search with lexical/dense/hybrid modes
+- Document viewer with formatted text display
+- Privilege decision recording (Privileged/Not Privileged/Skip)
+- Real-time statistics and index metadata
+- Security: Hash-based document access (no path traversal)
+
+**Architecture:** API calls `rexlit` CLI as subprocess, ensuring zero divergence between CLI and API behavior. See `docs/UI_*.md` for detailed architecture documentation.
 
 ## CLI Usage
+
+### `rexlit privilege classify`
+
+Classify documents for attorney-client privilege, work product, or common interest using pattern-based pre-filtering and optional LLM escalation.
+
+```bash
+# Basic classification with pattern matching only
+rexlit privilege classify ./discovery/contract.pdf
+
+# Detailed explanation with LLM reasoning (requires API key)
+rexlit privilege explain ./discovery/email.txt --effort high
+
+# Batch processing
+find ./discovery -name "*.pdf" | xargs -I {} rexlit privilege classify {}
+```
+
+- `--effort`: Reasoning effort level (`low`, `medium`, `high`) for LLM invocation
+- `--provider`: LLM provider (`groq` or `openai`)
+- `--explain`: Show detailed chain-of-thought reasoning
+
+**Features:**
+- Pattern-based pre-filtering (≥85% confidence → skip LLM, save costs)
+- Smart escalation to LLM for uncertain cases (50-84% confidence)
+- Privacy-preserving audit: reasoning is SHA-256 hashed, not logged in plaintext
+- Multi-stage pipeline: privilege detection → responsiveness → redaction spans
+- EDRM privilege log compliance
+
+**Environment Variables:**
+- `GROQ_API_KEY` - Groq API key for Llama models
+- `OPENAI_API_KEY` - OpenAI API key for GPT models
 
 ### `rexlit ingest`
 
@@ -409,14 +451,30 @@ See also: `docs/SELF_HOSTED_EMBEDDINGS.md` and `docs/adr/0007-dense-retrieval-de
 - ✅ Bates prefix validation
 - ✅ Full audit trail integration
 
+**Privilege Classification (NEW):**
+- ✅ Pattern-based pre-filtering (PrivilegePatternsAdapter) - fast, offline, high-confidence
+- ✅ LLM escalation (GroqPrivilegeAdapter + OpenAI support) - deep reasoning for uncertain cases
+- ✅ Privacy-preserving audit logging with hashed chain-of-thought reasoning
+- ✅ Multi-stage classification: privilege detection (ACP/WP/CI), responsiveness, redaction spans
+- ✅ Smart escalation strategy: high-confidence patterns (≥0.85) skip LLM, uncertain cases escalate
+- ✅ EDRM privilege log protocol compliance
+
+**Web UI + API (NEW):**
+- ✅ Bun/Elysia API bridge with CLI-as-API pattern (subprocess wrapper)
+- ✅ React search interface with document viewer and privilege decision recording
+- ✅ Security: Path traversal defense in document endpoint
+- ✅ Zero API/CLI divergence (shares same code paths)
+
 **Testing:** 146 integration/unit tests (100% passing)
 
-### Phase 3 (M2) - Advanced Analytics 🚧
+### Phase 3 (M2) - Redaction & Advanced Analytics 🚧
 
-**Redaction (Planned):**
-- 🚧 PII detection via Presidio
-- 🚧 Interactive redaction review TUI
-- 🚧 Redaction plan versioning
+**Redaction (In Progress - 40% complete):**
+- ✅ Port interfaces defined (RedactionPlannerPort, PIIPort, StampPort)
+- ✅ Plan creation workflow with JSONL persistence
+- 🚧 PIIPort adapter implementation (Presidio integration planned)
+- 🚧 Redaction application (PDF coordinate-based black boxes)
+- 🚧 Interactive redaction review UI
 
 **Email Analytics (Planned):**
 - 🚧 Email threading and family detection
@@ -424,8 +482,8 @@ See also: `docs/SELF_HOSTED_EMBEDDINGS.md` and `docs/adr/0007-dense-retrieval-de
 - 🚧 Timeline visualization
 
 **Advanced Features (Planned):**
-- 🚧 Claude integration for privilege review
-- 🚧 Paddle OCR provider (better accuracy)
+- 🚧 Claude integration for privilege review (extended reasoning)
+- 🚧 Paddle OCR provider (better accuracy for complex layouts)
 - 🚧 Multi-language support (Spanish, French)
 
 ## Configuration
@@ -502,10 +560,32 @@ pytest tests/test_app_adapters.py::test_sequential_bates_planner -v
 
 ## Documentation
 
-- `CLI-GUIDE.md` – Detailed command reference and workflows.
-- `ARCHITECTURE.md` – System design, components, and data flows.
-- `SECURITY.md` – Security posture, path traversal defenses, threat model.
-- `.cursor/plans/` – Historical implementation plans and design notes.
+### Core Guides
+- `CLI-GUIDE.md` – Detailed command reference and workflows
+- `ARCHITECTURE.md` – System design, components, and data flows
+- `SECURITY.md` – Security posture, path traversal defenses, threat model
+- `CLAUDE.md` – Project conventions and development guide
+
+### Architecture Decision Records (ADRs)
+- `docs/adr/0001-offline-first-gate.md` – Network operations gated by explicit flag
+- `docs/adr/0002-ports-adapters-import-contracts.md` – Hexagonal architecture with import linting
+- `docs/adr/0003-determinism-policy.md` – Stable sorting for reproducible outputs
+- `docs/adr/0004-jsonl-schema-versioning.md` – Schema evolution and backward compatibility
+- `docs/adr/0005-bates-numbering-authority.md` – Sequential assignment from deterministic plans
+- `docs/adr/0006-redaction-plan-apply-model.md` – Two-phase redaction workflow
+- `docs/adr/0007-dense-retrieval-design.md` – Kanon 2 embeddings with HNSW
+- `docs/adr/0008-privilege-log-protocol.md` – EDRM compliance for privilege logging
+- `docs/adr/0009-cli-as-api-pattern.md` – Web API wraps CLI to prevent divergence
+
+### Web UI Documentation
+- `docs/UI_ARCHITECTURE.md` – Bun/Elysia API + React UI design
+- `docs/UI_SECURITY.md` – Path traversal defense and security model
+- `docs/UI_DEPLOYMENT.md` – Production deployment guide
+
+### Analysis & Planning
+- `CODEBASE_ANALYSIS.md` – Comprehensive codebase overview (13K+ lines analyzed)
+- `CODEBASE_QUICK_REFERENCE.md` – Quick navigation guide
+- `NEXT_PRIORITIES_DEEP_DIVE.md` – M2 roadmap and implementation priorities
 
 ## Philosophy
 
