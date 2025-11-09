@@ -48,7 +48,7 @@ Key design principles:
 
 1. **Stateless**: Each request spawns a fresh RexLit process with fresh data context
 2. **Synchronous**: Handlers await subprocess completion; no queuing or background jobs
-3. **Path Safety**: All file paths validated via `ensureWithinRoot()` against `REXLIT_HOME`
+3. **Index-Backed Access**: Document retrieval relies on Tantivy index as authoritative source (paths come from validated index metadata, not user input)
 4. **Error Transparency**: Subprocess stderr encoded in error responses for debugging
 
 ### Configuration
@@ -149,9 +149,10 @@ All code resides in a single `index.ts` file for simplicity—no sub-modules or 
 
 ### Path Traversal Protection
 
-- **`ensureWithinRoot()`**: Validates all file paths are within `REXLIT_HOME` before access
-- Used when serving files via `/api/documents/:hash/file`
-- Currently **not actively enforced** in file serving (path comes from index metadata)—but the function is present for future strict mode
+- **Index-backed access**: `/api/documents/:hash/file` endpoint retrieves file paths from Tantivy index metadata, not from user input
+- The index is built during `rexlit index build`, which validates all paths against `REXLIT_HOME`
+- Path traversal is prevented by design: users cannot request arbitrary paths, only hash lookups against indexed documents
+- **`ensureWithinRoot()`** helper exists but is not currently integrated into file serving; future enhancements could add additional validation layers
 
 ### Input Validation
 
