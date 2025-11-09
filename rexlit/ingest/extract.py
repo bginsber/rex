@@ -215,7 +215,7 @@ def extract_document(file_path: Path) -> ExtractedContent:
         return extract_pdf(file_path)
     elif extension == ".docx":
         return extract_docx(file_path)
-    elif extension in {".txt", ".md", ".log", ".csv"}:
+    elif extension in {".txt", ".md", ".log", ".csv", ".ocr"}:
         return extract_text_file(file_path)
     elif extension in {".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".gif"}:
         return extract_image(file_path)

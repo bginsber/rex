@@ -17,6 +17,7 @@ from rexlit.bootstrap import bootstrap_application
 from rexlit.config import get_settings, set_settings
 from rexlit.utils.methods import sanitize_argv
 from rexlit.utils.offline import OfflineModeGate
+from rexlit.index.search import search_by_hash
 
 if TYPE_CHECKING:
     from rexlit.app.ports import OCRPort
@@ -263,6 +264,7 @@ def ingest_run(
         path,
         manifest_path=manifest_path,
         recursive=recursive,
+        exclude_extensions={".pdf"},
     )
 
     typer.secho(f"Found {len(result.documents)} documents", fg=typer.colors.GREEN)
@@ -544,6 +546,50 @@ def index_search(
         typer.echo(f"\n{i}. {result.path} [{strategy}] (score: {score_repr})")
         if result.snippet:
             typer.echo(f"   {result.snippet}")
+
+
+@index_app.command("get")
+def index_get(
+    sha256: Annotated[str, typer.Argument(help="Document SHA-256 hash")],
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output metadata as JSON"),
+    ] = False,
+) -> None:
+    """Retrieve document metadata by SHA-256 hash."""
+    import json
+
+    container = bootstrap_application()
+    try:
+        result = search_by_hash(container.settings.get_index_dir(), sha256)
+    except FileNotFoundError as exc:
+        typer.secho(
+            "Error: Index not found. Run 'rexlit index build' first.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+    if result is None:
+        typer.secho(
+            f"No document found for SHA-256 {sha256}",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    payload = result.model_dump(mode="json")
+    if "file_path" not in payload:
+        payload["file_path"] = payload.get("path")
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    typer.echo(f"Path: {payload.get('file_path')}")
+    typer.echo(f"SHA-256: {result.sha256}")
+    typer.echo(f"Custodian: {result.custodian or 'unknown'}")
+    typer.echo(f"Doctype: {result.doctype or 'unknown'}")
 
 
 # Report subcommand
