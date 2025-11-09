@@ -215,56 +215,15 @@ def search_index(
     results: list[SearchResult] = []
     for score, doc_address in search_results.hits[offset : offset + limit]:
         doc = searcher.doc(doc_address)
-        to_named_doc = getattr(index.schema, "to_named_doc", None)
-        if callable(to_named_doc):
-            doc_dict = to_named_doc(doc)
-            path = doc_dict.get("path", [""])[0] if "path" in doc_dict else ""
-            sha256 = doc_dict.get("sha256", [""])[0] if "sha256" in doc_dict else ""
-            custodian = doc_dict.get("custodian", [""])[0] if "custodian" in doc_dict else None
-            doctype = doc_dict.get("doctype", [""])[0] if "doctype" in doc_dict else None
-            metadata = doc_dict.get("metadata", [""])[0] if "metadata" in doc_dict else None
-        else:
-            path_values = _extract_field(doc, path_field, "path")
-            sha_values = _extract_field(doc, sha_field, "sha256")
-            custodian_values = _extract_field(doc, custodian_field, "custodian")
-            doctype_values = _extract_field(doc, doctype_field, "doctype")
-            metadata_values = _extract_field(doc, metadata_field, "metadata")
+        # Use to_dict() method which works reliably across Tantivy versions
+        doc_dict = doc.to_dict()
 
-            if hasattr(doc, "__iter__"):
-                name_lookup = getattr(schema, "get_field_name", None)
-                try:
-                    iterable = list(doc)
-                except TypeError:  # pragma: no cover - compatibility
-                    iterable = []
-                for entry in iterable:
-                    try:
-                        field_token, value = entry
-                    except (TypeError, ValueError):
-                        continue
-                    field_name = None
-                    if callable(name_lookup):
-                        try:
-                            field_name = name_lookup(field_token)
-                        except Exception:  # pragma: no cover - defensive
-                            field_name = None
-                    if field_name is None and isinstance(field_token, str):
-                        field_name = field_token
-                    if field_name == "path" and not path_values:
-                        path_values.append(_coerce_value(value))
-                    elif field_name == "sha256" and not sha_values:
-                        sha_values.append(_coerce_value(value))
-                    elif field_name == "custodian" and not custodian_values:
-                        custodian_values.append(_coerce_value(value))
-                    elif field_name == "doctype" and not doctype_values:
-                        doctype_values.append(_coerce_value(value))
-                    elif field_name == "metadata" and not metadata_values:
-                        metadata_values.append(_coerce_value(value))
-
-            path = path_values[0] if path_values else ""
-            sha256 = sha_values[0] if sha_values else ""
-            custodian = custodian_values[0] if custodian_values else None
-            doctype = doctype_values[0] if doctype_values else None
-            metadata = metadata_values[0] if metadata_values else None
+        # Extract fields from dict (values are lists in Tantivy)
+        path = doc_dict.get("path", [""])[0] if "path" in doc_dict else ""
+        sha256 = doc_dict.get("sha256", [""])[0] if "sha256" in doc_dict else ""
+        custodian = doc_dict.get("custodian", [""])[0] if "custodian" in doc_dict else None
+        doctype = doc_dict.get("doctype", [""])[0] if "doctype" in doc_dict else None
+        metadata = doc_dict.get("metadata", [""])[0] if "metadata" in doc_dict else None
 
         # Extract snippet from document
         snippet = None
