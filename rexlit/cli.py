@@ -1555,6 +1555,10 @@ def privilege_explain(
         Path | None,
         typer.Option("--model-path", help="Override model path"),
     ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output as JSON"),
+    ] = False,
 ) -> None:
     """Classify document with detailed explanation (verbose mode).
 
@@ -1636,6 +1640,10 @@ def privilege_explain(
     except Exception as e:
         typer.secho(f"❌ Classification failed: {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
+
+    if json_output:
+        typer.echo(json.dumps(decision.model_dump(mode="json"), indent=2))
+        return
 
     # Display detailed results
     typer.echo()

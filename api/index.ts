@@ -9,27 +9,67 @@ const REXLIT_HOME = resolve(
   Bun.env.REXLIT_HOME ?? join(homedir(), '.local', 'share', 'rexlit')
 )
 
-async function runRexlit(args: string[]) {
+interface RunOptions {
+  timeoutMs?: number
+}
+
+async function runRexlit(args: string[], options: RunOptions = {}) {
   const proc = Bun.spawn([REXLIT_BIN, ...args], {
     stdout: 'pipe',
     stderr: 'pipe'
   })
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited
-  ])
+  let timedOut = false
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined
 
-  if (exitCode !== 0) {
-    throw new Error(`rexlit ${args.join(' ')} failed: ${stderr.trim()}`)
+  if (options.timeoutMs && options.timeoutMs > 0) {
+    timeoutHandle = setTimeout(() => {
+      timedOut = true
+      proc.kill()
+    }, options.timeoutMs)
   }
 
-  if (args.includes('--json')) {
-    return JSON.parse(stdout)
-  }
+  try {
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited
+    ])
 
-  return stdout
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle)
+    }
+
+    if (timedOut) {
+      const seconds = Math.round((options.timeoutMs ?? 0) / 1000)
+      throw new Error(
+        `rexlit ${args.join(' ')} timed out after ${seconds || 'unknown'}s`
+      )
+    }
+
+    if (exitCode !== 0) {
+      throw new Error(`rexlit ${args.join(' ')} failed: ${stderr.trim()}`)
+    }
+
+    if (args.includes('--json')) {
+      return JSON.parse(stdout)
+    }
+
+    return stdout
+  } catch (error) {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle)
+    }
+
+    if (timedOut) {
+      const seconds = Math.round((options.timeoutMs ?? 0) / 1000)
+      throw new Error(
+        `rexlit ${args.join(' ')} timed out after ${seconds || 'unknown'}s`
+      )
+    }
+
+    throw error
+  }
 }
 
 const ROOT_PREFIX = `${REXLIT_HOME}${sep}`
@@ -40,6 +80,101 @@ function ensureWithinRoot(filePath: string) {
     return absolute
   }
   throw new Error('Path traversal detected')
+}
+
+
+function jsonError(message: string, status = 500) {
+  return new Response(
+    JSON.stringify({ error: message }),
+    {
+      status,
+      headers: { 'Content-Type': 'application/json' }
+    }
+  )
+}
+
+async function resolveDocumentPath(body: any) {
+  if (body?.hash) {
+    const metadata = await runRexlit(['index', 'get', body.hash, '--json'])
+    const path = metadata?.path
+    if (!path) {
+      throw new Error('Document not found')
+    }
+    return path
+  }
+
+  const inputPath = body?.path
+  if (!inputPath) {
+    throw new Error('Either hash or path is required')
+  }
+
+  const candidate = isAbsolute(inputPath)
+    ? ensureWithinRoot(inputPath)
+    : ensureWithinRoot(resolve(REXLIT_HOME, inputPath))
+
+  return candidate
+}
+
+type StageStatus = {
+  stage: 'privilege' | 'responsiveness' | 'redaction'
+  status: 'completed' | 'skipped' | 'pending'
+  mode: 'llm' | 'pattern' | 'disabled'
+  reasoning_effort?: string
+  needs_review?: boolean
+  notes?: string
+  redaction_spans?: number
+}
+
+function buildStageStatus(decision: any): StageStatus[] {
+  const reasoningEffort = typeof decision?.reasoning_effort === 'string'
+    ? decision.reasoning_effort
+    : 'medium'
+
+  const stages: StageStatus[] = []
+
+  stages.push({
+    stage: 'privilege',
+    status: 'completed',
+    mode: reasoningEffort === 'low' ? 'pattern' : 'llm',
+    reasoning_effort: reasoningEffort,
+    needs_review: Boolean(decision?.needs_review),
+    notes:
+      reasoningEffort === 'low'
+        ? 'Pattern heuristic satisfied. LLM skipped.'
+        : `LLM review completed with ${reasoningEffort} reasoning effort.`
+  })
+
+  const responsive = Array.isArray(decision?.labels)
+    ? decision.labels.some((label: string) =>
+        typeof label === 'string' && label.toUpperCase().includes('RESPONSIVE')
+      )
+    : false
+
+  stages.push({
+    stage: 'responsiveness',
+    status: responsive ? 'completed' : 'skipped',
+    mode: responsive ? 'llm' : 'disabled',
+    notes: responsive
+      ? 'Responsiveness stage executed.'
+      : 'Responsiveness stage not enabled for this review.'
+  })
+
+  const redactionCount = Array.isArray(decision?.redaction_spans)
+    ? decision.redaction_spans.length
+    : 0
+
+  stages.push({
+    stage: 'redaction',
+    status: redactionCount > 0 ? 'completed' : 'skipped',
+    mode: redactionCount > 0 ? 'llm' : 'disabled',
+    redaction_spans: redactionCount,
+    notes:
+      redactionCount > 0
+        ? `Detected ${redactionCount} redaction span${redactionCount === 1 ? '' : 's'}.`
+        : 'Redaction detection not enabled for this review.'
+  })
+
+  return stages
 }
 
 
@@ -112,6 +247,110 @@ const app = new Elysia()
       return new Response(JSON.stringify({ error: String(error) }), {
         status: 500
       })
+    }
+  })
+  .post('/api/privilege/classify', async ({ body }: { body: any }) => {
+    try {
+      const filePath = await resolveDocumentPath(body ?? {})
+      const args = ['privilege', 'classify', filePath, '--json']
+
+      let threshold: number | undefined
+      if (body?.threshold !== undefined) {
+        const parsed = Number(body.threshold)
+        if (!Number.isFinite(parsed)) {
+          return jsonError('threshold must be a number between 0.0 and 1.0', 400)
+        }
+        if (parsed < 0 || parsed > 1) {
+          return jsonError('threshold must be a number between 0.0 and 1.0', 400)
+        }
+        threshold = parsed
+        args.push('--threshold', parsed.toString())
+      }
+
+      const effortRaw = typeof body?.reasoning_effort === 'string'
+        ? body.reasoning_effort.toLowerCase()
+        : undefined
+      if (effortRaw) {
+        const allowed = new Set(['low', 'medium', 'high', 'dynamic'])
+        if (!allowed.has(effortRaw)) {
+          return jsonError(
+            'reasoning_effort must be one of low, medium, high, or dynamic',
+            400
+          )
+        }
+        args.push('--reasoning-effort', effortRaw)
+      }
+
+      const decision = await runRexlit(args, { timeoutMs: 2 * 60 * 1000 })
+      const patternMatches = Array.isArray(decision?.pattern_matches)
+        ? decision.pattern_matches
+        : []
+
+      return {
+        decision,
+        stages: buildStageStatus(decision),
+        pattern_matches: patternMatches,
+        source: {
+          hash: typeof body?.hash === 'string' ? body.hash : undefined,
+          path: filePath,
+          threshold,
+          reasoning_effort: effortRaw
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const normalized = message.toLowerCase()
+      if (normalized.includes('either hash or path is required')) {
+        return jsonError(message, 400)
+      }
+      if (normalized.includes('path traversal detected')) {
+        return jsonError(message, 400)
+      }
+      if (normalized.includes('document not found')) {
+        return jsonError(message, 404)
+      }
+      if (normalized.includes('timed out')) {
+        return jsonError(message, 504)
+      }
+      return jsonError(message, 500)
+    }
+  })
+  .post('/api/privilege/explain', async ({ body }: { body: any }) => {
+    try {
+      const filePath = await resolveDocumentPath(body ?? {})
+      const decision = await runRexlit(
+        ['privilege', 'explain', filePath, '--json'],
+        { timeoutMs: 3 * 60 * 1000 }
+      )
+      const patternMatches = Array.isArray(decision?.pattern_matches)
+        ? decision.pattern_matches
+        : []
+
+      return {
+        decision,
+        stages: buildStageStatus(decision),
+        pattern_matches: patternMatches,
+        source: {
+          hash: typeof body?.hash === 'string' ? body.hash : undefined,
+          path: filePath
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const normalized = message.toLowerCase()
+      if (normalized.includes('either hash or path is required')) {
+        return jsonError(message, 400)
+      }
+      if (normalized.includes('path traversal detected')) {
+        return jsonError(message, 400)
+      }
+      if (normalized.includes('document not found')) {
+        return jsonError(message, 404)
+      }
+      if (normalized.includes('timed out')) {
+        return jsonError(message, 504)
+      }
+      return jsonError(message, 500)
     }
   })
   .post('/api/reviews/:hash', async ({ params, body, headers }) => {

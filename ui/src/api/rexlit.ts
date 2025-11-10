@@ -17,12 +17,93 @@ export interface AuditDecisionPayload {
   notes?: string
 }
 
+export interface RedactionSpan {
+  category: string
+  start: number
+  end: number
+  justification: string
+}
+
+export interface PolicyDecision {
+  labels: string[]
+  confidence: number
+  needs_review: boolean
+  reasoning_hash: string
+  reasoning_summary: string
+  full_reasoning_available: boolean
+  redaction_spans: RedactionSpan[]
+  model_version: string
+  policy_version: string
+  reasoning_effort: 'low' | 'medium' | 'high' | 'dynamic'
+  decision_ts: string
+  error_message: string
+}
+
+export interface PrivilegeStageStatus {
+  stage: 'privilege' | 'responsiveness' | 'redaction'
+  status: 'completed' | 'skipped' | 'pending'
+  mode: 'llm' | 'pattern' | 'disabled'
+  reasoning_effort?: string
+  needs_review?: boolean
+  notes?: string
+  redaction_spans?: number
+}
+
+export interface PatternMatch {
+  rule?: string
+  confidence?: number
+  snippet?: string | null
+  stage?: string | null
+  [key: string]: unknown
+}
+
+export interface PrivilegeReviewResponse {
+  decision: PolicyDecision
+  stages: PrivilegeStageStatus[]
+  pattern_matches: PatternMatch[]
+  source?: {
+    hash?: string
+    path?: string
+    threshold?: number
+    reasoning_effort?: string
+  }
+}
+
+export interface PrivilegeRequestPayload {
+  hash?: string
+  path?: string
+  threshold?: number
+  reasoning_effort?: 'low' | 'medium' | 'high' | 'dynamic'
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    const detail = await response.text()
-    throw new Error(detail || `Request failed with ${response.status}`)
+    let message = `Request failed with ${response.status}`
+    try {
+      const data = await response.clone().json()
+      if (data && typeof (data as { error?: unknown }).error === 'string') {
+        message = (data as { error: string }).error
+      } else if (data) {
+        message = JSON.stringify(data)
+      }
+    } catch {
+      try {
+        const text = await response.text()
+        if (text) {
+          message = text
+        }
+      } catch {
+        // ignore secondary parsing errors
+      }
+    }
+    throw new Error(message)
   }
-  return response.json() as Promise<T>
+  const contentType = response.headers.get('Content-Type') ?? ''
+  if (contentType.includes('application/json')) {
+    return response.json() as Promise<T>
+  }
+  const text = await response.text()
+  return (text ? JSON.parse(text) : null) as T
 }
 
 export const rexlitApi = {
@@ -53,5 +134,23 @@ export const rexlitApi = {
   async stats(): Promise<Record<string, unknown>> {
     const response = await fetch(`${API_ROOT}/stats`)
     return handleResponse<Record<string, unknown>>(response)
+  },
+
+  async privilegeClassify(payload: PrivilegeRequestPayload): Promise<PrivilegeReviewResponse> {
+    const response = await fetch(`${API_ROOT}/privilege/classify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    return handleResponse<PrivilegeReviewResponse>(response)
+  },
+
+  async privilegeExplain(payload: PrivilegeRequestPayload): Promise<PrivilegeReviewResponse> {
+    const response = await fetch(`${API_ROOT}/privilege/explain`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    return handleResponse<PrivilegeReviewResponse>(response)
   }
 }
