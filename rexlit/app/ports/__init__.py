@@ -27,6 +27,8 @@ __all__ = [
     "VectorHit",
     "VectorStorePort",
     "PrivilegeReasoningPort",
+    "PrivilegePort",
+    "PrivilegeFinding",
     "PolicyDecision",
     "RedactionSpan",
     "PrivilegeLogEntry",
@@ -50,6 +52,7 @@ from rexlit.app.ports.privilege_log import (
     PrivilegeLogMetadata,
     PrivilegeLogPort,
 )
+from rexlit.app.ports.privilege import PrivilegeFinding, PrivilegePort
 from rexlit.app.ports.privilege_reasoning import (
     PolicyDecision,
     PrivilegeReasoningPort,

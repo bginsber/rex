@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from rexlit.app.ports.privilege_reasoning import PolicyDecision, RedactionSpan
 from rexlit.utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
+from rexlit.utils.json_parsing import parse_model_json_response
 
 if TYPE_CHECKING:
     from transformers import Pipeline  # type: ignore[import-untyped]

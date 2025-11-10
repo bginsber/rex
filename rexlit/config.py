@@ -31,7 +31,7 @@ def get_xdg_config_home() -> Path:
     return Path.home() / ".config"
 
 
-APIKeyName = Literal["anthropic", "deepseek"]
+APIKeyName = Literal["anthropic", "deepseek", "groq"]
 
 
 class Settings(BaseSettings):
@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     deepseek_api_key: SecretStr | None = Field(
         default=None,
         description="DeepSeek API key for online OCR",
+    )
+
+    groq_api_key: SecretStr | None = Field(
+        default=None,
+        description="Groq Cloud API key for OSS-20b-safeguard model",
     )
 
     # Audit settings
@@ -181,7 +186,7 @@ class Settings(BaseSettings):
     def model_post_init(self, __context: Any) -> None:
         """Persist inline API keys into the encrypted secrets store."""
         super().model_post_init(__context)
-        for provider in ("anthropic", "deepseek"):
+        for provider in ("anthropic", "deepseek", "groq"):
             field_name = f"{provider}_api_key"
             secret: SecretStr | None = getattr(self, field_name)
             if secret is None:
@@ -313,6 +318,10 @@ class Settings(BaseSettings):
         """Convenience accessor for the DeepSeek API key."""
         return self.get_api_key("deepseek")
 
+    def get_groq_api_key(self) -> str | None:
+        """Convenience accessor for the Groq Cloud API key."""
+        return self.get_api_key("groq")
+
     def get_privilege_model_path(self) -> Path | None:
         """Get path to privilege model, checking default location if not configured."""
         if self.privilege_model_path is not None:
@@ -384,7 +393,6 @@ class Settings(BaseSettings):
 
         # Default to config_dir/cot-vault.key
         return self.get_config_dir() / "cot-vault.key"
-
 
 # Global settings instance
 _settings: Settings | None = None
