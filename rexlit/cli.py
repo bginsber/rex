@@ -1486,6 +1486,7 @@ def privilege_classify(
             policy_path=policy_path,
             log_full_cot=container.settings.privilege_log_full_cot,
             cot_vault_path=container.settings.get_privilege_cot_vault_path(),
+            vault_key_path=container.settings.get_privilege_cot_vault_key_path(),
             timeout_seconds=container.settings.privilege_timeout_seconds,
             circuit_breaker_threshold=container.settings.privilege_circuit_breaker_threshold,
         )
@@ -1596,6 +1597,7 @@ def privilege_explain(
             policy_path=policy_path,
             log_full_cot=container.settings.privilege_log_full_cot,
             cot_vault_path=container.settings.get_privilege_cot_vault_path(),
+            vault_key_path=container.settings.get_privilege_cot_vault_key_path(),
             timeout_seconds=container.settings.privilege_timeout_seconds,
             circuit_breaker_threshold=container.settings.privilege_circuit_breaker_threshold,
         )

@@ -72,6 +72,7 @@ class PrivilegeSafeguardAdapter:
         log_full_cot: bool = False,
         cot_salt: str | None = None,
         cot_vault_path: Path | None = None,
+        vault_key_path: Path | None = None,
         timeout_seconds: float = 30.0,
         circuit_breaker_threshold: int = 5,
         max_new_tokens: int = 2000,
@@ -84,6 +85,7 @@ class PrivilegeSafeguardAdapter:
             log_full_cot: If True, store full CoT in encrypted vault (default: False)
             cot_salt: Salt for CoT hashing (generated if not provided)
             cot_vault_path: Directory for encrypted CoT storage (required if log_full_cot=True)
+            vault_key_path: Path to Fernet encryption key (required if log_full_cot=True)
             timeout_seconds: Inference timeout (default: 30s)
             circuit_breaker_threshold: Failures before opening circuit (default: 5)
             max_new_tokens: Max tokens for model generation (default: 2000)
@@ -103,8 +105,18 @@ class PrivilegeSafeguardAdapter:
         if log_full_cot and cot_vault_path is None:
             raise ValueError("cot_vault_path required when log_full_cot=True")
 
+        if log_full_cot and vault_key_path is None:
+            raise ValueError("vault_key_path required when log_full_cot=True")
+
         if log_full_cot and cot_vault_path is not None:
             cot_vault_path.mkdir(parents=True, exist_ok=True)
+
+        # Load encryption key for vault (if enabled)
+        self._vault_key: bytes | None = None
+        if log_full_cot and vault_key_path is not None:
+            from rexlit.utils.crypto import load_or_create_fernet_key
+
+            self._vault_key = load_or_create_fernet_key(vault_key_path)
 
         # Load policy
         if not self.policy_path.exists():
@@ -313,30 +325,85 @@ Provide your classification in JSON format as specified in the policy above."""
         2. JSON in markdown code block: ```json\n{...}\n```
         3. JSON with explanation prefix: "Here is my analysis:\n{...}"
         """
+        text = generated_text.strip()
+
+        # Try direct JSON parse first
         try:
-            return parse_model_json_response(generated_text)
-        except ValueError as e:
-            raise json.JSONDecodeError(
-                f"Could not parse JSON from model output: {str(e)}",
-                generated_text,
-                0,
-            ) from e
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # Extract JSON from markdown code block
+        if "```json" in text:
+            start = text.find("```json") + 7
+            end = text.find("```", start)
+            if end > start:
+                try:
+                    return json.loads(text[start:end].strip())
+                except json.JSONDecodeError:
+                    pass
+
+        # Extract JSON from last {...} block
+        if "{" in text and "}" in text:
+            start = text.rfind("{")
+            end = text.rfind("}") + 1
+            if end > start:
+                try:
+                    return json.loads(text[start:end])
+                except json.JSONDecodeError:
+                    pass
+
+        # No valid JSON found
+        raise json.JSONDecodeError(
+            f"Could not parse JSON from model output: {text[:200]}...",
+            text,
+            0,
+        )
 
     def _store_in_vault(self, reasoning: str, cot_hash: str) -> None:
         """Store full CoT in encrypted vault with hash-based filename."""
-        if self.cot_vault_path is None:
+        if self.cot_vault_path is None or self._vault_key is None:
             return
 
         # Use hash as filename for deduplication
-        vault_file = self.cot_vault_path / f"{cot_hash}.txt"
+        vault_file = self.cot_vault_path / f"{cot_hash}.enc"
 
         # Skip if already stored (deduplication)
         if vault_file.exists():
             return
 
-        # TODO: Encrypt with Fernet key (reuse existing crypto utils)
-        # For now, store plaintext (secure directory assumed)
-        vault_file.write_text(reasoning, encoding="utf-8")
+        # Encrypt with Fernet before writing to disk
+        from rexlit.utils.crypto import encrypt_blob
+
+        reasoning_bytes = reasoning.encode("utf-8")
+        encrypted_data = encrypt_blob(reasoning_bytes, key=self._vault_key)
+
+        # Write encrypted data with secure permissions
+        vault_file.write_bytes(encrypted_data)
+
+    def retrieve_from_vault(self, cot_hash: str) -> str | None:
+        """Retrieve and decrypt full CoT from vault by hash.
+
+        Args:
+            cot_hash: SHA-256 hash of the reasoning
+
+        Returns:
+            Decrypted reasoning text, or None if not found or vault disabled
+        """
+        if self.cot_vault_path is None or self._vault_key is None:
+            return None
+
+        vault_file = self.cot_vault_path / f"{cot_hash}.enc"
+
+        if not vault_file.exists():
+            return None
+
+        # Decrypt vault entry
+        from rexlit.utils.crypto import decrypt_blob
+
+        encrypted_data = vault_file.read_bytes()
+        reasoning_bytes = decrypt_blob(encrypted_data, key=self._vault_key)
+        return reasoning_bytes.decode("utf-8")
 
     def _create_error_decision(
         self,

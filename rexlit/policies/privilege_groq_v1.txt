@@ -1,0 +1,99 @@
+# ATTORNEY-CLIENT PRIVILEGE CLASSIFICATION
+
+## INSTRUCTIONS
+
+Classify whether the email/document qualifies for attorney-client privilege (ACP), work product (WP), or common interest (CI). Return JSON with this structure:
+```json
+{
+  "violation": 0 or 1,
+  "labels": ["PRIVILEGED:ACP"] or [],
+  "confidence": 0.0 to 1.0,
+  "rationale": "Policy-based explanation"
+}
+```
+
+**PRIVACY REQUIREMENT:** Do NOT quote document text in your rationale. Cite ONLY policy sections and general patterns to prevent inadvertent privilege disclosure in audit logs.
+
+## DEFINITIONS
+
+**Attorney-Client Privilege (ACP):** Confidential communications between attorney and client for legal advice. Requires (1) attorney-client relationship, (2) confidential communication, (3) legal advice purpose.
+
+**Work Product (WP):** Materials prepared by/for counsel in anticipation of litigation. Includes attorney notes, legal research, litigation strategy, expert witness preparation.
+
+**Common Interest (CI):** ACP/WP shared among parties with common legal interest under formal agreement. Requires documented common interest arrangement.
+
+## CRITERIA
+
+### PRIVILEGED (violation=1)
+
+**Strong Indicators:**
+- Email from/to attorney domain (@lawfirm.com, in-house counsel with "legal" or "counsel" in email)
+- Common law firm domains: @skadden.com, @wsgr.com, @cooley.com, @weil.com, @kirkland.com
+- Explicit markers: "attorney-client privilege", "privileged and confidential", "work product", "attorney work product"
+- Legal advice language: "my legal opinion", "from legal perspective", "counsel advises", "legal analysis"
+- Litigation preparation: draft pleadings, settlement strategy, deposition prep, expert witness strategy
+- Attorney signature with "Esq.", "Attorney at Law", or bar license number
+
+**Moderate Indicators:**
+- Subject line contains: "Legal", "Privilege", "Confidential Legal"
+- Email to/from known attorney names (if provided in metadata)
+- Discussion of legal risk, compliance analysis, regulatory interpretation
+
+### NOT PRIVILEGED (violation=0)
+
+**Clear Non-Privilege:**
+- Routine business communications without legal component
+- Public information, marketing materials, press releases
+- Attorney acting as business advisor (non-legal capacity)
+- Broadly distributed emails (no confidentiality expectation)
+- Attorney merely CC'd without legal question or request
+- Operational decisions, product development, sales discussions
+
+**Borderline Cases:**
+- CC'ing legal "FYI" without legal question → **NOT privileged**
+- General compliance discussions without specific legal advice → **NOT privileged**
+- Attorney on email chain but discussing business strategy → **NOT privileged**
+
+## EXAMPLES
+
+**Example 1 (Privileged - ACP):**
+From: jennifer.smith@cooley.com
+To: client@company.com
+Subject: Legal opinion on merger agreement
+Content: [Attorney provides legal analysis of proposed merger]
+**Answer:** `{"violation": 1, "labels": ["PRIVILEGED:ACP"], "confidence": 0.95, "rationale": "Attorney email domain + legal advice language per ACP definition"}`
+
+**Example 2 (NOT Privileged - Business Email):**
+From: sales@company.com
+To: team@company.com
+Cc: legal@company.com
+Subject: Q4 product launch plan
+Content: [Product launch schedule and marketing strategy]
+**Answer:** `{"violation": 0, "labels": [], "confidence": 0.85, "rationale": "Business communication; attorney CC'd without legal question per §3 non-privilege criteria"}`
+
+**Example 3 (Privileged - Work Product):**
+From: litigation.counsel@lawfirm.com
+To: client@company.com
+Subject: Draft complaint for review
+Content: [Draft litigation pleading with attorney's strategic notes]
+**Answer:** `{"violation": 1, "labels": ["PRIVILEGED:WP"], "confidence": 0.92, "rationale": "Litigation preparation materials per WP definition"}`
+
+**Example 4 (NOT Privileged - Uncertain):**
+From: legal@company.com
+To: board@company.com
+Subject: Quarterly business update
+Content: [Business performance metrics and strategy discussion]
+**Answer:** `{"violation": 0, "labels": [], "confidence": 0.60, "rationale": "Business advice context, not legal advice per §3; low confidence warrants human review"}`
+
+## CONFIDENCE SCORING
+
+- **0.90-1.00:** Explicit privilege markers + attorney domain + legal advice language
+- **0.75-0.89:** Strong indicators present (attorney domain + legal request OR explicit markers)
+- **0.50-0.74:** Moderate indicators (legal terminology + attorney involvement OR ambiguous context)
+- **0.25-0.49:** Weak indicators (legal terms mentioned but no attorney involvement)
+- **0.00-0.24:** No privilege indicators detected
+
+**Threshold Guidance:** Documents with confidence <0.75 should be flagged for human review to prevent inadvertent disclosure.
+
+Content to classify: {{USER_INPUT}}
+Answer (JSON only):
