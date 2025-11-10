@@ -479,11 +479,20 @@ def _create_privilege_adapter(settings: Settings) -> PrivilegePort:
         groq_api_key = settings.get_groq_api_key()
         if groq_api_key:
             try:
+                # Prefer optimized Groq policy (400-600 words) for best performance
+                optimized_groq_policy = Path("rexlit/policies/privilege_groq_v1.txt")
+                if optimized_groq_policy.exists():
+                    logger.debug("Using optimized Groq policy: %s", optimized_groq_policy)
+                    return GroqPrivilegeAdapter(api_key=groq_api_key, policy_path=optimized_groq_policy)
+
+                # Fall back to full policy from settings
                 try:
                     policy_path = settings.get_privilege_policy_path(stage=1)
+                    logger.debug("Using full policy from settings: %s", policy_path)
                     return GroqPrivilegeAdapter(api_key=groq_api_key, policy_path=policy_path)
                 except FileNotFoundError:
                     # Policy not found, use adapter without explicit policy (will use default)
+                    logger.debug("No policy found, using Groq adapter with empty policy")
                     return GroqPrivilegeAdapter(api_key=groq_api_key)
             except Exception as e:
                 logger.warning("Failed to initialize Groq adapter, falling back to pattern-based: %s", e)

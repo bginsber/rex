@@ -155,6 +155,41 @@ rexlit rules calc \
 # Import deadlines.ics into Calendar app
 ```
 
+### Privilege Detection (Groq-Powered)
+
+```bash
+# Setup: Store Groq API key securely (encrypted)
+python scripts/setup_groq_key.py  # Interactive prompt
+export REXLIT_ONLINE=1
+
+# Classify a single document
+rexlit privilege classify email.eml
+
+# Expected output:
+#   ✓ PRIVILEGED: PRIVILEGED:ACP
+#   Confidence: 92.00%
+#   Rationale: Attorney domain + legal advice per ACP definition
+
+# Batch classify directory
+find ./emails -name "*.eml" | while read email; do
+  rexlit privilege classify "$email" >> privilege_results.jsonl
+done
+
+# Validate policy effectiveness (25 test cases)
+python scripts/validate_privilege_policy.py
+
+# Benchmark performance (~1-2s per document)
+python scripts/benchmark_privilege.py
+```
+
+**Features:**
+- **Fast:** Groq-hosted gpt-oss-safeguard-20b (~1000 tps, 1-2s per doc)
+- **Accurate:** Optimized 400-600 word policy (target >90% accuracy)
+- **Privacy-preserving:** CoT reasoning hashed (SHA-256), not logged
+- **Offline fallback:** Pattern-based detection when Groq unavailable
+
+See [GROQ_SETUP_GUIDE.md](GROQ_SETUP_GUIDE.md) for detailed setup instructions.
+
 ## Web UI (Experimental)
 
 An offline-friendly React UI can wrap the CLI via the Bun/Elysia bridge documented in `docs/UI_*`.
