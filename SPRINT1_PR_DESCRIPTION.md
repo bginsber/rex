@@ -4,9 +4,16 @@
 
 This PR implements a complete end-to-end redaction pipeline for RexLit, enabling automated PII detection and black-box redaction of PDF documents with cryptographic integrity guarantees. The implementation follows the **plan/apply pattern** (ADR 0006) with hash-verified, deterministic processing suitable for legal e-discovery workflows.
 
-**Status:** ✅ Ready for merge
-**Tests:** 20+ passing (5 test files)
+**Status:** ✅ Ready for merge — see “Implementation Snapshot” below for direct code references.
+**Tests:** 20+ passing (5 redaction-focused test files)
 **Architecture:** Maintained hexagonal design with clean port/adapter separation
+
+### Implementation Snapshot (source-of-truth references)
+
+- `rexlit/bootstrap.py` wires `PIIRegexAdapter` into both `M1Pipeline` and `RedactionService`, guaranteeing that the CLI container exposes the detector in all entry points (lines 361-401).
+- `rexlit/app/redaction_service.py` generates deterministic, PII-backed plans by invoking `self.pii.analyze_document` and converting the resulting `PIIFinding` objects into redaction actions (lines 60-156, 222-246).
+- `rexlit/app/adapters/pdf_stamper.py` implements `apply_redactions()` with the dual character-offset and text-search strategies, invoking PyMuPDF to apply permanent black-box annotations (lines 114-194, 283-356).
+- Tests covering the full pipeline live in `tests/test_redaction_service.py`, `tests/test_pdf_stamper_redactions.py`, `tests/test_pii_regex_adapter.py`, `tests/test_redaction_e2e.py`, and `tests/test_cli_redaction_smoke.py` (23 total test cases across these files).
 
 ---
 
