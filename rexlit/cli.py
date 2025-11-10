@@ -1269,6 +1269,90 @@ audit_app = typer.Typer(help="Audit ledger management")
 app.add_typer(audit_app, name="audit")
 
 
+def _parse_comma_list(raw: str) -> list[str]:
+    parts = [item.strip() for item in raw.split(",")]
+    return [item for item in parts if item]
+
+
+redaction_app = typer.Typer(help="PII redaction planning and application")
+app.add_typer(redaction_app, name="redaction")
+
+
+@redaction_app.command("plan")
+def redaction_plan(
+    input_path: Annotated[
+        Path,
+        typer.Argument(help="PDF to scan for PII", exists=True, resolve_path=True),
+    ],
+    output_plan: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Destination for encrypted plan (defaults to <file>.redaction-plan.enc)"),
+    ] = None,
+    pii_types: Annotated[
+        str,
+        typer.Option(
+            "--pii-types",
+            help="Comma-separated list of entity types (e.g. SSN,EMAIL,PHONE)",
+        ),
+    ] = "SSN,EMAIL,PHONE,CREDIT_CARD",
+) -> None:
+    """Generate a redaction plan for the provided document."""
+
+    container = bootstrap_application()
+    service = container.redaction_service
+
+    resolved_input = input_path.expanduser()
+    resolved_output = (
+        output_plan.expanduser()
+        if output_plan is not None
+        else Path.cwd() / f"{resolved_input.stem}.redaction-plan.enc"
+    )
+    entities = [entry.upper() for entry in _parse_comma_list(pii_types)]
+
+    plan = service.plan(
+        resolved_input,
+        resolved_output,
+        pii_types=entities or None,
+    )
+
+    typer.secho(f"✅ Redaction plan created: {resolved_output}", fg=typer.colors.GREEN)
+    typer.echo(f"   Plan ID: {plan.plan_id}")
+    typer.echo(f"   Findings: {len(plan.redactions)}")
+
+
+@redaction_app.command("apply")
+def redaction_apply(
+    plan_path: Annotated[
+        Path,
+        typer.Argument(help="Encrypted redaction plan", exists=True, resolve_path=True),
+    ],
+    output_dir: Annotated[
+        Path,
+        typer.Argument(help="Directory to write redacted PDFs"),
+    ],
+    preview: Annotated[
+        bool,
+        typer.Option("--preview", help="Only report how many redactions would apply"),
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Apply even if the source hash differs from the plan"),
+    ] = False,
+) -> None:
+    """Apply a previously generated redaction plan."""
+
+    container = bootstrap_application()
+    service = container.redaction_service
+
+    resolved_output = output_dir.expanduser()
+    count = service.apply(plan_path, resolved_output, preview=preview, force=force)
+
+    if preview:
+        typer.secho(f"🔍 Preview: {count} redactions would be applied", fg=typer.colors.CYAN)
+    else:
+        typer.secho(f"✅ Applied {count} redactions to {resolved_output}", fg=typer.colors.GREEN)
+
+
 @audit_app.command("show")
 def audit_show(
     json_output: Annotated[
