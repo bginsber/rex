@@ -385,7 +385,7 @@ Always use `deterministic_sort_paths()` or `deterministic_sort()` from `rexlit.u
   - `0008-privilege-log-protocol.md` - EDRM privilege logging
   - `0009-cli-as-api-pattern.md` - Web API architecture
 - `docs/UI_*.md` - Web UI architecture and security documentation
-- `CODEBASE_ANALYSIS.md` - Comprehensive 13K+ line code overview
-- `CODEBASE_QUICK_REFERENCE.md` - Quick navigation guide
-- `NEXT_PRIORITIES_DEEP_DIVE.md` - Phase 3 (M2) roadmap and priorities
-- `EXECUTIVE-SUMMARY.md` - High-level project status
+- `.claude/code-reviews/CODEBASE_ANALYSIS.md` - Comprehensive 13K+ line code overview
+- `.claude/code-reviews/CODEBASE_QUICK_REFERENCE.md` - Quick navigation guide
+- `.claude/sprints/NEXT_PRIORITIES_DEEP_DIVE.md` - Phase 3 (M2) roadmap and priorities
+- `.claude/summaries/EXECUTIVE-SUMMARY.md` - High-level project status
