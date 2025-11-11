@@ -1,0 +1,3 @@
+[submodule "rexlit/docs/sample-docs"]
+	path = rexlit/docs/sample-docs
+	url = https://github.com/bginsber/rex-test-data.git
