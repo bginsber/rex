@@ -1514,7 +1514,12 @@ def privilege_classify(
         raise typer.Exit(code=1)
 
     # Classify
-    typer.secho(f"🔍 Classifying {file_path.name}...", fg=typer.colors.CYAN)
+    if not json_output:
+        typer.secho(
+            f"🔍 Classifying {file_path.name}...",
+            fg=typer.colors.CYAN,
+            err=True,
+        )
     try:
         decision = service.review_document(
             doc_id=str(file_path),
@@ -1555,6 +1560,10 @@ def privilege_explain(
         Path | None,
         typer.Option("--model-path", help="Override model path"),
     ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output as JSON"),
+    ] = False,
 ) -> None:
     """Classify document with detailed explanation (verbose mode).
 
@@ -1623,8 +1632,17 @@ def privilege_explain(
         raise typer.Exit(code=1)
 
     # Classify with high reasoning effort
-    typer.secho(f"🔍 Explaining privilege classification for {file_path.name}...", fg=typer.colors.CYAN)
-    typer.secho("   (Using high reasoning effort for detailed analysis)", fg=typer.colors.CYAN)
+    if not json_output:
+        typer.secho(
+            f"🔍 Explaining privilege classification for {file_path.name}...",
+            fg=typer.colors.CYAN,
+            err=True,
+        )
+        typer.secho(
+            "   (Using high reasoning effort for detailed analysis)",
+            fg=typer.colors.CYAN,
+            err=True,
+        )
 
     try:
         decision = service.review_document(
@@ -1636,6 +1654,10 @@ def privilege_explain(
     except Exception as e:
         typer.secho(f"❌ Classification failed: {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
+
+    if json_output:
+        typer.echo(json.dumps(decision.model_dump(mode="json"), indent=2))
+        return
 
     # Display detailed results
     typer.echo()
