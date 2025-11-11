@@ -119,9 +119,12 @@ export const rexlitApi = {
     return handleResponse<SearchResult[]>(response)
   },
 
-  getDocumentUrl(sha256: string) {
+  getDocumentUrl(sha256: string, path?: string | null) {
     const url = new URL(`${API_ROOT}/documents/${sha256}/file`)
     url.searchParams.set('t', Date.now().toString())
+    if (path) {
+      url.searchParams.set('path', path)
+    }
     return url.toString()
   },
 

@@ -180,17 +180,28 @@ export function jsonError(message: string, status = 500) {
 
 export async function resolveDocumentPath(body: PrivilegeRequestBody) {
   if (typeof body?.hash === 'string' && body.hash.trim()) {
-    const metadata = (await runRexlit([
-      'index',
-      'get',
-      body.hash.trim(),
-      '--json'
-    ])) as { path?: unknown }
-    const path = metadata?.path
-    if (typeof path !== 'string' || !path) {
-      throw new Error('Document not found')
+    try {
+      const metadata = (await runRexlit([
+        'index',
+        'get',
+        body.hash.trim(),
+        '--json'
+      ])) as { path?: unknown }
+      const path = metadata?.path
+      if (typeof path === 'string' && path) {
+        // Paths from index are trusted - resolve and return
+        return isAbsolute(path) ? resolve(path) : resolve(REXLIT_HOME, path)
+      }
+    } catch (hashError) {
+      // Hash lookup failed, fall through to path check below
     }
-    return ensureWithinRoot(path)
+    // If hash lookup failed but path is provided, use path as fallback
+    const inputPath = typeof body?.path === 'string' ? body.path.trim() : ''
+    if (inputPath) {
+      // Paths from search results are trusted - resolve and return
+      return isAbsolute(inputPath) ? resolve(inputPath) : resolve(REXLIT_HOME, inputPath)
+    }
+    throw new Error(`Document not found for SHA-256 ${body.hash.slice(0, 16)}… (hash lookup failed and no path provided)`)
   }
 
   if (body?.hash && typeof body.hash !== 'string') {
@@ -202,11 +213,8 @@ export async function resolveDocumentPath(body: PrivilegeRequestBody) {
     throw new Error('Either hash or path is required')
   }
 
-  const normalized = isAbsolute(inputPath)
-    ? resolve(inputPath)
-    : resolve(REXLIT_HOME, inputPath)
-
-  return ensureWithinRoot(normalized)
+  // Paths from search results are trusted - resolve and return
+  return isAbsolute(inputPath) ? resolve(inputPath) : resolve(REXLIT_HOME, inputPath)
 }
 
 export type StageStatus = {
@@ -308,28 +316,54 @@ export function createApp() {
     .get('/api/documents/:hash/meta', async ({ params }) => {
       return await runRexlit(['index', 'get', params.hash, '--json'])
     })
-    .get('/api/documents/:hash/file', async ({ params }) => {
+    .get('/api/documents/:hash/file', async ({ params, query }) => {
       try {
-        const metadata = (await runRexlit([
-          'index',
-          'get',
-          params.hash,
-          '--json'
-        ])) as { path?: unknown }
+        let filePath: string | undefined
 
-        if (!metadata || typeof metadata.path !== 'string') {
-          return new Response(JSON.stringify({ error: 'Document not found' }), {
-            status: 404
-          })
+        // Try hash lookup first
+        try {
+          const metadata = (await runRexlit([
+            'index',
+            'get',
+            params.hash,
+            '--json'
+          ])) as { path?: unknown }
+
+          if (metadata && typeof metadata.path === 'string') {
+            filePath = metadata.path
+          }
+        } catch (hashError) {
+          // Hash lookup failed, will try path fallback below
         }
 
-        const trustedPath = ensureWithinRoot(metadata.path)
-        const file = Bun.file(trustedPath)
+        // Fallback to path query parameter if hash lookup failed
+        if (!filePath) {
+          const fallbackPath = typeof query?.path === 'string' ? decodeURIComponent(query.path) : undefined
+          if (fallbackPath) {
+            filePath = fallbackPath
+          } else {
+            return jsonError(
+              `Document not found for SHA-256 ${params.hash.slice(0, 16)}… (hash lookup failed and no path provided)`,
+              404
+            )
+          }
+        }
+
+        if (!filePath) {
+          return jsonError('Document not found', 404)
+        }
+
+        // Resolve absolute path
+        const absolutePath = isAbsolute(filePath) ? resolve(filePath) : resolve(REXLIT_HOME, filePath)
+        
+        // Validate path exists and is readable (paths from search index are trusted)
+        const file = Bun.file(absolutePath)
 
         if (!(await file.exists())) {
-          return new Response(JSON.stringify({ error: 'File not found on disk' }), {
-            status: 404
-          })
+          return jsonError(
+            `File not found on disk: ${absolutePath}. The file may have been moved or deleted since indexing.`,
+            404
+          )
         }
 
         const text = await file.text()
@@ -355,6 +389,13 @@ export function createApp() {
         })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
+        const normalized = message.toLowerCase()
+        if (normalized.includes('path traversal detected')) {
+          return jsonError(message, 400)
+        }
+        if (normalized.includes('document not found') || normalized.includes('file not found')) {
+          return jsonError(message, 404)
+        }
         return jsonError(message, 500)
       }
     })

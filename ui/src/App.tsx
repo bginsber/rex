@@ -36,7 +36,7 @@ function App() {
   }, [])
 
   const resultCount = useMemo(() => results.length, [results])
-  const documentUrl = selected ? rexlitApi.getDocumentUrl(selected.sha256) : undefined
+  const documentUrl = selected ? rexlitApi.getDocumentUrl(selected.sha256, selected.path) : undefined
   const activeReview = showExplain && explainReview ? explainReview : review
   const activeDecision = activeReview?.decision
   const patternMatches: PatternMatch[] = activeReview?.pattern_matches ?? []
@@ -85,7 +85,7 @@ function App() {
     setReviewLoading(true)
 
     rexlitApi
-      .privilegeClassify({ hash })
+      .privilegeClassify({ hash, path: selected.path })
       .then((response) => {
         if (!cancelled) {
           setReview(response)
@@ -107,7 +107,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [selected?.sha256])
+  }, [selected?.sha256, selected?.path])
 
   const refreshReview = useCallback(() => {
     if (!selected?.sha256) {
@@ -117,7 +117,7 @@ function App() {
     setReviewLoading(true)
     setReviewError(null)
     rexlitApi
-      .privilegeClassify({ hash: selected.sha256 })
+      .privilegeClassify({ hash: selected.sha256, path: selected.path })
       .then((response) => {
         setReview(response)
         setExplainReview(null)
@@ -131,7 +131,7 @@ function App() {
       .finally(() => {
         setReviewLoading(false)
       })
-  }, [selected?.sha256])
+  }, [selected?.sha256, selected?.path])
 
   const toggleExplanation = useCallback(async () => {
     if (!selected?.sha256) {
@@ -152,7 +152,7 @@ function App() {
     setExplainLoading(true)
     setExplainError(null)
     try {
-      const response = await rexlitApi.privilegeExplain({ hash: selected.sha256 })
+      const response = await rexlitApi.privilegeExplain({ hash: selected.sha256, path: selected.path })
       setExplainReview(response)
       setShowExplain(true)
     } catch (err) {
@@ -163,7 +163,7 @@ function App() {
     } finally {
       setExplainLoading(false)
     }
-  }, [explainReview, selected?.sha256, showExplain])
+  }, [explainReview, selected?.sha256, selected?.path, showExplain])
 
   async function search(event: FormEvent) {
     event.preventDefault()
