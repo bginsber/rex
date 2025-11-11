@@ -47,3 +47,7 @@ data/
 .pytest_cache/
 .worktrees
 .juul_sample_emails
+
+# Test data (now a git submodule)
+# Note: sample-docs is managed as a submodule, but we ignore any local changes
+rexlit/docs/sample-docs/
