@@ -10,10 +10,14 @@ python3.11 -m venv .venv && source .venv/bin/activate
 pip install -e .[dev]
 pytest -v --no-cov
 python -m build
-rexlit ingest ./sample-docs --manifest out.jsonl
-rexlit index build ./sample-docs
+
+# Optional: Initialize test data submodule (for CLI smoke tests)
+./scripts/setup-test-data.sh
+# Then use test data:
+rexlit ingest ./rexlit/docs/sample-docs --manifest out.jsonl
+rexlit index build ./rexlit/docs/sample-docs
 ```
-The editable install keeps the CLI in sync while you work; run `pytest` before publishing any change. Use the CLI smoke commands above to validate streaming ingest, parallel index build, and audit behavior.
+The editable install keeps the CLI in sync while you work; run `pytest` before publishing any change. Use the CLI smoke commands above to validate streaming ingest, parallel index build, and audit behavior. **Note:** Test data is maintained as a git submodule (`rex-test-data`) to keep the main repository lean—you can work without it, but CLI smoke tests require it.
 
 ## Coding Style & Naming Conventions
 Target Python 3.11 with strict typing (`from __future__ import annotations`, `typing.Iterator`). Modules, functions, and files stay `snake_case`; classes remain `PascalCase`. Prefer `pathlib.Path` over raw strings, early returns for validation, and rich dataclasses for metadata records. Keep concurrency primitives (`ProcessPoolExecutor`, batching helpers) isolated in `index/` and guard them with docstrings explaining CPU and I/O assumptions. Always validate resolved paths against their allowed root before touching the filesystem.

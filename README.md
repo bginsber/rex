@@ -85,6 +85,11 @@ pip install rexlit
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
+
+# Optional: Initialize test data submodule (168MB)
+# Test data is maintained in a separate repository to keep the main repo lean
+./scripts/setup-test-data.sh
+# Or manually: git submodule update --init --recursive
 ```
 
 ### Optional: OCR Support
