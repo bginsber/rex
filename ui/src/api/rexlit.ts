@@ -54,7 +54,10 @@ export interface PatternMatch {
   confidence?: number
   snippet?: string | null
   stage?: string | null
-  [key: string]: unknown
+}
+
+interface ErrorResponse {
+  error: string
 }
 
 export interface PrivilegeReviewResponse {
@@ -80,9 +83,9 @@ async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let message = `Request failed with ${response.status}`
     try {
-      const data = await response.clone().json()
-      if (data && typeof (data as { error?: unknown }).error === 'string') {
-        message = (data as { error: string }).error
+      const data = (await response.clone().json()) as unknown
+      if (data && typeof (data as ErrorResponse).error === 'string') {
+        message = (data as ErrorResponse).error
       } else if (data) {
         message = JSON.stringify(data)
       }

@@ -1514,7 +1514,12 @@ def privilege_classify(
         raise typer.Exit(code=1)
 
     # Classify
-    typer.secho(f"🔍 Classifying {file_path.name}...", fg=typer.colors.CYAN)
+    if not json_output:
+        typer.secho(
+            f"🔍 Classifying {file_path.name}...",
+            fg=typer.colors.CYAN,
+            err=True,
+        )
     try:
         decision = service.review_document(
             doc_id=str(file_path),
@@ -1627,8 +1632,17 @@ def privilege_explain(
         raise typer.Exit(code=1)
 
     # Classify with high reasoning effort
-    typer.secho(f"🔍 Explaining privilege classification for {file_path.name}...", fg=typer.colors.CYAN)
-    typer.secho("   (Using high reasoning effort for detailed analysis)", fg=typer.colors.CYAN)
+    if not json_output:
+        typer.secho(
+            f"🔍 Explaining privilege classification for {file_path.name}...",
+            fg=typer.colors.CYAN,
+            err=True,
+        )
+        typer.secho(
+            "   (Using high reasoning effort for detailed analysis)",
+            fg=typer.colors.CYAN,
+            err=True,
+        )
 
     try:
         decision = service.review_document(
