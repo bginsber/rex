@@ -45,6 +45,7 @@ The CLI wraps these services in an intuitive workflow designed for solo practiti
 - **DAT/Opticon exports** for court-ready production load files
 - **Rules engine** for TX/FL civil procedure deadlines with ICS calendar integration
 - **Privilege classification** with pattern-based pre-filtering and LLM escalation (Groq/OpenAI)
+- **Privilege policy management** via audited CLI commands (`list/show/edit/diff/apply/validate`) with config-directory overrides shared by the web UI
 
 ### Security & Audit
 - **Path traversal defense** with root-bound resolution and 13 regression tests
@@ -211,6 +212,14 @@ VITE_API_URL=${VITE_API_URL:-http://localhost:3000/api} bun dev
 ```
 
 Searches, privileged decisions, and stats are forwarded to the RexLit CLI, so CLI + UI stay perfectly aligned.
+
+The UI now includes a **Privilege Policy** panel for stages 1-3 that:
+
+- Lists policy metadata (source, hash, modified time) pulled from `rexlit privilege policy list`
+- Provides a safe text editor with diff preview and validation before saving
+- Persists changes via `rexlit privilege policy apply`, recording `privilege.policy.update` audit entries
+
+Because the UI shells out to the CLI-as-API, any policy change is immediately reflected across CLI runs, the Bun API, and the React front-end without duplicated logic.
 
 ## CLI Usage
 

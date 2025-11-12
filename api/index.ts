@@ -1,6 +1,8 @@
 import { Elysia } from 'elysia'
 import { cors } from '@elysiajs/cors'
 import { homedir } from 'node:os'
+import { randomUUID } from 'node:crypto'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, resolve, sep } from 'node:path'
 
 export const REXLIT_BIN = Bun.env.REXLIT_BIN ?? 'rexlit'
@@ -178,6 +180,39 @@ export function jsonError(message: string, status = 500) {
   )
 }
 
+function parsePolicyStage(value: string | number | undefined): number {
+  const stageNumber = Number(value)
+  if (!Number.isInteger(stageNumber) || stageNumber < 1 || stageNumber > 3) {
+    throw new Error('stage must be 1, 2, or 3')
+  }
+  return stageNumber
+}
+
+function handlePolicyError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  const normalized = message.toLowerCase()
+
+  if (normalized.includes('stage must be')) {
+    return jsonError(message, 400)
+  }
+  if (normalized.includes('text is required')) {
+    return jsonError(message, 400)
+  }
+  if (normalized.includes('policy template is empty')) {
+    return jsonError(message, 400)
+  }
+  if (normalized.includes('path traversal detected')) {
+    return jsonError(message, 400)
+  }
+  if (normalized.includes('document not found') || normalized.includes('policy template missing')) {
+    return jsonError(message, 404)
+  }
+  if (normalized.includes('timed out')) {
+    return jsonError(message, 504)
+  }
+  return jsonError(message, 500)
+}
+
 export async function resolveDocumentPath(body: PrivilegeRequestBody) {
   if (typeof body?.hash === 'string' && body.hash.trim()) {
     const metadata = (await runRexlit([
@@ -285,6 +320,78 @@ export function createApp() {
   return new Elysia()
     .use(cors())
     .get('/api/health', () => ({ status: 'ok' }))
+    .get('/api/policy', async () => {
+      try {
+        return await runRexlit(['privilege', 'policy', 'list', '--json'])
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return jsonError(message, 500)
+      }
+    })
+    .get('/api/policy/:stage', async ({ params }) => {
+      try {
+        const stage = parsePolicyStage(params.stage)
+        return await runRexlit([
+          'privilege',
+          'policy',
+          'show',
+          '--stage',
+          stage.toString(),
+          '--json'
+        ])
+      } catch (error) {
+        return handlePolicyError(error)
+      }
+    })
+    .put('/api/policy/:stage', async ({ params, body }) => {
+      try {
+        const stage = parsePolicyStage(params.stage)
+        const text = typeof body?.text === 'string' ? body.text : ''
+        if (!text.trim()) {
+          return jsonError('text is required', 400)
+        }
+
+        const tempDir = join(REXLIT_HOME, 'tmp', 'policy')
+        await mkdir(tempDir, { recursive: true })
+        const tempPath = join(
+          tempDir,
+          `stage${stage}-${randomUUID()}.txt`
+        )
+        await writeFile(tempPath, text, { encoding: 'utf-8' })
+
+        try {
+          return await runRexlit([
+            'privilege',
+            'policy',
+            'apply',
+            '--stage',
+            stage.toString(),
+            '--file',
+            tempPath,
+            '--json'
+          ])
+        } finally {
+          await rm(tempPath, { force: true })
+        }
+      } catch (error) {
+        return handlePolicyError(error)
+      }
+    })
+    .post('/api/policy/:stage/validate', async ({ params }) => {
+      try {
+        const stage = parsePolicyStage(params.stage)
+        return await runRexlit([
+          'privilege',
+          'policy',
+          'validate',
+          '--stage',
+          stage.toString(),
+          '--json'
+        ])
+      } catch (error) {
+        return handlePolicyError(error)
+      }
+    })
     .post('/api/search', async ({ body }: { body: any }) => {
       const query = body?.query?.trim()
       const limit = Number(body?.limit ?? 20)

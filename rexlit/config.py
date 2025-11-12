@@ -346,6 +346,10 @@ class Settings(BaseSettings):
         Raises:
             FileNotFoundError: If policy template not found
         """
+        override_path = self._get_policy_override_path(stage)
+        if override_path is not None and override_path.exists():
+            return override_path
+
         if stage == 1:
             if self.privilege_policy_stage1 is not None:
                 return self.privilege_policy_stage1
@@ -369,6 +373,18 @@ class Settings(BaseSettings):
             )
 
         return default_path
+
+    def _get_policy_override_path(self, stage: int) -> Path | None:
+        """Return config override path for privilege policies if present."""
+        if stage not in (1, 2, 3):
+            return None
+
+        filename = {
+            1: "privilege_stage1.txt",
+            2: "privilege_stage2.txt",
+            3: "privilege_stage3.txt",
+        }[stage]
+        return self.get_config_dir() / "policies" / filename
 
     def get_privilege_cot_vault_path(self) -> Path | None:
         """Get path to CoT vault directory, creating if necessary."""
