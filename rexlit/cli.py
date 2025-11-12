@@ -1755,8 +1755,8 @@ def privilege_classify(
 ) -> None:
     """Classify a document for attorney-client privilege.
 
-    This command uses the self-hosted gpt-oss-safeguard-20b model to classify
-    documents for privilege. All processing is offline (no network calls).
+    This command uses Groq Cloud API (if online) or self-hosted gpt-oss-safeguard-20b
+    model to classify documents for privilege.
 
     Privacy note: Full reasoning chain is hashed, not logged. Only redacted
     summaries appear in audit logs.
@@ -1767,22 +1767,14 @@ def privilege_classify(
     """
     import json
 
-    from rexlit.app.adapters.privilege_safeguard import PrivilegeSafeguardAdapter
     from rexlit.app.privilege_service import PrivilegeReviewService
+    from rexlit.bootstrap import _create_privilege_reasoning_adapter
 
     container = bootstrap_application()
 
-    # Determine model path
+    # Determine model path (for fallback to Safeguard adapter)
     if model_path is None:
         model_path = container.settings.get_privilege_model_path()
-        if model_path is None:
-            typer.secho(
-                "❌ Privilege model not found. Install gpt-oss-safeguard-20b or configure "
-                "privilege_model_path in settings.",
-                fg=typer.colors.RED,
-                err=True,
-            )
-            raise typer.Exit(code=1)
 
     # Load policy
     try:
@@ -1791,17 +1783,21 @@ def privilege_classify(
         typer.secho(f"❌ {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
 
-    # Initialize adapter
+    # Initialize adapter (prefer Groq if online, fall back to Safeguard)
     try:
-        adapter = PrivilegeSafeguardAdapter(
+        adapter = _create_privilege_reasoning_adapter(
+            container.settings,
             model_path=model_path,
             policy_path=policy_path,
-            log_full_cot=container.settings.privilege_log_full_cot,
-            cot_vault_path=container.settings.get_privilege_cot_vault_path(),
-            vault_key_path=container.settings.get_privilege_cot_vault_key_path(),
-            timeout_seconds=container.settings.privilege_timeout_seconds,
-            circuit_breaker_threshold=container.settings.privilege_circuit_breaker_threshold,
         )
+        if adapter is None:
+            typer.secho(
+                "❌ No privilege adapter available. Install gpt-oss-safeguard-20b or configure "
+                "GROQ_API_KEY with --online flag.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
     except Exception as e:
         typer.secho(f"❌ Failed to initialize privilege adapter: {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
@@ -1887,22 +1883,14 @@ def privilege_explain(
     """
     import json
 
-    from rexlit.app.adapters.privilege_safeguard import PrivilegeSafeguardAdapter
     from rexlit.app.privilege_service import PrivilegeReviewService
+    from rexlit.bootstrap import _create_privilege_reasoning_adapter
 
     container = bootstrap_application()
 
-    # Determine model path
+    # Determine model path (for fallback to Safeguard adapter)
     if model_path is None:
         model_path = container.settings.get_privilege_model_path()
-        if model_path is None:
-            typer.secho(
-                "❌ Privilege model not found. Install gpt-oss-safeguard-20b or configure "
-                "privilege_model_path in settings.",
-                fg=typer.colors.RED,
-                err=True,
-            )
-            raise typer.Exit(code=1)
 
     # Load policy
     try:
@@ -1911,17 +1899,21 @@ def privilege_explain(
         typer.secho(f"❌ {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
 
-    # Initialize adapter
+    # Initialize adapter (prefer Groq if online, fall back to Safeguard)
     try:
-        adapter = PrivilegeSafeguardAdapter(
+        adapter = _create_privilege_reasoning_adapter(
+            container.settings,
             model_path=model_path,
             policy_path=policy_path,
-            log_full_cot=container.settings.privilege_log_full_cot,
-            cot_vault_path=container.settings.get_privilege_cot_vault_path(),
-            vault_key_path=container.settings.get_privilege_cot_vault_key_path(),
-            timeout_seconds=container.settings.privilege_timeout_seconds,
-            circuit_breaker_threshold=container.settings.privilege_circuit_breaker_threshold,
         )
+        if adapter is None:
+            typer.secho(
+                "❌ No privilege adapter available. Install gpt-oss-safeguard-20b or configure "
+                "GROQ_API_KEY with --online flag.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
     except Exception as e:
         typer.secho(f"❌ Failed to initialize privilege adapter: {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
