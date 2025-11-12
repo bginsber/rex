@@ -355,6 +355,20 @@ curl http://localhost:3000/api/stats
 curl -X POST http://localhost:3000/api/reviews/abc123 \
   -H "Content-Type: application/json" \
   -d '{"decision": "privileged", "notes": "Attorney-client communication"}'
+
+# Privilege policy metadata
+curl http://localhost:3000/api/policy
+
+# Stage detail (text + metadata)
+curl http://localhost:3000/api/policy/1
+
+# Save updated policy text
+curl -X PUT http://localhost:3000/api/policy/1 \
+  -H "Content-Type: application/json" \
+  -d @policy-stage1.json
+
+# Validate structure
+curl -X POST http://localhost:3000/api/policy/1/validate
 ```
 
 ---
@@ -593,6 +607,13 @@ function App() {
 export default App
 ```
 
+#### Privilege Policy Panel (2025-11 Update)
+
+- **API layer:** `/api/policy` (list), `/api/policy/:stage` (GET/PUT), and `/api/policy/:stage/validate` proxy the CLI `rexlit privilege policy ...` commands with `--json`. Temporary files are written under `${REXLIT_HOME}/tmp/policy/` and removed after each request.
+- **Client helpers:** `ui/src/api/rexlit.ts` adds `listPolicies`, `getPolicy`, `updatePolicy`, and `validatePolicy`, returning typed metadata (`stage`, `source`, `sha256`, `modified_at`, etc.).
+- **React UI:** `ui/src/App.tsx` now renders a “Privilege Policies” panel with stage selector, metadata chips, textarea editor, diff preview, validation status, and audited save button. Overrides are written to `~/.config/rexlit/policies/privilege_stage{N}.txt`, keeping CLI and UI in lockstep.
+- **Auditability:** Every update logs `privilege.policy.update` with sanitized CLI arguments so ledger verification surfaces unauthorized edits.
+
 ### Step 4: Basic Styling (`ui/src/App.css`)
 
 ```css
@@ -824,55 +845,37 @@ curl -X POST http://localhost:3000/api/reviews/abc123 \
 rexlit audit verify
 # Should show PRIVILEGE_DECISION entries
 
-# 6. Test UI workflow
+# 6. Exercise privilege policy endpoints
+curl http://localhost:3000/api/policy
+curl http://localhost:3000/api/policy/1
+curl -X PUT http://localhost:3000/api/policy/1 \
+  -H "Content-Type: application/json" \
+  -d '{"text": "# Updated policy\\n..."}'
+curl -X POST http://localhost:3000/api/policy/1/validate
+
+# 7. Test UI workflow
 # - Open http://localhost:5173
 # - Search for "attorney"
 # - Click result
 # - View document
 # - Click "Privileged" button
 # - Verify decision recorded
+# - Scroll to the "Privilege Policies" panel
+# - Edit stage 1 text, open the diff preview, click Validate, then Save
+# - Confirm `rexlit privilege policy list --json` reflects the update
 ```
 
-### Automated Tests (`api/index.test.ts`)
+### Automated Tests
 
-```typescript
-import { describe, test, expect } from 'bun:test'
-
-const API_URL = 'http://localhost:3000/api'
-
-describe('RexLit API', () => {
-  test('health check returns ok', async () => {
-    const response = await fetch(`${API_URL}/health`)
-    const data = await response.json()
-    expect(data.status).toBe('ok')
-  })
-
-  test('search returns results', async () => {
-    const response = await fetch(`${API_URL}/search`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: 'test', limit: 5 })
-    })
-
-    const data = await response.json()
-    expect(data.hits).toBeArray()
-  })
-
-  test('stats returns index metadata', async () => {
-    const response = await fetch(`${API_URL}/stats`)
-    const data = await response.json()
-
-    if (!data.error) {
-      expect(data.doc_count).toBeNumber()
-    }
-  })
-})
-```
-
-Run tests:
 ```bash
-cd /home/user/rex/api
-bun test
+# API regression tests (policy endpoints, search, security)
+bun test api/index.test.ts
+
+# CLI privilege policy coverage
+pytest tests/test_cli_privilege_policy.py
+
+# Optional: ensure the React build still succeeds
+cd ui && bun run build
 ```
 
 ---

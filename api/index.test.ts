@@ -12,9 +12,15 @@
  * Run with: bun test index.test.ts
  */
 
-import { describe, it, expect, beforeEach, mock } from 'bun:test'
+import { describe, it, expect, beforeEach, afterEach, afterAll, mock } from 'bun:test'
 import { homedir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
+import { rm } from 'node:fs/promises'
+
+const POLICY_TEST_HOME = join(process.cwd(), '.tmp-rexlit-home')
+await rm(POLICY_TEST_HOME, { recursive: true, force: true }).catch(() => {})
+Bun.env.REXLIT_HOME = POLICY_TEST_HOME
+const { app, __setRunRexlitImplementation } = await import('./index')
 
 // Test helper to create mock process
 function createMockProcess(stdout: string, stderr: string, exitCode: number, delay: number = 0) {
@@ -602,6 +608,157 @@ describe('Security Boundaries - Pattern Match Filtering', () => {
   })
 })
 
+describe('Policy API Endpoints', () => {
+  afterEach(() => {
+    __setRunRexlitImplementation(undefined)
+  })
+
+  it('returns policy list metadata', async () => {
+    const mockRun = mock(async () => [
+      { stage: 1, stage_name: 'Privilege', path: '/policies/stage1.txt' }
+    ])
+    __setRunRexlitImplementation(mockRun)
+
+    const response = await app.handle(
+      new Request('http://localhost/api/policy')
+    )
+
+    expect(response.status).toBe(200)
+    const payload = await response.json()
+    expect(payload).toEqual([
+      { stage: 1, stage_name: 'Privilege', path: '/policies/stage1.txt' }
+    ])
+    expect(mockRun).toHaveBeenCalled()
+    expect(mockRun.mock.calls[0][0]).toEqual([
+      'privilege',
+      'policy',
+      'list',
+      '--json'
+    ])
+  })
+
+  it('returns policy text for a stage', async () => {
+    const mockRun = mock(async () => ({
+      stage: 1,
+      stage_name: 'Privilege',
+      path: '/policies/stage1.txt',
+      text: 'policy text'
+    }))
+    __setRunRexlitImplementation(mockRun)
+
+    const response = await app.handle(
+      new Request('http://localhost/api/policy/1')
+    )
+
+    expect(response.status).toBe(200)
+    const payload = await response.json()
+    expect(payload.text).toBe('policy text')
+    expect(mockRun).toHaveBeenCalled()
+    expect(mockRun.mock.calls[0][0]).toEqual([
+      'privilege',
+      'policy',
+      'show',
+      '--stage',
+      '1',
+      '--json'
+    ])
+  })
+
+  it('rejects invalid policy stage', async () => {
+    const response = await app.handle(
+      new Request('http://localhost/api/policy/9')
+    )
+
+    expect(response.status).toBe(400)
+    const payload = await response.json()
+    expect(payload.error).toContain('stage must be')
+  })
+
+  it('applies policy updates from request body', async () => {
+    let capturedArgs: string[] = []
+    let capturedPath = ''
+    __setRunRexlitImplementation(async (args) => {
+      capturedArgs = args
+      if (args.includes('apply')) {
+        const fileIndex = args.indexOf('--file')
+        capturedPath = args[fileIndex + 1]
+        const file = Bun.file(capturedPath)
+        expect(await file.exists()).toBe(true)
+        const contents = await file.text()
+        expect(contents).toBe('Updated policy text')
+        return {
+          stage: 1,
+          stage_name: 'Privilege',
+          path: '/policies/privilege_stage1.txt',
+          exists: true,
+          sha256: 'abc123',
+          source: 'override'
+        }
+      }
+      throw new Error('Unexpected CLI invocation')
+    })
+
+    const response = await app.handle(
+      new Request('http://localhost/api/policy/1', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: 'Updated policy text' })
+      })
+    )
+
+    expect(response.status).toBe(200)
+    const payload = await response.json()
+    expect(payload.stage).toBe(1)
+    expect(capturedArgs).toContain('--json')
+    const filePath = capturedArgs[capturedArgs.indexOf('--file') + 1]
+    expect(filePath).toBe(capturedPath)
+    expect(await Bun.file(filePath).exists()).toBe(false)
+  })
+
+  it('rejects empty policy body', async () => {
+    const response = await app.handle(
+      new Request('http://localhost/api/policy/1', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: '   ' })
+      })
+    )
+
+    expect(response.status).toBe(400)
+    const payload = await response.json()
+    expect(payload.error).toContain('text is required')
+  })
+
+  it('validates policy stage content', async () => {
+    const mockRun = mock(async () => ({
+      stage: 1,
+      stage_name: 'Privilege',
+      passed: true,
+      errors: []
+    }))
+    __setRunRexlitImplementation(mockRun)
+
+    const response = await app.handle(
+      new Request('http://localhost/api/policy/1/validate', {
+        method: 'POST'
+      })
+    )
+
+    expect(response.status).toBe(200)
+    const payload = await response.json()
+    expect(payload.passed).toBe(true)
+    expect(mockRun).toHaveBeenCalled()
+    expect(mockRun.mock.calls[0][0]).toEqual([
+      'privilege',
+      'policy',
+      'validate',
+      '--stage',
+      '1',
+      '--json'
+    ])
+  })
+})
+
 describe('Security Boundaries - Stage Status Building', () => {
   function buildStageStatus(decision: any): any[] {
     const reasoningEffort = typeof decision?.reasoning_effort === 'string'
@@ -719,5 +876,9 @@ describe('Security Boundaries - Stage Status Building', () => {
     expect(stages[2].redaction_spans).toBe(2)
     expect(stages[2].notes).toContain('2 redaction spans')
   })
+})
+
+afterAll(async () => {
+  await rm(POLICY_TEST_HOME, { recursive: true, force: true }).catch(() => {})
 })
 

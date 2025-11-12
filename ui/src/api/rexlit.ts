@@ -56,6 +56,28 @@ export interface PatternMatch {
   stage?: string | null
 }
 
+export interface PrivilegePolicyMetadata {
+  stage: number
+  stage_name: string
+  path: string
+  exists?: boolean
+  sha256?: string | null
+  size_bytes?: number | null
+  modified_at?: string | null
+  source?: string
+}
+
+export interface PrivilegePolicyDetail extends PrivilegePolicyMetadata {
+  text: string
+}
+
+export interface PrivilegePolicyValidation {
+  stage: number
+  stage_name: string
+  passed: boolean
+  errors: string[]
+}
+
 interface ErrorResponse {
   error: string
 }
@@ -155,5 +177,31 @@ export const rexlitApi = {
       body: JSON.stringify(payload)
     })
     return handleResponse<PrivilegeReviewResponse>(response)
+  },
+
+  async listPolicies(): Promise<PrivilegePolicyMetadata[]> {
+    const response = await fetch(`${API_ROOT}/policy`)
+    return handleResponse<PrivilegePolicyMetadata[]>(response)
+  },
+
+  async getPolicy(stage: number): Promise<PrivilegePolicyDetail> {
+    const response = await fetch(`${API_ROOT}/policy/${stage}`)
+    return handleResponse<PrivilegePolicyDetail>(response)
+  },
+
+  async updatePolicy(stage: number, text: string): Promise<PrivilegePolicyMetadata> {
+    const response = await fetch(`${API_ROOT}/policy/${stage}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    })
+    return handleResponse<PrivilegePolicyMetadata>(response)
+  },
+
+  async validatePolicy(stage: number): Promise<PrivilegePolicyValidation> {
+    const response = await fetch(`${API_ROOT}/policy/${stage}/validate`, {
+      method: 'POST'
+    })
+    return handleResponse<PrivilegePolicyValidation>(response)
   }
 }

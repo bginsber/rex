@@ -13,6 +13,7 @@ from typer import Context as TyperContext
 
 from rexlit import __version__
 from rexlit.app.ports.stamp import BatesStampRequest
+from rexlit.app.privilege_service import PrivilegePolicyManager
 from rexlit.bootstrap import bootstrap_application
 from rexlit.config import get_settings, set_settings
 from rexlit.utils.methods import sanitize_argv
@@ -1413,6 +1414,317 @@ def audit_verify() -> None:
 privilege_app = typer.Typer(help="Privilege classification and review")
 app.add_typer(privilege_app, name="privilege")
 
+
+# Privilege policy subcommands
+policy_app = typer.Typer(help="Privilege policy management")
+privilege_app.add_typer(policy_app, name="policy")
+
+
+def _resolve_stage(stage: int) -> int:
+    if stage not in (1, 2, 3):
+        raise typer.BadParameter("Stage must be 1, 2, or 3.")
+    return stage
+
+
+def _policy_error(exc: Exception) -> "NoReturn":
+    message = str(exc)
+    typer.secho(f"Error: {message}", fg=typer.colors.RED, err=True)
+    raise typer.Exit(code=1) from exc
+
+
+@policy_app.command("list")
+def privilege_policy_list(
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Return policy metadata as JSON"),
+    ] = False,
+) -> None:
+    """List available privilege policy templates."""
+    import json as _json
+
+    container = bootstrap_application()
+    manager = PrivilegePolicyManager(container.settings, container.ledger_port)
+    policies = manager.list_policies()
+
+    if json_output:
+        typer.echo(_json.dumps([policy.to_dict() for policy in policies], indent=2))
+        return
+
+    for policy in policies:
+        status = "missing" if not policy.exists else policy.source
+        typer.secho(
+            f"Stage {policy.stage} ({policy.stage_name}): {status}",
+            fg=typer.colors.GREEN if policy.exists else typer.colors.YELLOW,
+        )
+        typer.echo(f"  Path: {policy.path}")
+        if policy.exists:
+            typer.echo(f"  SHA256: {policy.sha256}")
+            typer.echo(f"  Size: {policy.size_bytes} bytes")
+            if policy.modified_at:
+                typer.echo(f"  Modified: {policy.modified_at.isoformat()}")
+
+
+@policy_app.command("show")
+def privilege_policy_show(
+    stage: Annotated[
+        int,
+        typer.Option(
+            "--stage",
+            "-s",
+            min=1,
+            max=3,
+            help="Policy stage to display",
+        ),
+    ] = 1,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Return policy text and metadata as JSON"),
+    ] = False,
+) -> None:
+    """Display the policy template for a given stage."""
+    import json as _json
+
+    container = bootstrap_application()
+    manager = PrivilegePolicyManager(container.settings, container.ledger_port)
+    try:
+        metadata, text = manager.show_policy(_resolve_stage(stage))
+    except (FileNotFoundError, ValueError) as exc:
+        _policy_error(exc)
+
+    if json_output:
+        payload = metadata.to_dict()
+        payload["text"] = text
+        typer.echo(_json.dumps(payload, indent=2))
+        return
+
+    typer.secho(f"Stage {metadata.stage} ({metadata.stage_name})", bold=True)
+    typer.echo(f"Path: {metadata.path}")
+    typer.echo()
+    typer.echo(text)
+
+
+@policy_app.command("edit")
+def privilege_policy_edit(
+    stage: Annotated[
+        int,
+        typer.Option(
+            "--stage",
+            "-s",
+            min=1,
+            max=3,
+            help="Policy stage to edit",
+        ),
+    ] = 1,
+    editor: Annotated[
+        str | None,
+        typer.Option("--editor", help="Override $EDITOR for this edit session"),
+    ] = None,
+) -> None:
+    """Open the policy template in $EDITOR and persist changes."""
+    container = bootstrap_application()
+    manager = PrivilegePolicyManager(container.settings, container.ledger_port)
+    target_stage = _resolve_stage(stage)
+    try:
+        edit_path = manager.prepare_edit_path(target_stage)
+    except (FileNotFoundError, ValueError) as exc:
+        _policy_error(exc)
+
+    initial_text = ""
+    if edit_path.exists():
+        initial_text = edit_path.read_text(encoding="utf-8")
+
+    typer.secho(f"Editing Stage {target_stage} policy at {edit_path}", fg=typer.colors.BLUE)
+    updated_text = typer.edit(initial_text, editor=editor)
+
+    if updated_text is None:
+        typer.secho("Edit cancelled. Policy not modified.", fg=typer.colors.YELLOW)
+        return
+
+    if not updated_text.endswith("\n"):
+        updated_text += "\n"
+
+    if updated_text == initial_text:
+        typer.secho("No changes detected. Policy remains unchanged.", fg=typer.colors.YELLOW)
+        return
+
+    metadata = manager.save_policy_from_text(
+        target_stage,
+        updated_text,
+        source="editor",
+        command_args=_resolve_invocation_tokens(),
+    )
+    typer.secho(
+        f"Policy updated: Stage {metadata.stage} ({metadata.stage_name})",
+        fg=typer.colors.GREEN,
+    )
+    typer.echo(f"Path: {metadata.path}")
+    typer.echo(f"SHA256: {metadata.sha256}")
+
+
+@policy_app.command("diff")
+def privilege_policy_diff(
+    other: Annotated[
+        Path,
+        typer.Argument(help="Path to compare against", exists=True, dir_okay=False, readable=True),
+    ],
+    stage: Annotated[
+        int,
+        typer.Option(
+            "--stage",
+            "-s",
+            min=1,
+            max=3,
+            help="Policy stage to diff",
+        ),
+    ] = 1,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Return diff output as JSON payload"),
+    ] = False,
+) -> None:
+    """Show diff between current policy and another file."""
+    import json as _json
+
+    container = bootstrap_application()
+    manager = PrivilegePolicyManager(container.settings, container.ledger_port)
+    try:
+        diff_text = manager.diff_with_file(_resolve_stage(stage), other)
+    except (FileNotFoundError, ValueError) as exc:
+        _policy_error(exc)
+
+    if json_output:
+        typer.echo(_json.dumps({"diff": diff_text}, indent=2))
+        return
+
+    if not diff_text.strip():
+        typer.secho("Policies are identical.", fg=typer.colors.GREEN)
+        return
+
+    typer.echo(diff_text)
+
+
+@policy_app.command("apply")
+def privilege_policy_apply(
+    stage: Annotated[
+        int,
+        typer.Option(
+            "--stage",
+            "-s",
+            min=1,
+            max=3,
+            help="Policy stage to update",
+        ),
+    ] = 1,
+    file: Annotated[
+        Path | None,
+        typer.Option(
+            "--file",
+            "-f",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            help="Source file containing updated policy text",
+        ),
+    ] = None,
+    stdin: Annotated[
+        bool,
+        typer.Option("--stdin", help="Read updated policy text from STDIN"),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Return update metadata as JSON"),
+    ] = False,
+) -> None:
+    """Apply policy changes from file or STDIN."""
+    import json as _json
+
+    if stdin and file is not None:
+        raise typer.BadParameter("Use either --stdin or --file, not both.")
+    if not stdin and file is None:
+        raise typer.BadParameter("Provide --file or --stdin to update policy.")
+
+    container = bootstrap_application()
+    manager = PrivilegePolicyManager(container.settings, container.ledger_port)
+    target_stage = _resolve_stage(stage)
+    command_tokens = _resolve_invocation_tokens()
+
+    try:
+        if stdin:
+            updated_text = sys.stdin.read()
+            if not updated_text.endswith("\n"):
+                updated_text += "\n"
+            metadata = manager.save_policy_from_text(
+                target_stage,
+                updated_text,
+                source="stdin",
+                command_args=command_tokens,
+            )
+        else:
+            assert file is not None
+            metadata = manager.apply_from_file(
+                target_stage,
+                file,
+                command_args=command_tokens,
+            )
+    except (FileNotFoundError, ValueError) as exc:
+        _policy_error(exc)
+
+    if json_output:
+        typer.echo(_json.dumps(metadata.to_dict(), indent=2))
+        return
+
+    typer.secho(
+        f"Policy updated from {'STDIN' if stdin else file}: Stage {metadata.stage} ({metadata.stage_name})",
+        fg=typer.colors.GREEN,
+    )
+    typer.echo(f"Path: {metadata.path}")
+    typer.echo(f"SHA256: {metadata.sha256}")
+
+
+@policy_app.command("validate")
+def privilege_policy_validate(
+    stage: Annotated[
+        int,
+        typer.Option(
+            "--stage",
+            "-s",
+            min=1,
+            max=3,
+            help="Policy stage to validate",
+        ),
+    ] = 1,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Return validation report as JSON"),
+    ] = False,
+) -> None:
+    """Run structural validation on the policy template."""
+    import json as _json
+
+    container = bootstrap_application()
+    manager = PrivilegePolicyManager(container.settings, container.ledger_port)
+    try:
+        result = manager.validate_policy(_resolve_stage(stage))
+    except (FileNotFoundError, ValueError) as exc:
+        _policy_error(exc)
+
+    if json_output:
+        typer.echo(_json.dumps(result, indent=2))
+        return
+
+    if result["passed"]:
+        typer.secho(
+            f"Policy Stage {result['stage']} ({result['stage_name']}) passed validation.",
+            fg=typer.colors.GREEN,
+        )
+    else:
+        typer.secho(
+            f"Policy Stage {result['stage']} ({result['stage_name']}) failed validation.",
+            fg=typer.colors.RED,
+        )
+        typer.echo("Errors:")
+        for error in result["errors"]:
+            typer.echo(f"  - {error}")
 
 @privilege_app.command("classify")
 def privilege_classify(

@@ -10,6 +10,7 @@ Complete command reference for RexLit M0.
 - [OCR Commands](#ocr-commands)
 - [Audit Commands](#audit-commands)
 - [Redaction Commands](#redaction-commands)
+- [Privilege Commands](#privilege-commands)
 - [Common Workflows](#common-workflows)
 
 ---
@@ -518,6 +519,84 @@ The verification checks:
 4. **Temporal Order**: Entries must be in chronological order
 
 **Any modification breaks the chain** - this is by design for legal defensibility.
+
+---
+
+## Privilege Commands
+
+### `rexlit privilege policy list`
+
+List available privilege policy templates and their sources.
+
+```bash
+rexlit privilege policy list
+rexlit privilege policy list --json  # machine readable
+```
+
+- Reports stage number, friendly name, on-disk path, SHA-256, size, and last modified timestamp.
+- `source` indicates whether the policy is the packaged default, a user override (`~/.config/rexlit/policies/`), or an explicit path configured via environment variables.
+
+### `rexlit privilege policy show`
+
+Show the current policy text for a stage (default: stage 1).
+
+```bash
+rexlit privilege policy show --stage 2
+rexlit privilege policy show --stage 1 --json  # include metadata + text
+```
+
+- Useful for piping straight into diff tools or capturing the canonical template for audit.
+
+### `rexlit privilege policy edit`
+
+Open the policy in `$EDITOR`, committing changes atomically and logging updates to the audit ledger.
+
+```bash
+rexlit privilege policy edit --stage 1
+REXLIT_EDITOR=code rexlit privilege policy edit --stage 2
+```
+
+- On first edit, the bundled template is copied into `~/.config/rexlit/policies/privilege_stageN.txt` so subsequent updates are user-managed.
+- Ledger entries (`privilege.policy.update`) capture path, hash, and CLI arguments (sanitized).
+
+### `rexlit privilege policy apply`
+
+Apply updates from a file or STDIN without launching an editor.
+
+```bash
+rexlit privilege policy apply --stage 1 --file ./policies/stage1.md
+cat stage2.md | rexlit privilege policy apply --stage 2 --stdin
+```
+
+- Ideal for CI/CD pipelines or Git-managed templates.
+- Responds with updated metadata (`--json` ready).
+
+### `rexlit privilege policy diff`
+
+Compare the active policy with a reference file before applying changes.
+
+```bash
+rexlit privilege policy diff --stage 1 ./policies/stage1.md
+```
+
+- Outputs unified diff by default; add `--json` for structured diff consumers.
+
+### `rexlit privilege policy validate`
+
+Run structural checks to ensure the policy documents JSON output expectations and scoring rubric.
+
+```bash
+rexlit privilege policy validate --stage 1
+rexlit privilege policy validate --stage 3 --json
+```
+
+- Validation confirms the presence of JSON schema guidance (`labels`, `confidence`, etc.) and reports any missing sections.
+
+### Policy Storage Notes
+
+- User overrides live in `~/.config/rexlit/policies/privilege_stage{N}.txt`; packaged defaults remain untouched under `rexlit/policies/`.
+- `rexlit privilege policy list` and the web UI rely on the same files, ensuring CLI/web parity.
+- Every update is logged with path, hash, and stage metadata so audit verification surfaces unauthorized modifications.
 
 ---
 

@@ -16,15 +16,291 @@ See ADR 0008 for design rationale and privacy controls.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from datetime import datetime
+import difflib
+import hashlib
+import shutil
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, Sequence
+
+from rexlit.utils.methods import sanitize_argv
 
 from rexlit.app.ports.privilege_reasoning import PolicyDecision
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from rexlit.app.ports.ledger import LedgerPort
     from rexlit.app.ports.privilege_reasoning import PrivilegeReasoningPort
+    from rexlit.config import Settings
+
+
+STAGE_LABELS: dict[int, str] = {
+    1: "Privilege",
+    2: "Responsiveness",
+    3: "Redaction",
+}
+
+
+@dataclass(slots=True)
+class PrivilegePolicyMetadata:
+    """Metadata describing a privilege policy template."""
+
+    stage: int
+    stage_name: str
+    path: Path
+    exists: bool
+    sha256: str | None
+    size_bytes: int | None
+    modified_at: datetime | None
+    source: Literal["default", "override", "explicit", "missing"]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize metadata for JSON output."""
+        return {
+            "stage": self.stage,
+            "stage_name": self.stage_name,
+            "path": str(self.path),
+            "exists": self.exists,
+            "sha256": self.sha256,
+            "size_bytes": self.size_bytes,
+            "modified_at": self.modified_at.isoformat() if self.modified_at else None,
+            "source": self.source,
+        }
+
+
+class PrivilegePolicyManager:
+    """Manage privilege policy templates, ensuring offline-safe updates."""
+
+    def __init__(self, settings: "Settings", ledger: "LedgerPort" | None = None) -> None:
+        self._settings = settings
+        self._ledger = ledger
+
+    def list_policies(self) -> list[PrivilegePolicyMetadata]:
+        """Return metadata for all configured policy stages."""
+        metadata: list[PrivilegePolicyMetadata] = []
+        for stage in (1, 2, 3):
+            metadata.append(self._build_metadata(stage))
+        return metadata
+
+    def show_policy(self, stage: int) -> tuple[PrivilegePolicyMetadata, str]:
+        """Return policy metadata and text for ``stage``."""
+        metadata = self._build_metadata(stage)
+        if not metadata.exists:
+            raise FileNotFoundError(f"Policy template missing for stage {stage}.")
+        text = metadata.path.read_text(encoding="utf-8")
+        return metadata, text
+
+    def prepare_edit_path(self, stage: int) -> Path:
+        """Return editable path for policy ``stage``, copying default if needed."""
+        attr_name = f"privilege_policy_stage{stage}"
+        explicit_path: Path | None = getattr(self._settings, attr_name, None)
+
+        if explicit_path is not None:
+            explicit_path.parent.mkdir(parents=True, exist_ok=True)
+            return explicit_path
+
+        override_path = self._override_path(stage)
+        if override_path.exists():
+            return override_path
+
+        source_path = self._settings.get_privilege_policy_path(stage=stage)
+        override_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, override_path)
+        return override_path
+
+    def save_policy_from_text(
+        self,
+        stage: int,
+        content: str,
+        *,
+        source: str,
+        command_args: Sequence[str] | None = None,
+    ) -> PrivilegePolicyMetadata:
+        """Persist ``content`` to the policy for ``stage``."""
+        target_path = self.prepare_edit_path(stage)
+        previous_hash = self._compute_sha256(target_path) if target_path.exists() else None
+
+        target_path.write_text(content, encoding="utf-8")
+        metadata = self._build_metadata(stage)
+
+        self._log_update(stage, metadata, previous_hash, source, command_args)
+        return metadata
+
+    def apply_from_file(
+        self,
+        stage: int,
+        source_path: Path,
+        *,
+        command_args: Sequence[str] | None = None,
+    ) -> PrivilegePolicyMetadata:
+        """Copy policy contents from ``source_path`` into the configured stage."""
+        resolved = source_path.expanduser().resolve()
+        if not resolved.exists() or not resolved.is_file():
+            raise FileNotFoundError(f"Policy source not found: {source_path}")
+
+        self._validate_allowed_path(resolved)
+        content = resolved.read_text(encoding="utf-8")
+        return self.save_policy_from_text(
+            stage,
+            content,
+            source="file",
+            command_args=command_args,
+        )
+
+    def diff_with_file(self, stage: int, other: Path) -> str:
+        """Return unified diff between stage policy and ``other``."""
+        metadata, current_text = self.show_policy(stage)
+
+        resolved = other.expanduser().resolve()
+        if not resolved.exists() or not resolved.is_file():
+            raise FileNotFoundError(f"Comparison file not found: {other}")
+        self._validate_allowed_path(resolved)
+        other_text = resolved.read_text(encoding="utf-8")
+
+        diff_lines = difflib.unified_diff(
+            current_text.splitlines(),
+            other_text.splitlines(),
+            fromfile=str(metadata.path),
+            tofile=str(resolved),
+            lineterm="",
+        )
+        return "\n".join(diff_lines)
+
+    def validate_policy(self, stage: int) -> dict[str, Any]:
+        """Perform lightweight validation of policy structure."""
+        metadata, text = self.show_policy(stage)
+
+        errors: list[str] = []
+        if not text.strip():
+            errors.append("Policy template is empty.")
+        if "```json" not in text:
+            errors.append("Policy must document JSON response schema.")
+        if "labels" not in text.lower():
+            errors.append("Policy must mention classification labels.")
+        if "confidence" not in text.lower():
+            errors.append("Policy must describe confidence scoring.")
+
+        return {
+            "stage": metadata.stage,
+            "stage_name": metadata.stage_name,
+            "path": str(metadata.path),
+            "sha256": metadata.sha256,
+            "size_bytes": metadata.size_bytes,
+            "modified_at": metadata.modified_at.isoformat()
+            if metadata.modified_at
+            else None,
+            "passed": not errors,
+            "errors": errors,
+        }
+
+    def _build_metadata(self, stage: int) -> PrivilegePolicyMetadata:
+        """Construct metadata for ``stage``."""
+        stage_name = STAGE_LABELS.get(stage, f"Stage {stage}")
+        try:
+            path = self._settings.get_privilege_policy_path(stage=stage)
+            exists = path.exists()
+        except FileNotFoundError:
+            return PrivilegePolicyMetadata(
+                stage=stage,
+                stage_name=stage_name,
+                path=self._override_path(stage),
+                exists=False,
+                sha256=None,
+                size_bytes=None,
+                modified_at=None,
+                source="missing",
+            )
+
+        sha256 = self._compute_sha256(path) if exists else None
+        stat = path.stat() if exists else None
+        source = self._determine_source(stage, path)
+
+        return PrivilegePolicyMetadata(
+            stage=stage,
+            stage_name=stage_name,
+            path=path,
+            exists=exists,
+            sha256=sha256,
+            size_bytes=stat.st_size if stat else None,
+            modified_at=datetime.fromtimestamp(stat.st_mtime) if stat else None,
+            source=source,
+        )
+
+    def _determine_source(self, stage: int, path: Path) -> Literal["default", "override", "explicit", "missing"]:
+        attr_name = f"privilege_policy_stage{stage}"
+        explicit_path: Path | None = getattr(self._settings, attr_name, None)
+        if explicit_path is not None and path == explicit_path:
+            return "explicit"
+
+        if path == self._override_path(stage):
+            return "override"
+
+        return "default"
+
+    def _override_path(self, stage: int) -> Path:
+        filename = {
+            1: "privilege_stage1.txt",
+            2: "privilege_stage2.txt",
+            3: "privilege_stage3.txt",
+        }.get(stage, f"privilege_stage{stage}.txt")
+        return self._settings.get_config_dir() / "policies" / filename
+
+    def _validate_allowed_path(self, path: Path) -> None:
+        allowed_roots: set[Path] = {
+            self._settings.get_config_dir().resolve(),
+            self._settings.get_data_dir().resolve(),
+        }
+
+        configured = [
+            self._settings.privilege_policy_stage1,
+            self._settings.privilege_policy_stage2,
+            self._settings.privilege_policy_stage3,
+        ]
+        for configured_path in configured:
+            if configured_path is not None:
+                allowed_roots.add(configured_path.resolve().parent)
+
+        if any(path.is_relative_to(root) for root in allowed_roots):
+            return
+        raise ValueError(f"Path traversal detected: {path}")
+
+    def _compute_sha256(self, path: Path) -> str:
+        data = path.read_bytes()
+        return hashlib.sha256(data).hexdigest()
+
+    def _log_update(
+        self,
+        stage: int,
+        metadata: PrivilegePolicyMetadata,
+        previous_hash: str | None,
+        source: str,
+        command_args: Sequence[str] | None,
+    ) -> None:
+        if self._ledger is None:
+            return
+
+        args: dict[str, Any] = {
+            "stage": stage,
+            "stage_name": metadata.stage_name,
+            "path": str(metadata.path),
+            "sha256": metadata.sha256,
+            "previous_sha256": previous_hash,
+            "source": source,
+            "size_bytes": metadata.size_bytes,
+        }
+        if command_args:
+            args["cli_args"] = sanitize_argv(list(command_args))
+
+        outputs: list[str] = []
+        if metadata.sha256:
+            outputs.append(metadata.sha256)
+
+        self._ledger.log(
+            operation="privilege.policy.update",
+            inputs=[str(metadata.path)],
+            outputs=outputs,
+            args=args,
+        )
 
 
 class PrivilegeReviewService:

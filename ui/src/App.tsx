@@ -4,9 +4,51 @@ import './App.css'
 import {
   rexlitApi,
   type PatternMatch,
+  type PrivilegePolicyDetail,
+  type PrivilegePolicyMetadata,
+  type PrivilegePolicyValidation,
   type PrivilegeReviewResponse,
   type SearchResult
 } from './api/rexlit'
+
+const POLICY_STAGE_LABELS: Record<number, string> = {
+  1: 'Stage 1 · Privilege',
+  2: 'Stage 2 · Responsiveness',
+  3: 'Stage 3 · Redaction'
+}
+
+type DiffLine = {
+  type: 'equal' | 'add' | 'remove'
+  text: string
+}
+
+function buildLineDiff(original: string, updated: string): DiffLine[] {
+  const originalLines = original.split('\n')
+  const updatedLines = updated.split('\n')
+  const maxLength = Math.max(originalLines.length, updatedLines.length)
+  const diff: DiffLine[] = []
+
+  for (let index = 0; index < maxLength; index += 1) {
+    const before = originalLines[index] ?? ''
+    const after = updatedLines[index] ?? ''
+
+    if (before === after) {
+      if (before) {
+        diff.push({ type: 'equal', text: before })
+      }
+      continue
+    }
+
+    if (before) {
+      diff.push({ type: 'remove', text: before })
+    }
+    if (after) {
+      diff.push({ type: 'add', text: after })
+    }
+  }
+
+  return diff
+}
 
 type Decision = 'privileged' | 'not_privileged' | 'skip'
 
@@ -25,6 +67,18 @@ function App() {
   const [showExplain, setShowExplain] = useState(false)
   const [explainLoading, setExplainLoading] = useState(false)
   const [explainError, setExplainError] = useState<string | null>(null)
+  const [policyOverview, setPolicyOverview] = useState<PrivilegePolicyMetadata[]>([])
+  const [policyStage, setPolicyStage] = useState<number>(1)
+  const [policyMetadata, setPolicyMetadata] = useState<PrivilegePolicyDetail | null>(null)
+  const [policyText, setPolicyText] = useState('')
+  const [editedPolicyText, setEditedPolicyText] = useState('')
+  const [policyLoading, setPolicyLoading] = useState(false)
+  const [policySaving, setPolicySaving] = useState(false)
+  const [policyMessage, setPolicyMessage] = useState<string | null>(null)
+  const [policyError, setPolicyError] = useState<string | null>(null)
+  const [policyValidation, setPolicyValidation] = useState<PrivilegePolicyValidation | null>(null)
+  const [showPolicyDiff, setShowPolicyDiff] = useState(false)
+  const [policyReloadKey, setPolicyReloadKey] = useState(0)
 
   useEffect(() => {
     rexlitApi
@@ -34,6 +88,55 @@ function App() {
         // stats are optional for MVP; swallow errors
       })
   }, [])
+
+  useEffect(() => {
+    rexlitApi
+      .listPolicies()
+      .then(setPolicyOverview)
+      .catch(() => {
+        // Policy overview is informative; ignore errors silently.
+      })
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    setPolicyLoading(true)
+    setPolicyError(null)
+    setPolicyMessage(null)
+    setPolicyValidation(null)
+    setShowPolicyDiff(false)
+
+    rexlitApi
+      .getPolicy(policyStage)
+      .then((detail) => {
+        if (cancelled) {
+          return
+        }
+        setPolicyMetadata(detail)
+        setPolicyText(detail.text)
+        setEditedPolicyText(detail.text)
+      })
+      .catch((err) => {
+        if (cancelled) {
+          return
+        }
+        setPolicyMetadata(null)
+        setPolicyText('')
+        setEditedPolicyText('')
+        setPolicyError(
+          err instanceof Error ? err.message : 'Failed to load privilege policy'
+        )
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setPolicyLoading(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [policyStage, policyReloadKey])
 
   const resultCount = useMemo(() => results.length, [results])
   const documentUrl = selected ? rexlitApi.getDocumentUrl(selected.sha256) : undefined
@@ -61,6 +164,18 @@ function App() {
   const decisionTimestamp = activeDecision?.decision_ts
   const formattedDecisionTs = decisionTimestamp
     ? new Date(decisionTimestamp).toLocaleString()
+    : null
+  const policyHasChanges = editedPolicyText !== policyText
+  const policyDiff = useMemo(
+    () => buildLineDiff(policyText, editedPolicyText),
+    [policyText, editedPolicyText]
+  )
+  const selectedPolicyOverview = useMemo(
+    () => policyOverview.find((item) => item.stage === policyStage),
+    [policyOverview, policyStage]
+  )
+  const policyModifiedAt = policyMetadata?.modified_at
+    ? new Date(policyMetadata.modified_at).toLocaleString()
     : null
 
   useEffect(() => {
@@ -164,6 +279,61 @@ function App() {
       setExplainLoading(false)
     }
   }, [explainReview, selected?.sha256, showExplain])
+
+  const handlePolicyStageChange = useCallback((stage: number) => {
+    setPolicyStage(stage)
+    setPolicyMessage(null)
+    setPolicyError(null)
+  }, [])
+
+  const handlePolicyReload = useCallback(() => {
+    setPolicyReloadKey((key) => key + 1)
+  }, [])
+
+  const handlePolicySave = useCallback(async () => {
+    if (!policyHasChanges) {
+      return
+    }
+
+    setPolicySaving(true)
+    setPolicyMessage(null)
+    setPolicyError(null)
+
+    try {
+      const metadata = await rexlitApi.updatePolicy(policyStage, editedPolicyText)
+      setPolicyText(editedPolicyText)
+      setPolicyMetadata((current) =>
+        current
+          ? { ...current, ...metadata, text: editedPolicyText }
+          : { ...metadata, text: editedPolicyText }
+      )
+      setPolicyValidation(null)
+      setPolicyMessage('Policy updated successfully.')
+      const overview = await rexlitApi.listPolicies()
+      setPolicyOverview(overview)
+    } catch (err) {
+      setPolicyError(
+        err instanceof Error ? err.message : 'Failed to update privilege policy'
+      )
+    } finally {
+      setPolicySaving(false)
+    }
+  }, [editedPolicyText, policyHasChanges, policyStage])
+
+  const handlePolicyValidate = useCallback(async () => {
+    setPolicyValidation(null)
+    setPolicyError(null)
+    setPolicyMessage(null)
+
+    try {
+      const result = await rexlitApi.validatePolicy(policyStage)
+      setPolicyValidation(result)
+    } catch (err) {
+      setPolicyError(
+        err instanceof Error ? err.message : 'Failed to validate privilege policy'
+      )
+    }
+  }, [policyStage])
 
   async function search(event: FormEvent) {
     event.preventDefault()
@@ -447,6 +617,143 @@ function App() {
           )}
         </section>
       </main>
+      <section className="policy-panel">
+        <header className="panel-header">
+          <div>
+            <h2>Privilege Policies</h2>
+            <p className="subtitle">
+              Edit the offline policy templates used by the CLI and review UI.
+            </p>
+          </div>
+          <div className="policy-stage">
+            <label>
+              Stage
+              <select
+                value={policyStage}
+                onChange={(event) => handlePolicyStageChange(Number(event.target.value))}
+                disabled={policyLoading || policySaving}
+              >
+                {[1, 2, 3].map((stage) => (
+                  <option key={stage} value={stage}>
+                    {POLICY_STAGE_LABELS[stage] ?? `Stage ${stage}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </header>
+
+        {policyOverview.length > 0 && (
+          <div className="policy-overview">
+            {policyOverview.map((meta) => (
+              <span
+                key={meta.stage}
+                className={`policy-chip ${meta.source ?? 'default'}`}
+                title={meta.path}
+              >
+                {POLICY_STAGE_LABELS[meta.stage] ?? `Stage ${meta.stage}`}
+                <small>{meta.source ?? 'default'}</small>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {policyError && <div className="alert error">{policyError}</div>}
+        {policyMessage && <div className="alert success">{policyMessage}</div>}
+
+        {policyValidation && (
+          <div className={`alert ${policyValidation.passed ? 'success' : 'error'}`}>
+            {policyValidation.passed
+              ? 'Policy validation passed.'
+              : 'Policy validation found issues.'}
+            {!policyValidation.passed && policyValidation.errors.length > 0 && (
+              <ul className="policy-errors">
+                {policyValidation.errors.map((err, index) => (
+                  <li key={`${err}-${index}`}>{err}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        <div className="policy-meta">
+          <span>Path: {policyMetadata?.path ?? '—'}</span>
+          <span>
+            Source: {policyMetadata?.source ?? selectedPolicyOverview?.source ?? 'default'}
+          </span>
+          <span>Updated: {policyModifiedAt ?? '—'}</span>
+        </div>
+
+        <p className="policy-note">
+          Policies are Markdown templates. PDF previews are not yet supported; edit the text
+          directly to update instructions.
+        </p>
+
+        <textarea
+          className="policy-editor"
+          value={editedPolicyText}
+          onChange={(event) => {
+            const nextValue = event.target.value
+            setEditedPolicyText(nextValue)
+            setPolicyMessage(null)
+            setPolicyError(null)
+            setPolicyValidation(null)
+            if (nextValue === policyText) {
+              setShowPolicyDiff(false)
+            }
+          }}
+          disabled={policyLoading || policySaving}
+          spellCheck={false}
+          rows={16}
+        />
+
+        <div className="policy-controls">
+          <button
+            type="button"
+            onClick={handlePolicyReload}
+            disabled={policyLoading || policySaving}
+          >
+            Reload
+          </button>
+          <button
+            type="button"
+            onClick={handlePolicyValidate}
+            disabled={policyLoading || policySaving || policyHasChanges}
+          >
+            Validate
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowPolicyDiff((value) => !value)}
+            disabled={!policyHasChanges}
+          >
+            {showPolicyDiff ? 'Hide diff' : 'Show diff'}
+          </button>
+          <button
+            type="button"
+            className="primary"
+            onClick={handlePolicySave}
+            disabled={!policyHasChanges || policySaving}
+          >
+            {policySaving ? 'Saving…' : 'Save changes'}
+          </button>
+        </div>
+
+        {policyLoading && (
+          <div className="policy-status">Loading policy template…</div>
+        )}
+
+        {!policyLoading && showPolicyDiff && policyHasChanges && (
+          <pre className="policy-diff">
+            {policyDiff.map((line, index) => (
+              <div key={`${line.type}-${index}`} className={`diff-line ${line.type}`}>
+                {line.type === 'add' ? '+' : line.type === 'remove' ? '−' : ' '}
+                {line.text}
+              </div>
+            ))}
+          </pre>
+        )}
+      </section>
     </div>
   )
 }
