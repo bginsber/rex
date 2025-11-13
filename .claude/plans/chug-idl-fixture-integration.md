@@ -14,12 +14,23 @@ RexLit currently uses programmatic, synthetic test fixtures (146 tests, 100% pas
 2. **Performance validation** - Benchmarks use generated data that may not expose real bottlenecks
 3. **Edge case coverage** - Real litigation documents contain formatting quirks, OCR challenges, and metadata inconsistencies
 
-**Solution:** Use Chug to sample and curate documents from the **UCSF Industry Documents Library (IDL)** - a public repository of tobacco/vaping litigation materials - to create persistent, realistic fixture corpora for:
-- Stress testing (100K+ document scale)
-- Performance benchmarking (indexing, search, OCR, privilege classification)
-- Edge case validation (malformed PDFs, complex metadata, privilege patterns)
+**Solution:** Use **Chug** (Hugging Face's multimodal dataset loader) as a **dev-only fixture generation tool** to sample and curate documents from the **UCSF Industry Documents Library (IDL)** - a public repository of tobacco/vaping litigation materials stored as webdataset shards on Hugging Face.
 
-This plan outlines the architecture, implementation phases, and integration with RexLit's existing hexagonal structure.
+### Key Architectural Decision
+
+**Chug is a sidecar R&D tool, NOT a runtime integration:**
+
+- ✅ **Strong fit:** One-time fixture generation - Sample IDL docs, write to filesystem, RexLit ingests normally
+- ✅ **Strong fit:** ML model training - Train OCR/layout/privilege models on IDL via Chug, RexLit consumes outputs
+- ❌ **Not a fit:** First-class ingestion backend - RexLit stays filesystem-native, doesn't couple to webdataset format
+
+**Why this approach?**
+- **Maturity mismatch:** Chug is alpha/unstable; RexLit is M1-complete and production-ready
+- **Dependency weight:** Chug requires PyTorch, torchvision, transformers; RexLit is a lightweight CLI
+- **Architectural fit:** RexLit is filesystem-driven and audit-focused; Chug is training-loop oriented
+- **Offline-first principle:** Fixtures generated once offline, then used like any other evidence directory
+
+This plan outlines the architecture for using Chug as a **fixture generation bridge** while keeping RexLit's core ingestion filesystem-based.
 
 ---
 
@@ -66,47 +77,112 @@ This plan outlines the architecture, implementation phases, and integration with
 
 ---
 
-## 2. What is Chug? (Requirements & Assumptions)
+## 2. What is Chug? (Actual Capabilities & Constraints)
 
-### 2.1 Assumed Capabilities
+### 2.1 Chug Overview
 
-Based on the task description, Chug is expected to:
+**Chug** is Hugging Face's minimal sharded dataset loader for multimodal document, image, and text datasets, explicitly designed as a **training/eval dataloader** for ML model development.
 
-1. **Sample IDL documents** - Extract subsets from UCSF Industry Documents Library
-2. **Curate corpora** - Filter/organize documents by criteria (case, custodian, file type, date range)
-3. **Generate fixtures** - Export sampled documents in formats compatible with RexLit ingestion
-4. **Metadata preservation** - Maintain IDL metadata (Bates, custodian, case, OCR text)
+**Source:** `huggingface/chug` (GitHub, alpha status, API unstable)
 
-### 2.2 Integration Requirements
+**Key characteristics:**
+- **Purpose:** PyTorch-style iterable dataloaders for training doc models (Donut, DocVQA, OCR, layout detection)
+- **Format:** Reads webdataset `.tar` shards (not plain filesystems)
+- **Scale:** Designed for massive datasets (6TB+ IDL corpus, millions of docs, tens of millions of pages)
+- **Features:** On-the-fly PDF decoding/rendering via `pypdfium2`, document-oriented task pipelines
+- **Dependencies:** PyTorch, torchvision, albumentations, HF transformers (heavy ML stack)
+- **Maturity:** **Alpha, pre-announcement, API unstable** (marked explicitly in repo)
 
-Chug must:
-- Support **deterministic sampling** (reproducible fixture generation)
-- Export in **RexLit-compatible formats** (directory structure with documents + metadata)
-- Provide **corpus manifests** (JSONL with document metadata)
-- Enable **incremental curation** (add/remove documents without regenerating entire corpus)
-- Support **offline operation** (no network dependencies during fixture use)
+### 2.2 IDL on Hugging Face
 
-### 2.3 Open Questions (Needs Clarification)
+**UCSF Industry Documents Library (IDL)** is available on HF as `pixparse/idl-wds`:
+- **Format:** Webdataset `.tar` shards with JSON metadata + embedded PDF bytes/page text
+- **Size:** 6TB+ for broader IDL stack (millions of documents)
+- **Content:** Tobacco/vaping litigation documents (JUUL, Phillip Morris, etc.) with OCR text
+- **Quality:** High-quality OCR dataset with ugly scans, fax artifacts, charts, typewriter text (stress-test material)
+- **Alternative view:** Parquet-converted format also available
 
-1. **Chug implementation status:**
-   - Is Chug already implemented, or is this plan also for building Chug?
-   - If implemented, where is it located? (External tool, Python module, CLI?)
+**Chug integration:** Chug's `DataTaskDocReadCfg` has IDL examples in README, designed specifically for this dataset.
 
-2. **IDL access method:**
-   - Direct filesystem access to downloaded IDL archives?
-   - API-based sampling from UCSF servers?
-   - Pre-downloaded corpus that Chug filters?
+### 2.3 Why Chug is NOT a First-Class RexLit Integration
 
-3. **Output format:**
-   - Directory tree with documents + manifest.jsonl?
-   - SQLite database with embedded documents?
-   - Tar/zip archive?
+**RexLit's architecture conflicts with Chug's design:**
 
-4. **Corpus versioning:**
-   - How are fixture corpora versioned (git tags, semantic versioning)?
-   - Are corpora immutable once generated, or can they be updated?
+| Dimension | RexLit | Chug |
+|-----------|--------|------|
+| **Purpose** | Offline-first litigation toolkit | Training loop dataloader |
+| **Input format** | Filesystem directories of PDFs/DOCX/EML | Webdataset tar shards |
+| **Processing model** | Deterministic, single-pass, audit-logged | Multi-epoch, shuffled, randomized |
+| **Dependencies** | Lightweight (Tantivy, Tesseract, pypdf) | Heavy ML stack (PyTorch, transformers) |
+| **Maturity** | M1-complete, production-ready | Alpha, API unstable |
+| **Licensing** | Clear (Apache/MIT preferred) | Optional AGPL (PyMuPDF backend) |
 
-**Action:** Clarify these questions before proceeding to implementation.
+**Making Chug a first-class ingestion backend would:**
+- ❌ Complicate offline/audit story (webdataset streaming vs. deterministic file processing)
+- ❌ Add heavy ML dependencies to a CLI tool
+- ❌ Couple production code to alpha-quality, API-unstable library
+- ❌ Require teaching RexLit to read webdataset shards instead of plain files
+
+### 2.4 The Right Integration Pattern: Dev-Only Fixture Bridge
+
+**Instead of coupling Chug to RexLit's core, use Chug as a dev-time fixture generator:**
+
+```
+Chug (dev-only)                RexLit (production)
+      ↓                              ↓
+  IDL webdataset          Filesystem directory
+      ↓                              ↓
+Sample/filter/render  →   Plain PDFs + manifest.jsonl
+      ↓                              ↓
+  One-time export         Normal ingest/index/ocr workflow
+```
+
+**This approach:**
+- ✅ Keeps RexLit filesystem-native and lightweight
+- ✅ Isolates alpha-quality Chug code in dev scripts only
+- ✅ Enables one-time fixture generation with offline reuse
+- ✅ Allows Chug to break without affecting RexLit production code
+- ✅ Maintains audit trail and determinism in RexLit's core workflows
+
+### 2.5 Dual Use Cases for Chug
+
+**Use Case 1: Fixture Generation (this plan's focus)**
+- Sample IDL docs via Chug
+- Export to filesystem as plain PDFs + JSONL manifest
+- RexLit ingests like any other evidence directory
+- Use for stress tests, benchmarks, edge case validation
+
+**Use Case 2: ML Model Training (separate, future work)**
+- Train OCR models (Tesseract alternatives, PaddleOCR)
+- Train layout detection models (privilege region identification)
+- Train document classification models (privilege detection, responsiveness)
+- Train multimodal doc readers (Donut-style)
+- **RexLit consumes trained model outputs**, never the training loop itself
+
+### 2.6 Dependency Management
+
+Chug will be an **optional dev dependency**, not required for RexLit's core functionality:
+
+**pyproject.toml:**
+```toml
+[project.optional-dependencies]
+dev-idl = [
+    "chug>=0.1.0",  # Hugging Face dataset loader
+    "torch>=2.0",    # Required by Chug
+    "datasets>=2.14", # HF datasets library
+]
+```
+
+**Installation:**
+```bash
+# Standard RexLit (no Chug)
+pip install rexlit
+
+# With IDL fixture generation (dev only)
+pip install 'rexlit[dev-idl]'
+```
+
+**CI/Runtime:** RexLit's core tests and CLI **never** import Chug; fixtures are pre-generated.
 
 ---
 
@@ -117,26 +193,40 @@ Chug must:
 ```
 rexlit/
 ├── docs/
-│   ├── sample-docs/          # Existing submodule (small developer samples)
-│   └── chug-fixtures/        # NEW: IDL fixture corpora (git submodule or local)
-│       ├── small/            # 100 docs - Fast smoke tests
-│       ├── medium/           # 1,000 docs - Integration tests
-│       ├── large/            # 10,000 docs - Stress tests
-│       ├── xl/               # 100,000 docs - Benchmark suite
-│       └── edge-cases/       # Curated edge cases (malformed PDFs, etc.)
+│   ├── sample-docs/              # Existing submodule (small developer samples)
+│   └── idl-fixtures/             # NEW: IDL fixture corpora (generated once, committed or submodule)
+│       ├── small/                # 100 docs - Fast smoke tests
+│       │   ├── docs/             # Plain PDFs extracted from IDL
+│       │   └── manifest.jsonl    # Metadata (Bates, custodian, case, etc.)
+│       ├── medium/               # 1,000 docs - Integration tests
+│       ├── large/                # 10,000 docs - Stress tests
+│       ├── xl/                   # 100,000 docs - Benchmark suite (optional, external storage)
+│       └── edge-cases/           # Curated edge cases (malformed PDFs, OCR challenges)
+│           ├── ocr-failures/     # Scanned docs with poor OCR
+│           ├── layout-complex/   # Charts, tables, multi-column
+│           └── privilege-patterns/ # Known privileged/non-privileged examples
 │
 tests/
-├── conftest.py               # EXTEND: Add chug_corpus() fixture
-├── test_chug_integration.py  # NEW: Chug-specific tests
-└── benchmark_chug.py         # NEW: Chug corpus benchmarks
+├── conftest.py                   # EXTEND: Add idl_corpus() fixture
+├── test_idl_integration.py       # NEW: IDL corpus tests
+└── benchmark_idl.py              # NEW: IDL corpus benchmarks
 │
 scripts/
-├── setup-chug-fixtures.sh    # NEW: Initialize Chug fixtures
-├── chug-sample.py            # NEW: CLI wrapper for Chug sampling
-└── chug-validate.py          # NEW: Validate Chug corpus integrity
+├── dev/                          # DEV-ONLY scripts (require [dev-idl] extra)
+│   ├── idl_to_rexlit_fixture.py  # NEW: Chug → filesystem bridge
+│   ├── idl_train_ocr_model.py    # NEW: Train OCR models on IDL (future)
+│   └── idl_train_privilege.py    # NEW: Train privilege models on IDL (future)
+├── setup-idl-fixtures.sh         # NEW: Initialize IDL fixtures (download or generate)
+└── validate-idl-fixtures.py      # NEW: Validate corpus integrity
 │
-.gitmodules                   # ADD: Chug fixtures submodule (optional)
+.gitmodules                       # ADD: IDL fixtures submodule (optional)
 ```
+
+**Key changes from original plan:**
+- Renamed `chug-fixtures/` to `idl-fixtures/` (reflects source, not tool)
+- Chug scripts isolated in `scripts/dev/` (requires optional `[dev-idl]` extra)
+- Fixtures are **plain filesystem directories** that RexLit ingests normally
+- No FixturePort/ChugFixtureAdapter in core RexLit (no runtime integration)
 
 ### 3.2 Corpus Tier Design
 
@@ -176,87 +266,41 @@ Each corpus includes a `manifest.jsonl` with IDL metadata:
 - `privilege_claimed` - Ground truth for privilege classification tests
 - `idl_url` - Link back to original IDL document (for provenance)
 
-### 3.4 Integration with Hexagonal Architecture
+### 3.4 NO Hexagonal Architecture Changes Required
 
-Chug integration follows RexLit's ports-and-adapters pattern:
+**Critical design decision:** IDL fixtures are **not** integrated into RexLit's core architecture. No new ports, adapters, or bootstrap wiring.
+
+**Why?**
+- IDL fixtures are **plain filesystem directories** with PDFs + metadata
+- RexLit's existing `discover_documents()` already handles them
+- No need for specialized ingestion logic
+- Keeps core RexLit lightweight and decoupled from IDL/Chug
+
+**Data flow:**
 
 ```
-CLI (rexlit/cli.py)
-  ↓
-Bootstrap (rexlit/bootstrap.py)
-  ↓
-Application Services (rexlit/app/*.py)
-  ↓
-Port Interfaces (rexlit/app/ports/*.py)
-  ↑ implemented by
-FixturePort (NEW) ← ChugFixtureAdapter (NEW)
-  ↓ uses
-Chug CLI/Library
+Dev-time (one-time):
+  Chug (scripts/dev/idl_to_rexlit_fixture.py)
+    ↓
+  IDL webdataset → Sample/filter → Export PDFs to rexlit/docs/idl-fixtures/small/docs/
+    ↓
+  Generate manifest.jsonl with metadata
+
+Runtime (every test/benchmark):
+  RexLit ingests idl-fixtures/ like any other directory
+    ↓
+  rexlit ingest run ./rexlit/docs/idl-fixtures/small
+    ↓
+  Normal discovery → extraction → indexing workflow
 ```
 
-**New Port:** `rexlit/app/ports/fixture.py`
+**No code changes to RexLit's core modules:**
+- ❌ No new port interfaces
+- ❌ No new adapters
+- ❌ No bootstrap wiring
+- ✅ Fixtures are transparent to RexLit (just another evidence directory)
 
-```python
-from typing import Protocol, Iterator, Path
-from dataclasses import dataclass
-
-@dataclass
-class FixtureMetadata:
-    doc_id: str
-    bates: str
-    custodian: str
-    filepath: Path
-    sha256: str
-    privilege_claimed: bool
-    # ... other IDL metadata
-
-class FixturePort(Protocol):
-    """Port for loading test/benchmark fixture corpora."""
-
-    def list_corpora(self) -> list[str]:
-        """List available fixture corpus names."""
-        ...
-
-    def load_corpus(self, name: str) -> Iterator[FixtureMetadata]:
-        """Stream fixture metadata from named corpus."""
-        ...
-
-    def validate_corpus(self, name: str) -> bool:
-        """Validate corpus integrity (checksums, file existence)."""
-        ...
-```
-
-**Adapter:** `rexlit/app/adapters/chug_fixture.py`
-
-```python
-class ChugFixtureAdapter:
-    """Adapter for loading Chug-generated IDL fixture corpora."""
-
-    def __init__(self, fixture_root: Path):
-        self.fixture_root = fixture_root
-
-    def load_corpus(self, name: str) -> Iterator[FixtureMetadata]:
-        manifest_path = self.fixture_root / name / "manifest.jsonl"
-        with open(manifest_path) as f:
-            for line in f:
-                record = json.loads(line)
-                yield FixtureMetadata(
-                    doc_id=record["doc_id"],
-                    bates=record["bates"],
-                    custodian=record["custodian"],
-                    filepath=self.fixture_root / name / record["filepath"],
-                    sha256=record["sha256"],
-                    privilege_claimed=record["privilege_claimed"],
-                )
-```
-
-**Bootstrap wiring:** `rexlit/bootstrap.py`
-
-```python
-def create_fixture_adapter(settings: Settings) -> ChugFixtureAdapter:
-    fixture_root = settings.fixture_root or Path("rexlit/docs/chug-fixtures")
-    return ChugFixtureAdapter(fixture_root)
-```
+**All Chug-specific logic stays in `scripts/dev/`** (optional `[dev-idl]` dependency)
 
 ---
 
@@ -264,74 +308,73 @@ def create_fixture_adapter(settings: Settings) -> ChugFixtureAdapter:
 
 ### 4.1 New Fixture in conftest.py
 
+**Simplified fixtures** - Just return paths to filesystem directories, no specialized loaders.
+
 ```python
 # tests/conftest.py
 
 import os
 import pytest
 from pathlib import Path
-from typing import Generator
 
 @pytest.fixture(scope="session")
-def chug_fixture_root() -> Path:
+def idl_fixture_root() -> Path:
     """
-    Determine Chug fixture corpus root directory.
+    Determine IDL fixture corpus root directory.
 
     Priority:
-    1. CHUG_FIXTURE_PATH environment variable
-    2. rexlit/docs/chug-fixtures/ (local or submodule)
+    1. IDL_FIXTURE_PATH environment variable
+    2. rexlit/docs/idl-fixtures/ (local or submodule)
     3. Skip if not available (for CI without fixtures)
     """
-    env_path = os.getenv("CHUG_FIXTURE_PATH")
+    env_path = os.getenv("IDL_FIXTURE_PATH")
     if env_path:
         return Path(env_path)
 
-    default_path = Path(__file__).parent.parent / "rexlit/docs/chug-fixtures"
+    default_path = Path(__file__).parent.parent / "rexlit/docs/idl-fixtures"
     if default_path.exists():
         return default_path
 
-    pytest.skip("Chug fixtures not available (set CHUG_FIXTURE_PATH or initialize submodule)")
+    pytest.skip("IDL fixtures not available (set IDL_FIXTURE_PATH or run setup-idl-fixtures.sh)")
 
 @pytest.fixture(scope="session")
-def chug_small(chug_fixture_root: Path) -> Path:
-    """Small corpus (100 docs) for quick smoke tests."""
-    corpus_path = chug_fixture_root / "small"
+def idl_small(idl_fixture_root: Path) -> Path:
+    """Small IDL corpus (100 docs) for quick smoke tests."""
+    corpus_path = idl_fixture_root / "small"
     if not corpus_path.exists():
-        pytest.skip("Small corpus not initialized")
+        pytest.skip("Small IDL corpus not initialized")
     return corpus_path
 
 @pytest.fixture(scope="session")
-def chug_medium(chug_fixture_root: Path) -> Path:
-    """Medium corpus (1,000 docs) for integration tests."""
-    corpus_path = chug_fixture_root / "medium"
+def idl_medium(idl_fixture_root: Path) -> Path:
+    """Medium IDL corpus (1,000 docs) for integration tests."""
+    corpus_path = idl_fixture_root / "medium"
     if not corpus_path.exists():
-        pytest.skip("Medium corpus not initialized")
+        pytest.skip("Medium IDL corpus not initialized")
     return corpus_path
 
 @pytest.fixture(scope="session")
-def chug_large(chug_fixture_root: Path) -> Path:
-    """Large corpus (10,000 docs) for stress tests."""
-    corpus_path = chug_fixture_root / "large"
+def idl_large(idl_fixture_root: Path) -> Path:
+    """Large IDL corpus (10,000 docs) for stress tests."""
+    corpus_path = idl_fixture_root / "large"
     if not corpus_path.exists():
-        pytest.skip("Large corpus not initialized")
+        pytest.skip("Large IDL corpus not initialized")
     return corpus_path
 
 @pytest.fixture(scope="session")
-def chug_xl(chug_fixture_root: Path) -> Path:
-    """XL corpus (100,000 docs) for benchmarks."""
-    corpus_path = chug_fixture_root / "xl"
-    if not corpus_path.exists():
-        pytest.skip("XL corpus not initialized")
-    return corpus_path
-
-@pytest.fixture(scope="session")
-def chug_edge_cases(chug_fixture_root: Path) -> Path:
-    """Edge case corpus (malformed PDFs, OCR challenges)."""
-    corpus_path = chug_fixture_root / "edge-cases"
+def idl_edge_cases(idl_fixture_root: Path) -> Path:
+    """Edge case IDL corpus (malformed PDFs, OCR challenges)."""
+    corpus_path = idl_fixture_root / "edge-cases"
     if not corpus_path.exists():
         pytest.skip("Edge cases corpus not initialized")
     return corpus_path
 ```
+
+**Key simplifications:**
+- Renamed `chug_*` to `idl_*` (reflects data source, not tool)
+- Fixtures just return `Path` objects (no custom adapters)
+- RexLit's existing `discover_documents()` handles these directories
+- Tests remain agnostic to IDL/Chug specifics
 
 ### 4.2 Pytest Markers
 
@@ -340,33 +383,30 @@ def chug_edge_cases(chug_fixture_root: Path) -> Path:
 ```toml
 [tool.pytest.ini_options]
 markers = [
-    "chug: Tests using Chug IDL fixture corpora",
-    "chug_small: Tests using small corpus (100 docs)",
-    "chug_medium: Tests using medium corpus (1,000 docs)",
-    "chug_large: Tests using large corpus (10,000 docs)",
-    "chug_xl: Tests using XL corpus (100,000 docs)",
-    "chug_edge: Tests using edge case corpus",
+    "idl: Tests using IDL fixture corpora",
+    "idl_small: Tests using small IDL corpus (100 docs)",
+    "idl_medium: Tests using medium IDL corpus (1,000 docs)",
+    "idl_large: Tests using large IDL corpus (10,000 docs)",
+    "idl_edge: Tests using edge case IDL corpus",
     "slow: Slow-running tests (skip in fast CI)",
 ]
 ```
 
-### 4.3 Example Test Using Chug Fixtures
+### 4.3 Example Test Using IDL Fixtures
 
 ```python
-# tests/test_chug_integration.py
+# tests/test_idl_integration.py
 
 import pytest
 from rexlit.app.bootstrap import create_container
 from rexlit.ingest.discover import discover_documents
 from rexlit.index.build import build_index
 
-@pytest.mark.chug_small
-def test_ingest_chug_small_corpus(chug_small, temp_dir):
-    """Test ingestion of small Chug corpus."""
-    manifest_path = temp_dir / "manifest.jsonl"
-
-    # Discover documents from Chug corpus
-    docs = list(discover_documents(chug_small))
+@pytest.mark.idl_small
+def test_ingest_idl_small_corpus(idl_small, temp_dir):
+    """Test ingestion of small IDL corpus."""
+    # Discover documents from IDL corpus (RexLit treats it like any directory)
+    docs = list(discover_documents(idl_small / "docs"))
 
     assert len(docs) >= 100, "Small corpus should have ~100 docs"
 
@@ -375,23 +415,23 @@ def test_ingest_chug_small_corpus(chug_small, temp_dir):
         assert doc.sha256
         assert doc.path.exists()
 
-@pytest.mark.chug_medium
+@pytest.mark.idl_medium
 @pytest.mark.slow
-def test_index_build_determinism_chug_medium(chug_medium, temp_dir):
-    """Verify deterministic indexing with medium Chug corpus."""
+def test_index_build_determinism_idl_medium(idl_medium, temp_dir):
+    """Verify deterministic indexing with medium IDL corpus."""
     index_dir_1 = temp_dir / "index1"
     index_dir_2 = temp_dir / "index2"
 
     # Build index twice
-    build_index(chug_medium, index_dir_1, workers=4)
-    build_index(chug_medium, index_dir_2, workers=4)
+    build_index(idl_medium / "docs", index_dir_1, workers=4)
+    build_index(idl_medium / "docs", index_dir_2, workers=4)
 
     # Indexes should be identical (deterministic sorting)
     # Compare index metadata, document order, etc.
     # ... assertions ...
 
-@pytest.mark.chug_edge
-def test_malformed_pdf_handling(chug_edge_cases):
+@pytest.mark.idl_edge
+def test_malformed_pdf_handling(idl_edge_cases):
     """Test graceful handling of malformed PDFs from edge case corpus."""
     # Load known-malformed document from edge case corpus
     # Verify error handling, logging, skip behavior
@@ -400,9 +440,340 @@ def test_malformed_pdf_handling(chug_edge_cases):
 
 ---
 
-## 5. Benchmark Suite Enhancement
+## 5. Chug Fixture Generation Script
 
-### 5.1 New Benchmark: benchmark_chug.py
+### 5.1 The IDL-to-Filesystem Bridge: `idl_to_rexlit_fixture.py`
+
+**Purpose:** One-time dev script to sample IDL documents via Chug and export to plain filesystem directories that RexLit can ingest.
+
+**Location:** `scripts/dev/idl_to_rexlit_fixture.py` (requires `pip install 'rexlit[dev-idl]'`)
+
+**Key responsibilities:**
+1. Load IDL webdataset shards via Chug
+2. Apply stratified sampling (file type, custodian, date range, privilege status)
+3. Extract PDF bytes and write to filesystem
+4. Generate manifest.jsonl with IDL metadata
+5. Validate corpus integrity (checksums, file counts)
+
+### 5.2 Implementation Sketch
+
+```python
+#!/usr/bin/env python3
+"""
+IDL to RexLit Fixture Generator
+
+Samples documents from UCSF Industry Documents Library (IDL) via Chug
+and exports to filesystem directories that RexLit can ingest normally.
+
+Usage:
+    python scripts/dev/idl_to_rexlit_fixture.py \\
+        --tier small \\
+        --count 100 \\
+        --seed 42 \\
+        --output rexlit/docs/idl-fixtures/small
+
+    python scripts/dev/idl_to_rexlit_fixture.py \\
+        --tier edge-cases \\
+        --filter "privilege_claimed=true" \\
+        --count 50 \\
+        --output rexlit/docs/idl-fixtures/edge-cases/privilege-patterns
+
+Requires: pip install 'rexlit[dev-idl]'
+"""
+
+import json
+import hashlib
+import argparse
+from pathlib import Path
+from typing import Iterator, Dict, Any
+
+try:
+    import chug
+    from chug import DataCfg, DataTaskDocReadCfg
+except ImportError:
+    print("ERROR: Chug not installed. Run: pip install 'rexlit[dev-idl]'")
+    exit(1)
+
+
+def sample_idl_documents(
+    count: int,
+    seed: int = 42,
+    filters: Dict[str, Any] | None = None,
+) -> Iterator[Dict[str, Any]]:
+    """
+    Sample documents from IDL via Chug.
+
+    Args:
+        count: Number of documents to sample
+        seed: Random seed for reproducibility
+        filters: Optional filters (case, custodian, date_range, file_type, privilege_claimed)
+
+    Yields:
+        Document records with keys: pdf_bytes, metadata (Bates, custodian, case, etc.)
+    """
+    # Configure Chug to load IDL webdataset
+    task_cfg = DataTaskDocReadCfg(
+        page_sampling='all',  # Include all pages per document
+    )
+
+    data_cfg = DataCfg(
+        source='pixparse/idl-wds',  # IDL on Hugging Face
+        split='train',
+        batch_size=None,  # Stream one at a time
+        format='hfids',  # Hugging Face dataset format
+        num_workers=0,  # Single-threaded for determinism
+        seed=seed,
+    )
+
+    loader = chug.create_loader(data_cfg, task_cfg)
+
+    sampled = 0
+    for sample in loader:
+        # Apply filters
+        if filters:
+            if 'case' in filters and sample['metadata'].get('case') != filters['case']:
+                continue
+            if 'custodian' in filters and sample['metadata'].get('custodian') not in filters['custodian']:
+                continue
+            if 'privilege_claimed' in filters and sample['metadata'].get('privilege_claimed') != filters['privilege_claimed']:
+                continue
+            # ... more filter logic ...
+
+        yield {
+            'pdf_bytes': sample['pdf_bytes'],
+            'metadata': sample['metadata'],
+        }
+
+        sampled += 1
+        if sampled >= count:
+            break
+
+
+def export_corpus(
+    documents: Iterator[Dict[str, Any]],
+    output_dir: Path,
+) -> None:
+    """
+    Export sampled documents to filesystem directory.
+
+    Structure:
+        output_dir/
+        ├── docs/
+        │   ├── JLI00489744.pdf
+        │   ├── JLI00490012.pdf
+        │   └── ...
+        └── manifest.jsonl
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    docs_dir = output_dir / "docs"
+    docs_dir.mkdir(exist_ok=True)
+
+    manifest_path = output_dir / "manifest.jsonl"
+    manifest_records = []
+
+    for doc in documents:
+        metadata = doc['metadata']
+        pdf_bytes = doc['pdf_bytes']
+
+        # Write PDF to disk
+        doc_id = metadata['doc_id']
+        pdf_path = docs_dir / f"{doc_id}.pdf"
+        pdf_path.write_bytes(pdf_bytes)
+
+        # Compute SHA-256 hash
+        sha256 = hashlib.sha256(pdf_bytes).hexdigest()
+
+        # Build manifest record
+        manifest_record = {
+            'doc_id': doc_id,
+            'bates': metadata.get('bates', doc_id),
+            'custodian': metadata.get('custodian', 'unknown'),
+            'case': metadata.get('case', 'unknown'),
+            'filepath': f"docs/{doc_id}.pdf",
+            'sha256': sha256,
+            'file_size': len(pdf_bytes),
+            'page_count': metadata.get('page_count', 0),
+            'datesent': metadata.get('datesent'),
+            'type': metadata.get('type', 'document'),
+            'privilege_claimed': metadata.get('privilege_claimed', False),
+            'idl_url': f"https://industrydocuments.ucsf.edu/tobacco/docs/#id={doc_id}",
+        }
+        manifest_records.append(manifest_record)
+
+    # Write manifest.jsonl
+    with open(manifest_path, 'w') as f:
+        for record in manifest_records:
+            f.write(json.dumps(record) + '\\n')
+
+    print(f"✓ Exported {len(manifest_records)} documents to {output_dir}")
+    print(f"  - PDFs: {docs_dir}")
+    print(f"  - Manifest: {manifest_path}")
+
+
+def validate_corpus(corpus_dir: Path) -> bool:
+    """Validate corpus integrity (checksums, file existence)."""
+    manifest_path = corpus_dir / "manifest.jsonl"
+    if not manifest_path.exists():
+        print(f"✗ Manifest not found: {manifest_path}")
+        return False
+
+    errors = []
+    with open(manifest_path) as f:
+        for line_num, line in enumerate(f, start=1):
+            record = json.loads(line)
+            doc_path = corpus_dir / record['filepath']
+
+            if not doc_path.exists():
+                errors.append(f"Line {line_num}: File not found: {doc_path}")
+                continue
+
+            # Verify checksum
+            actual_hash = hashlib.sha256(doc_path.read_bytes()).hexdigest()
+            if actual_hash != record['sha256']:
+                errors.append(f"Line {line_num}: Checksum mismatch for {record['filepath']}")
+
+    if errors:
+        print(f"✗ Corpus validation failed ({len(errors)} errors):")
+        for error in errors[:10]:  # Print first 10 errors
+            print(f"  {error}")
+        return False
+
+    print(f"✓ Corpus validated successfully ({line_num} documents)")
+    return True
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate IDL fixture corpus via Chug")
+    parser.add_argument("--tier", required=True, help="Corpus tier name (small, medium, large, xl, edge-cases)")
+    parser.add_argument("--count", type=int, required=True, help="Number of documents to sample")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
+    parser.add_argument("--output", type=Path, required=True, help="Output directory")
+    parser.add_argument("--filter", action="append", help="Filters (key=value format)")
+    parser.add_argument("--validate", action="store_true", help="Validate corpus after generation")
+
+    args = parser.parse_args()
+
+    # Parse filters
+    filters = {}
+    if args.filter:
+        for f in args.filter:
+            key, value = f.split('=', 1)
+            filters[key] = value
+
+    print(f"=== IDL Fixture Generation ({args.tier}) ===")
+    print(f"  Count: {args.count}")
+    print(f"  Seed: {args.seed}")
+    print(f"  Output: {args.output}")
+    print(f"  Filters: {filters or 'None'}")
+    print()
+
+    # Sample documents
+    print("Sampling documents from IDL via Chug...")
+    documents = sample_idl_documents(args.count, args.seed, filters)
+
+    # Export to filesystem
+    export_corpus(documents, args.output)
+
+    # Validate
+    if args.validate:
+        print()
+        validate_corpus(args.output)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+### 5.3 Corpus Generation Workflow
+
+**One-time generation per tier:**
+
+```bash
+# 1. Install dev dependencies
+pip install 'rexlit[dev-idl]'
+
+# 2. Generate small corpus (100 docs, for CI)
+python scripts/dev/idl_to_rexlit_fixture.py \\
+    --tier small \\
+    --count 100 \\
+    --seed 42 \\
+    --output rexlit/docs/idl-fixtures/small \\
+    --validate
+
+# 3. Generate medium corpus (1K docs, for integration tests)
+python scripts/dev/idl_to_rexlit_fixture.py \\
+    --tier medium \\
+    --count 1000 \\
+    --seed 42 \\
+    --output rexlit/docs/idl-fixtures/medium \\
+    --validate
+
+# 4. Generate edge case corpus (privileged documents only)
+python scripts/dev/idl_to_rexlit_fixture.py \\
+    --tier edge-cases \\
+    --count 50 \\
+    --filter "privilege_claimed=true" \\
+    --output rexlit/docs/idl-fixtures/edge-cases/privilege-patterns \\
+    --validate
+
+# 5. Generate edge case corpus (OCR failures)
+python scripts/dev/idl_to_rexlit_fixture.py \\
+    --tier edge-cases \\
+    --count 50 \\
+    --filter "quality=poor_ocr" \\
+    --output rexlit/docs/idl-fixtures/edge-cases/ocr-failures \\
+    --validate
+```
+
+**After generation:**
+- Fixtures are plain filesystem directories
+- Commit to git (small/medium) or store separately (large/xl)
+- RexLit ingests them like any other evidence directory
+- Chug/IDL are no longer needed at runtime
+
+### 5.4 Alternative: ML Model Training Workflows
+
+**Future use case:** Train doc models on IDL via Chug, RexLit consumes trained model outputs.
+
+**Example:** Train privilege classification model
+
+```python
+# scripts/dev/idl_train_privilege.py
+
+import chug
+from transformers import AutoModel, AutoTokenizer
+
+# Load IDL via Chug with privilege labels
+task_cfg = chug.DataTaskDocReadCfg(page_sampling='first')  # First page only
+data_cfg = chug.DataCfg(source='pixparse/idl-wds', split='train')
+loader = chug.create_loader(data_cfg, task_cfg)
+
+# Train doc classifier (simplified)
+model = AutoModel.from_pretrained("microsoft/layoutlmv3-base")
+tokenizer = AutoTokenizer.from_pretrained("microsoft/layoutlmv3-base")
+
+for sample in loader:
+    # Extract features
+    tokens = tokenizer(sample['text'], return_tensors='pt')
+
+    # Train on privilege label
+    label = sample['metadata']['privilege_claimed']
+    # ... training loop ...
+
+# Save trained model
+model.save_pretrained("models/idl-privilege-classifier")
+
+# RexLit can then use this model:
+# rexlit privilege classify --model models/idl-privilege-classifier
+```
+
+**Key insight:** Chug is used for **training only**, not runtime. RexLit only depends on trained model weights, not Chug itself.
+
+---
+
+## 6. Benchmark Suite Enhancement
+
+### 6.1 New Benchmark: benchmark_idl.py
 
 ```python
 # scripts/benchmark_chug.py
@@ -670,60 +1041,79 @@ If Chug fixtures are stored in a separate repository:
 
 ---
 
-## 7. Implementation Phases
+## 7. Implementation Phases (REVISED)
 
-### Phase 1: Infrastructure Setup (1-2 days)
+### Phase 1: Dev Infrastructure & Dependencies (1 day)
 
-**Goal:** Establish foundation for Chug integration
+**Goal:** Set up optional dev dependencies and directory structure
 
 **Tasks:**
 1. ✅ Document current test infrastructure (complete - agent analysis)
-2. ✅ Design Chug fixture architecture (complete - this plan)
-3. Create `FixturePort` interface in `rexlit/app/ports/fixture.py`
-4. Implement `ChugFixtureAdapter` in `rexlit/app/adapters/chug_fixture.py`
-5. Wire adapter in `rexlit/bootstrap.py`
-6. Add configuration to `rexlit/config.py`
-7. Update `pyproject.toml` with pytest markers
+2. ✅ Design IDL fixture architecture (complete - this plan)
+3. Add `[dev-idl]` optional dependency group to `pyproject.toml`:
+   ```toml
+   [project.optional-dependencies]
+   dev-idl = ["chug>=0.1.0", "torch>=2.0", "datasets>=2.14"]
+   ```
+4. Create `scripts/dev/` directory for Chug-specific scripts
+5. Update `pyproject.toml` with pytest markers (`idl`, `idl_small`, etc.)
+6. Create `.gitignore` entries for IDL fixture directories (if not committing)
 
-**Deliverable:** Port/adapter infrastructure ready for fixture loading
+**Deliverable:** Infrastructure ready for dev-time fixture generation (NO core RexLit changes)
 
-### Phase 2: Pytest Integration (1 day)
+### Phase 2: Fixture Generation Script (2-3 days)
 
-**Goal:** Enable Chug fixtures in test suite
-
-**Tasks:**
-1. Add fixture functions to `tests/conftest.py`
-2. Create `tests/test_chug_integration.py` with example tests
-3. Add pytest markers for corpus tiers
-4. Write documentation for using Chug fixtures in tests
-5. Update `CLAUDE.md` with Chug testing guidance
-
-**Deliverable:** Tests can load and use Chug fixtures
-
-### Phase 3: Chug Sampling Tool (3-5 days)
-
-**Goal:** Build tool to sample/curate IDL documents into fixture corpora
+**Goal:** Build `idl_to_rexlit_fixture.py` to sample IDL docs via Chug
 
 **Tasks:**
-1. **Clarify Chug requirements** (see §2.3 Open Questions)
-2. Design Chug sampling CLI or Python module
-3. Implement sampling logic:
-   - Connect to IDL source (API, filesystem, etc.)
-   - Filter by case, custodian, date range, file type
-   - Deterministic sampling (reproducible with seed)
-   - Export to manifest.jsonl + document directory
-4. Implement corpus validation (checksums, metadata consistency)
-5. Create setup script: `scripts/setup-chug-fixtures.sh`
-6. Generate initial fixture corpora:
-   - `small` (100 docs)
-   - `medium` (1,000 docs)
-   - `edge-cases` (~50 curated edge cases)
+1. Implement `scripts/dev/idl_to_rexlit_fixture.py`:
+   - Sample IDL webdataset via Chug (with seed for reproducibility)
+   - Apply stratified sampling filters (case, custodian, privilege, etc.)
+   - Extract PDF bytes and write to filesystem
+   - Generate manifest.jsonl with IDL metadata
+   - Validation logic (checksums, file existence)
+2. Test script with small sample (10 docs) to verify Chug integration
+3. Document script usage and CLI options
+4. Create `scripts/validate-idl-fixtures.py` for corpus integrity checks
 
-**Deliverable:** Functional Chug tool producing valid fixture corpora
+**Deliverable:** Working script that generates IDL fixture corpora
 
-### Phase 4: Benchmark Suite (2-3 days)
+### Phase 3: Generate Initial Fixture Corpora (1-2 days)
 
-**Goal:** Establish performance baselines with Chug fixtures
+**Goal:** Generate small/medium/edge-case corpora for testing
+
+**Tasks:**
+1. Run fixture generation for each tier:
+   - `small` (100 docs, seed=42)
+   - `medium` (1,000 docs, seed=42)
+   - `edge-cases/privilege-patterns` (50 privileged docs)
+   - `edge-cases/ocr-failures` (50 poor-OCR docs)
+2. Validate all corpora with checksums
+3. Document corpus composition (file types, cases, custodians)
+4. Decide storage strategy:
+   - Option A: Commit small/medium to git (if <500MB total)
+   - Option B: Git submodule pointing to separate repo
+   - Option C: Git LFS for large binary files
+   - Option D: External storage (S3/network) with download script
+
+**Deliverable:** Usable fixture corpora ready for tests
+
+### Phase 4: Pytest Integration (1 day)
+
+**Goal:** Enable IDL fixtures in RexLit test suite
+
+**Tasks:**
+1. Add fixture functions to `tests/conftest.py` (`idl_small`, `idl_medium`, etc.)
+2. Create `tests/test_idl_integration.py` with 3-5 example tests
+3. Verify tests pass with IDL fixtures
+4. Create setup script: `scripts/setup-idl-fixtures.sh` (download or generate)
+5. Update `CLAUDE.md` with IDL testing guidance
+
+**Deliverable:** Tests can load and use IDL fixtures (RexLit treats them like any directory)
+
+### Phase 5: Benchmark Suite (2-3 days)
+
+**Goal:** Establish performance baselines with IDL fixtures
 
 **Tasks:**
 1. Implement `scripts/benchmark_chug.py`
