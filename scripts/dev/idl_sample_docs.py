@@ -10,14 +10,14 @@ The script depends on Hugging Face's experimental `chug` loader and is therefore
 distributed as part of the optional `dev-idl` extra (`pip install 'rexlit[dev-idl]'`).
 
 Example usage:
-    python scripts/dev/idl_to_rexlit_fixture.py \
+    python scripts/dev/idl_sample_docs.py \
         --tier small \
         --count 100 \
         --seed 42 \
         --output /tmp/rexlit-idl/small \
         --validate
 
-    python scripts/dev/idl_to_rexlit_fixture.py \
+    python scripts/dev/idl_sample_docs.py \
         --tier edge-cases \
         --count 50 \
         --filter page_count_min=10 \
