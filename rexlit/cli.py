@@ -210,6 +210,29 @@ def ingest_run(
         float,
         typer.Option("--review-cost-high", help="High hourly cost estimate (USD)"),
     ] = 200.0,
+    skip_plan_validation: Annotated[
+        bool,
+        typer.Option(
+            "--skip-plan-validation",
+            help="Skip redaction plan provenance validation (useful when sample data is mismatched).",
+        ),
+    ] = False,
+    skip_redaction: Annotated[
+        bool,
+        typer.Option("--skip-redaction", help="Skip redaction planning stage."),
+    ] = False,
+    skip_bates: Annotated[
+        bool,
+        typer.Option("--skip-bates", help="Skip Bates planning stage."),
+    ] = False,
+    skip_pack: Annotated[
+        bool,
+        typer.Option("--skip-pack", help="Skip pack/archive creation stage."),
+    ] = False,
+    skip_pdf: Annotated[
+        bool,
+        typer.Option("--skip-pdf", help="Ignore PDF files during discovery."),
+    ] = False,
 ) -> None:
     """Ingest documents from path and extract metadata."""
     container = bootstrap_application()
@@ -265,7 +288,11 @@ def ingest_run(
         path,
         manifest_path=manifest_path,
         recursive=recursive,
-        exclude_extensions={".pdf"},
+        exclude_extensions={".pdf"} if skip_pdf else None,
+        validate_redaction_plans=not skip_plan_validation,
+        skip_redaction=skip_redaction,
+        skip_bates=skip_bates,
+        skip_pack=skip_pack,
     )
 
     typer.secho(f"Found {len(result.documents)} documents", fg=typer.colors.GREEN)
@@ -378,6 +405,10 @@ def index_build(
         str | None,
         typer.Option("--isaacus-api-base", help="Isaacus self-host base URL"),
     ] = None,
+    workers: Annotated[
+        int | None,
+        typer.Option("--workers", help="Number of worker processes", min=1),
+    ] = None,
 ) -> None:
     """Build search index from documents."""
     container = bootstrap_application()
@@ -402,6 +433,7 @@ def index_build(
             dense_batch_size=dense_batch,
             dense_api_key=isaacus_api_key,
             dense_api_base=isaacus_api_base,
+            max_workers=workers,
         )
     except RuntimeError as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
