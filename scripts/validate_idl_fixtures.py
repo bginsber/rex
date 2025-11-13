@@ -4,50 +4,16 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
 import sys
 from pathlib import Path
 from typing import Iterable
 
-MANIFEST_FILENAME = "manifest.jsonl"
+SCRIPT_ROOT = Path(__file__).resolve().parent
+DEV_DIR = SCRIPT_ROOT / "dev"
+if str(DEV_DIR) not in sys.path:
+    sys.path.insert(0, str(DEV_DIR))
 
-
-def validate_corpus(corpus_dir: Path) -> list[str]:
-    """Validate manifest integrity and referenced PDFs within ``corpus_dir``."""
-
-    manifest_path = corpus_dir / MANIFEST_FILENAME
-    if not manifest_path.exists():
-        return [f"Manifest not found: {manifest_path}"]
-
-    errors: list[str] = []
-    with manifest_path.open(encoding="utf-8") as handle:
-        for line_num, line in enumerate(handle, start=1):
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError as exc:
-                errors.append(f"{manifest_path}:{line_num} invalid JSON - {exc}")
-                continue
-
-            filepath = record.get("filepath")
-            if not filepath:
-                errors.append(f"{manifest_path}:{line_num} missing 'filepath'")
-                continue
-
-            sha256 = record.get("sha256")
-            doc_path = corpus_dir / filepath
-            if not doc_path.exists():
-                errors.append(f"{manifest_path}:{line_num} file missing - {doc_path}")
-                continue
-
-            if sha256:
-                actual_hash = hashlib.sha256(doc_path.read_bytes()).hexdigest()
-                if actual_hash != sha256:
-                    errors.append(
-                        f"{manifest_path}:{line_num} checksum mismatch for {filepath} "
-                        f"(expected {sha256}, got {actual_hash})"
-                    )
-    return errors
+from idl_fixtures.utils import validate_corpus  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:

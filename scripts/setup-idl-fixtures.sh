@@ -6,6 +6,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 FIXTURE_ROOT="${PROJECT_ROOT}/rexlit/docs/idl-fixtures"
 
+cleanup() {
+    if [ -n "${VALIDATION_TMP:-}" ] && [ -f "${VALIDATION_TMP}" ]; then
+        rm -f "${VALIDATION_TMP}"
+    fi
+}
+trap cleanup EXIT
+
 echo "=== RexLit IDL Fixture Setup ==="
 echo "Project root: ${PROJECT_ROOT}"
 echo "Fixture root: ${FIXTURE_ROOT}"
@@ -73,9 +80,12 @@ done
 
 echo
 echo "=== Validating fixture integrity ==="
-python "${PROJECT_ROOT}/scripts/validate_idl_fixtures.py" "${FIXTURE_ROOT}/"* 2>/tmp/idl-validate.err || true
-cat /tmp/idl-validate.err
-rm -f /tmp/idl-validate.err
+VALIDATION_TMP="$(mktemp -t idl-validate.XXXXXX)"
+if ! python "${PROJECT_ROOT}/scripts/validate_idl_fixtures.py" "${FIXTURE_ROOT}/"* >"${VALIDATION_TMP}"; then
+    cat "${VALIDATION_TMP}" >&2
+    exit 1
+fi
+cat "${VALIDATION_TMP}"
 
 echo
 echo "=== Fixture Summary ==="

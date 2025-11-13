@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import platform
 import statistics
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict
 
+from rexlit import __version__ as REXLIT_VERSION
 from rexlit.index.build import build_index
 from rexlit.index.search import search_index
 from rexlit.ingest.discover import discover_documents
@@ -102,6 +105,12 @@ def run_benchmarks(corpus: str, workers: int, baseline_path: Path | None) -> dic
         "timestamp": time.time(),
         "doc_count": doc_count,
         "workers": workers,
+        "metadata": {
+            "rexlit_version": REXLIT_VERSION,
+            "python_version": platform.python_version(),
+            "platform": platform.platform(),
+            "cpu_count": os.cpu_count(),
+        },
         "benchmarks": [],
     }
 
@@ -141,16 +150,43 @@ def _compare_to_baseline(current: dict[str, Any], baseline: dict[str, Any]) -> d
         if not base_metric:
             continue
 
-        diffs: dict[str, float] = {}
+        diffs: dict[str, Dict[str, Any]] = {}
         for key, value in current_metric.items():
             if key in ("operation",) or not isinstance(value, (int, float)):
                 continue
             base_value = base_metric.get(key)
             if isinstance(base_value, (int, float)) and base_value:
-                diffs[key] = (value - base_value) / base_value
+                percent_change = ((value - base_value) / base_value) * 100
+                diffs[key] = {
+                    "baseline": base_value,
+                    "current": value,
+                    "percent_change": percent_change,
+                    "description": _describe_change(key, percent_change),
+                }
         if diffs:
             comparison[op] = diffs
     return comparison
+
+
+def _describe_change(metric: str, percent_change: float) -> str:
+    if abs(percent_change) < 0.01:
+        return "no measurable change"
+
+    lower_is_better = any(token in metric for token in ("elapsed", "latency"))
+    higher_is_better = any(token in metric for token in ("throughput", "docs_per_sec"))
+
+    if lower_is_better:
+        if percent_change < 0:
+            return f"{abs(percent_change):.1f}% faster"
+        return f"{percent_change:.1f}% slower"
+
+    if higher_is_better:
+        if percent_change > 0:
+            return f"{percent_change:.1f}% faster"
+        return f"{abs(percent_change):.1f}% slower"
+
+    direction = "higher" if percent_change > 0 else "lower"
+    return f"{abs(percent_change):.1f}% {direction}"
 
 
 def main() -> None:

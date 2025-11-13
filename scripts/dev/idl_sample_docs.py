@@ -32,7 +32,7 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, Mapping, MutableMapping
+from typing import TYPE_CHECKING, Any, Iterator, Mapping, Tuple, Type
 
 try:
     import chug
@@ -41,9 +41,19 @@ except ModuleNotFoundError:  # pragma: no cover - exercised via CLI
     chug = None  # type: ignore[assignment]
     DataCfg = DataTaskDocReadCfg = None  # type: ignore[assignment]
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from idl_fixtures.utils import MANIFEST_FILENAME, filters_help, parse_filter_args, validate_corpus  # noqa: E402
+
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from chug import DataCfg as _DataCfgType, DataTaskDocReadCfg as _DataTaskDocReadCfgType
+else:
+    _DataCfgType = Any
+    _DataTaskDocReadCfgType = Any
 
 IDL_DATASET_NAME = "pixparse/idl-wds"
-MANIFEST_FILENAME = "manifest.jsonl"
 
 
 class ChugNotInstalledError(RuntimeError):
@@ -59,7 +69,7 @@ class SampledDocument:
     page_count: int
 
 
-def _require_chug() -> tuple[Any, Any]:  # pragma: no cover - trivial
+def _require_chug() -> Tuple[Type[_DataCfgType], Type[_DataTaskDocReadCfgType]]:  # pragma: no cover - trivial
     """Ensure the chug dependencies are present before continuing."""
 
     if chug is None or DataCfg is None or DataTaskDocReadCfg is None:
@@ -68,34 +78,6 @@ def _require_chug() -> tuple[Any, Any]:  # pragma: no cover - trivial
             "    pip install 'rexlit[dev-idl]'"
         )
     return DataCfg, DataTaskDocReadCfg
-
-
-def _coerce_filter_value(raw: str) -> object:
-    """Attempt to convert filter values into useful Python types."""
-
-    lowered = raw.lower()
-    if lowered in {"true", "false"}:
-        return lowered == "true"
-
-    try:
-        if "." in raw:
-            return float(raw)
-        return int(raw)
-    except ValueError:
-        return raw
-
-
-def _parse_filters(filters: Iterable[str] | None) -> Mapping[str, object]:
-    parsed: MutableMapping[str, object] = {}
-    if not filters:
-        return parsed
-
-    for item in filters:
-        if "=" not in item:
-            raise ValueError(f"Invalid --filter argument '{item}'. Expected key=value format.")
-        key, value = item.split("=", 1)
-        parsed[key.strip()] = _coerce_filter_value(value.strip())
-    return parsed
 
 
 def sample_idl_documents(
@@ -216,45 +198,6 @@ def export_corpus(documents: Iterable[SampledDocument], output_dir: Path) -> int
     return count
 
 
-def validate_corpus(corpus_dir: Path) -> list[str]:
-    """Validate the exported corpus and return a list of detected errors."""
-
-    manifest_path = corpus_dir / MANIFEST_FILENAME
-    if not manifest_path.exists():
-        return [f"Manifest not found: {manifest_path}"]
-
-    errors: list[str] = []
-    docs_root = corpus_dir
-
-    with manifest_path.open(encoding="utf-8") as handle:
-        for line_num, line in enumerate(handle, start=1):
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError as exc:
-                errors.append(f"Line {line_num}: invalid JSON - {exc}")
-                continue
-
-            filepath = record.get("filepath")
-            sha256 = record.get("sha256")
-            if not filepath:
-                errors.append(f"Line {line_num}: missing filepath")
-                continue
-            doc_path = docs_root / filepath
-            if not doc_path.exists():
-                errors.append(f"Line {line_num}: file missing - {doc_path}")
-                continue
-
-            if sha256:
-                actual_hash = hashlib.sha256(doc_path.read_bytes()).hexdigest()
-                if actual_hash != sha256:
-                    errors.append(
-                        f"Line {line_num}: checksum mismatch for {filepath} "
-                        f"(expected {sha256}, got {actual_hash})"
-                    )
-
-    return errors
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate IDL fixture corpora for RexLit.")
     parser.add_argument("--tier", required=True, help="Corpus tier name (small, medium, large, xl, edge-cases).")
@@ -265,7 +208,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--filter",
         action="append",
         dest="filters",
-        help="Optional sampling filters defined as key=value pairs (e.g. page_count_min=5).",
+        help=f"Optional sampling filters defined as key=value pairs ({filters_help()}).",
     )
     parser.add_argument(
         "--validate",
@@ -280,7 +223,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - exercised 
     args = parser.parse_args(argv)
 
     try:
-        parsed_filters = _parse_filters(args.filters)
+        parsed_filters = parse_filter_args(args.filters)
     except ValueError as exc:
         parser.error(str(exc))
 
