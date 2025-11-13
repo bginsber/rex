@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -19,6 +19,7 @@ let buildStageStatus: (decision: any) => any[]
 let ALLOWED_REASONING_EFFORTS: Set<string>
 let REXLIT_HOME: string
 let ROOT_PREFIX: string
+let CANONICAL_ROOT: string
 
 beforeAll(async () => {
   const mod = await modPromise
@@ -32,6 +33,7 @@ beforeAll(async () => {
   ALLOWED_REASONING_EFFORTS = mod.ALLOWED_REASONING_EFFORTS
   REXLIT_HOME = mod.REXLIT_HOME
   ROOT_PREFIX = mod.ROOT_PREFIX
+  CANONICAL_ROOT = mod.ROOT_PREFIX.slice(0, -1)
 })
 
 afterAll(() => {
@@ -117,7 +119,10 @@ describe('path traversal safeguards', () => {
 
   safeCases.forEach((testCase, index) => {
     test(`allows safe path #${index + 1}: ${testCase.label}`, () => {
-      expect(ensureWithinRoot(testCase.input)).toBe(resolve(testCase.input))
+      const normalized = ensureWithinRoot(testCase.input)
+      expect(
+        normalized === CANONICAL_ROOT || normalized.startsWith(ROOT_PREFIX)
+      ).toBe(true)
     })
   })
 
@@ -142,19 +147,20 @@ describe('path traversal safeguards', () => {
 
   test('ensureWithinRoot normalizes dot segments within root', () => {
     const raw = `${testHome}/docs/../legal/./note.txt`
-    expect(ensureWithinRoot(raw)).toBe(resolve(testHome, 'legal/note.txt'))
+    const expected = ensureWithinRoot(resolve(testHome, 'legal/note.txt'))
+    expect(ensureWithinRoot(raw)).toBe(expected)
   })
 
   test('resolveDocumentPath returns normalized absolute path for relative input', async () => {
     const relative = 'documents/email.txt'
     const file = createFile(relative)
-    expect(await resolveDocumentPath({ path: relative })).toBe(resolve(file))
+    expect(await resolveDocumentPath({ path: relative })).toBe(ensureWithinRoot(file))
   })
 
   test('resolveDocumentPath trims whitespace paths', async () => {
     const relative = 'docs/trimmed.txt'
     const file = createFile(relative)
-    expect(await resolveDocumentPath({ path: `  ${relative}  ` })).toBe(resolve(file))
+    expect(await resolveDocumentPath({ path: `  ${relative}  ` })).toBe(ensureWithinRoot(file))
   })
 
   test('resolveDocumentPath rejects empty path', async () => {
@@ -189,7 +195,9 @@ describe('path traversal safeguards', () => {
       }
       return {}
     })
-    await expect(resolveDocumentPath({ hash: 'safe-hash' })).resolves.toBe(resolve(absolute))
+    await expect(resolveDocumentPath({ hash: 'safe-hash' })).resolves.toBe(
+      ensureWithinRoot(absolute)
+    )
   })
 })
 
@@ -579,14 +587,51 @@ describe('input validation and API responses', () => {
     expect(response.status).toBe(400)
   })
 
-  test('classify returns pattern matches array when provided', async () => {
+  test('document download rejects symlink that escapes root', async () => {
+    const outsideDir = mkdtempSync(join(tmpdir(), 'rexlit-doc-outside-'))
+    const outsideFile = join(outsideDir, 'secret.txt')
+    writeFileSync(outsideFile, 'top secret')
+
+    const linkPath = resolve(testHome, 'docs', 'outside-link.txt')
+    mkdirSync(resolve(linkPath, '..'), { recursive: true })
+    symlinkSync(outsideFile, linkPath)
+
+    setRunRexlitImplementation(async (args: string[]) => {
+      if (args[0] === 'index' && args[1] === 'get') {
+        return { path: linkPath }
+      }
+      throw new Error('unexpected CLI invocation')
+    })
+
+    const app = createApp()
+    const response = await app.handle(
+      new Request('http://localhost/api/documents/leak/file')
+    )
+
+    expect(response.status).not.toBe(200)
+    const payload = await response.json()
+    expect(payload.error).toContain('Path traversal detected')
+    rmSync(outsideDir, { recursive: true, force: true })
+  })
+
+  test('classify returns sanitized pattern matches', async () => {
     setRunRexlitImplementation(async (args: string[]) => {
       if (args[0] === 'privilege' && args[1] === 'classify') {
         return {
           labels: ['PRIVILEGED'],
           pattern_matches: [
-            { rule: 'domain', confidence: 0.9, snippet: 'attorney.com', stage: 'pattern' },
-            { rule: 5 }
+            {
+              rule: 'domain',
+              confidence: 0.9,
+              snippet: 'attorney.com',
+              stage: 'pattern',
+              file_path: '/etc/passwd'
+            },
+            {
+              rule: 5,
+              snippet: '/tmp/leak',
+              directory: '/tmp'
+            }
           ]
         }
       }
@@ -604,7 +649,39 @@ describe('input validation and API responses', () => {
       })
     )
     const data = await response.json()
+    expect(data.pattern_matches).toEqual([
+      { rule: 'domain', confidence: 0.9, snippet: 'attorney.com', stage: 'pattern' }
+    ])
+  })
+
+  test('classify drops snippet text that looks like filesystem paths', async () => {
+    setRunRexlitImplementation(async (args: string[]) => {
+      if (args[0] === 'privilege' && args[1] === 'classify') {
+        return {
+          labels: ['PRIVILEGED'],
+          pattern_matches: [
+            { rule: 'unsafe', snippet: '/tmp/secret', stage: 'pattern' }
+          ]
+        }
+      }
+      if (args[0] === 'index' && args[1] === 'get') {
+        return { path: createFile('api/input/pathy.txt') }
+      }
+      return {}
+    })
+    const app = createApp()
+    const response = await app.handle(
+      new Request('http://localhost/api/privilege/classify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: 'api/input/pathy.txt' })
+      })
+    )
+    const data = await response.json()
     expect(data.pattern_matches).toHaveLength(1)
+    expect(data.pattern_matches[0].rule).toBe('unsafe')
+    expect(data.pattern_matches[0].stage).toBe('pattern')
+    expect('snippet' in data.pattern_matches[0]).toBe(false)
   })
 
   test('classify returns 504 when runRexlit times out', async () => {

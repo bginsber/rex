@@ -52,6 +52,8 @@ bun test index.test.ts
 
 **Purpose:** Prevent access to files outside `REXLIT_HOME` directory.
 
+All candidate paths are resolved via `fs.realpathSync`, so symlink chains that point outside the root are rejected even if their original string path looks safe.
+
 **Test Cases:**
 - ✅ Allow paths within `REXLIT_HOME`
 - ✅ Allow `REXLIT_HOME` itself
@@ -300,4 +302,3 @@ When security logic changes:
 - [OWASP Path Traversal](https://owasp.org/www-community/attacks/Path_Traversal)
 - [Security Best Practices](./SECURITY.md)
 - [API Documentation](./README.md)
-
