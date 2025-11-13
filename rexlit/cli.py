@@ -210,6 +210,29 @@ def ingest_run(
         float,
         typer.Option("--review-cost-high", help="High hourly cost estimate (USD)"),
     ] = 200.0,
+    skip_plan_validation: Annotated[
+        bool,
+        typer.Option(
+            "--skip-plan-validation",
+            help="Skip redaction plan provenance validation (useful when sample data is mismatched).",
+        ),
+    ] = False,
+    skip_redaction: Annotated[
+        bool,
+        typer.Option("--skip-redaction", help="Skip redaction planning stage."),
+    ] = False,
+    skip_bates: Annotated[
+        bool,
+        typer.Option("--skip-bates", help="Skip Bates planning stage."),
+    ] = False,
+    skip_pack: Annotated[
+        bool,
+        typer.Option("--skip-pack", help="Skip pack/archive creation stage."),
+    ] = False,
+    skip_pdf: Annotated[
+        bool,
+        typer.Option("--skip-pdf", help="Ignore PDF files during discovery."),
+    ] = False,
 ) -> None:
     """Ingest documents from path and extract metadata."""
     container = bootstrap_application()
@@ -265,7 +288,11 @@ def ingest_run(
         path,
         manifest_path=manifest_path,
         recursive=recursive,
-        exclude_extensions={".pdf"},
+        exclude_extensions={".pdf"} if skip_pdf else None,
+        validate_redaction_plans=not skip_plan_validation,
+        skip_redaction=skip_redaction,
+        skip_bates=skip_bates,
+        skip_pack=skip_pack,
     )
 
     typer.secho(f"Found {len(result.documents)} documents", fg=typer.colors.GREEN)
@@ -378,6 +405,10 @@ def index_build(
         str | None,
         typer.Option("--isaacus-api-base", help="Isaacus self-host base URL"),
     ] = None,
+    workers: Annotated[
+        int | None,
+        typer.Option("--workers", help="Number of worker processes", min=1),
+    ] = None,
 ) -> None:
     """Build search index from documents."""
     container = bootstrap_application()
@@ -402,6 +433,7 @@ def index_build(
             dense_batch_size=dense_batch,
             dense_api_key=isaacus_api_key,
             dense_api_base=isaacus_api_base,
+            max_workers=workers,
         )
     except RuntimeError as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
@@ -1755,8 +1787,8 @@ def privilege_classify(
 ) -> None:
     """Classify a document for attorney-client privilege.
 
-    This command uses the self-hosted gpt-oss-safeguard-20b model to classify
-    documents for privilege. All processing is offline (no network calls).
+    This command uses Groq Cloud API (if online) or self-hosted gpt-oss-safeguard-20b
+    model to classify documents for privilege.
 
     Privacy note: Full reasoning chain is hashed, not logged. Only redacted
     summaries appear in audit logs.
@@ -1767,22 +1799,14 @@ def privilege_classify(
     """
     import json
 
-    from rexlit.app.adapters.privilege_safeguard import PrivilegeSafeguardAdapter
     from rexlit.app.privilege_service import PrivilegeReviewService
+    from rexlit.bootstrap import _create_privilege_reasoning_adapter
 
     container = bootstrap_application()
 
-    # Determine model path
+    # Determine model path (for fallback to Safeguard adapter)
     if model_path is None:
         model_path = container.settings.get_privilege_model_path()
-        if model_path is None:
-            typer.secho(
-                "❌ Privilege model not found. Install gpt-oss-safeguard-20b or configure "
-                "privilege_model_path in settings.",
-                fg=typer.colors.RED,
-                err=True,
-            )
-            raise typer.Exit(code=1)
 
     # Load policy
     try:
@@ -1791,17 +1815,21 @@ def privilege_classify(
         typer.secho(f"❌ {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
 
-    # Initialize adapter
+    # Initialize adapter (prefer Groq if online, fall back to Safeguard)
     try:
-        adapter = PrivilegeSafeguardAdapter(
+        adapter = _create_privilege_reasoning_adapter(
+            container.settings,
             model_path=model_path,
             policy_path=policy_path,
-            log_full_cot=container.settings.privilege_log_full_cot,
-            cot_vault_path=container.settings.get_privilege_cot_vault_path(),
-            vault_key_path=container.settings.get_privilege_cot_vault_key_path(),
-            timeout_seconds=container.settings.privilege_timeout_seconds,
-            circuit_breaker_threshold=container.settings.privilege_circuit_breaker_threshold,
         )
+        if adapter is None:
+            typer.secho(
+                "❌ No privilege adapter available. Install gpt-oss-safeguard-20b or configure "
+                "GROQ_API_KEY with --online flag.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
     except Exception as e:
         typer.secho(f"❌ Failed to initialize privilege adapter: {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
@@ -1887,22 +1915,14 @@ def privilege_explain(
     """
     import json
 
-    from rexlit.app.adapters.privilege_safeguard import PrivilegeSafeguardAdapter
     from rexlit.app.privilege_service import PrivilegeReviewService
+    from rexlit.bootstrap import _create_privilege_reasoning_adapter
 
     container = bootstrap_application()
 
-    # Determine model path
+    # Determine model path (for fallback to Safeguard adapter)
     if model_path is None:
         model_path = container.settings.get_privilege_model_path()
-        if model_path is None:
-            typer.secho(
-                "❌ Privilege model not found. Install gpt-oss-safeguard-20b or configure "
-                "privilege_model_path in settings.",
-                fg=typer.colors.RED,
-                err=True,
-            )
-            raise typer.Exit(code=1)
 
     # Load policy
     try:
@@ -1911,17 +1931,21 @@ def privilege_explain(
         typer.secho(f"❌ {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
 
-    # Initialize adapter
+    # Initialize adapter (prefer Groq if online, fall back to Safeguard)
     try:
-        adapter = PrivilegeSafeguardAdapter(
+        adapter = _create_privilege_reasoning_adapter(
+            container.settings,
             model_path=model_path,
             policy_path=policy_path,
-            log_full_cot=container.settings.privilege_log_full_cot,
-            cot_vault_path=container.settings.get_privilege_cot_vault_path(),
-            vault_key_path=container.settings.get_privilege_cot_vault_key_path(),
-            timeout_seconds=container.settings.privilege_timeout_seconds,
-            circuit_breaker_threshold=container.settings.privilege_circuit_breaker_threshold,
         )
+        if adapter is None:
+            typer.secho(
+                "❌ No privilege adapter available. Install gpt-oss-safeguard-20b or configure "
+                "GROQ_API_KEY with --online flag.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
     except Exception as e:
         typer.secho(f"❌ Failed to initialize privilege adapter: {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)

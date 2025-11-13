@@ -1,6 +1,7 @@
 """Configuration management with Pydantic and XDG base directory support."""
 
 import os
+import sys
 from pathlib import Path
 from typing import Any, Literal
 
@@ -182,6 +183,8 @@ class Settings(BaseSettings):
     )
 
     _api_key_cache: dict[str, str | None] = PrivateAttr(default_factory=dict)
+    _resolved_data_dir: Path | None = PrivateAttr(default=None)
+    _data_dir_warning_emitted: bool = PrivateAttr(default=False)
 
     def model_post_init(self, __context: Any) -> None:
         """Persist inline API keys into the encrypted secrets store."""
@@ -197,13 +200,32 @@ class Settings(BaseSettings):
 
     def get_data_dir(self) -> Path:
         """Get the data directory, creating if necessary."""
+        if self._resolved_data_dir is not None:
+            return self._resolved_data_dir
+
         if self.data_dir:
             data_dir = self.data_dir
-        else:
-            data_dir = get_xdg_data_home() / "rexlit"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            self._resolved_data_dir = data_dir
+            return data_dir
 
-        data_dir.mkdir(parents=True, exist_ok=True)
-        return data_dir
+        primary_dir = get_xdg_data_home() / "rexlit"
+        try:
+            primary_dir.mkdir(parents=True, exist_ok=True)
+            self._resolved_data_dir = primary_dir
+            return primary_dir
+        except PermissionError as exc:
+            fallback = Path.cwd() / ".rexlit-data"
+            fallback.mkdir(parents=True, exist_ok=True)
+            self._resolved_data_dir = fallback
+            if not self._data_dir_warning_emitted:
+                print(
+                    f"Warning: cannot create data directory at {primary_dir} ({exc}). "
+                    f"Using local '{fallback}' instead. Pass --data-dir to override.",
+                    file=sys.stderr,
+                )
+                self._data_dir_warning_emitted = True
+            return fallback
 
     def get_config_dir(self) -> Path:
         """Get the config directory, creating if necessary."""

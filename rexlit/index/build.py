@@ -191,24 +191,20 @@ def build_index(
             discovered_count += 1
             yield doc_meta
 
-    documents_iter: Iterator[DocumentMetadata] = document_stream()
-
-    # Process documents in parallel
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        for result in executor.map(_process_document_worker, documents_iter, chunksize=batch_size):
+    def process_results(results_iter: Iterator[WorkerDocumentPayload | None]) -> None:
+        nonlocal indexed_count, skipped_count
+        for result in results_iter:
             try:
                 if result is None:
                     skipped_count += 1
                     continue
 
-                # Check if processing had an error
                 if "error" in result:
                     skipped_count += 1
                     if show_progress:
                         print(f"Warning: Skipping {result['path']}: {result['error']}")
                     continue
 
-                # Create Tantivy document from processed data
                 doc = tantivy.Document()
                 path_value = result["path"]
                 sha_value = result["sha256"]
@@ -224,11 +220,9 @@ def build_index(
                 doc.add_text("body", text_value)
                 doc.add_text("metadata", metadata_value)
 
-                # Add document to index
                 writer.add_document(doc)
                 indexed_count += 1
 
-                # Update metadata cache
                 metadata_cache.update(
                     custodian=result.get("custodian_raw"),
                     doctype=result.get("doctype_raw"),
@@ -246,7 +240,6 @@ def build_index(
                         }
                     )
 
-                # Periodic commits for memory management
                 if indexed_count and indexed_count % commit_interval == 0:
                     writer.commit()
 
@@ -258,17 +251,39 @@ def build_index(
                             f"({docs_per_sec:.1f} docs/sec) — committed batch"
                         )
 
-                # Regular progress updates
                 elif show_progress and indexed_count % 100 == 0:
                     elapsed = time.time() - start_time
                     docs_per_sec = indexed_count / elapsed if elapsed > 0 else 0
-                    print(f"Indexed {indexed_count} documents " f"({docs_per_sec:.1f} docs/sec)")
+                    print(f"Indexed {indexed_count} documents ({docs_per_sec:.1f} docs/sec)")
 
             except Exception as e:  # pragma: no cover - defensive guard
                 skipped_count += 1
                 if show_progress:
                     print(f"Warning: Error processing document: {e}")
                 continue
+
+    def run_parallel(worker_count: int) -> None:
+        with ProcessPoolExecutor(max_workers=worker_count) as executor:
+            process_results(
+                executor.map(_process_document_worker, document_stream(), chunksize=batch_size)
+            )
+
+    def run_sequential() -> None:
+        process_results(map(_process_document_worker, document_stream()))
+
+    if max_workers <= 1:
+        run_sequential()
+    else:
+        try:
+            run_parallel(max_workers)
+        except (PermissionError, NotImplementedError) as exc:
+            if show_progress:
+                print(
+                    "Permission error while starting worker pool "
+                    f"({exc}); falling back to sequential mode."
+                )
+            discovered_count = 0
+            run_sequential()
 
     # Final commit
     writer.commit()

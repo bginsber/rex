@@ -516,6 +516,88 @@ def _create_privilege_adapter(settings: Settings) -> PrivilegePort:
     return PrivilegePatternsAdapter(profile=privilege_profile.get("privilege", {}))
 
 
+def _create_privilege_reasoning_adapter(
+    settings: Settings,
+    *,
+    model_path: Path | None = None,
+    policy_path: Path | None = None,
+) -> PrivilegeReasoningPort | None:
+    """Create appropriate privilege reasoning adapter based on settings.
+
+    Priority:
+    1. Groq Cloud (if online and GROQ_API_KEY available)
+    2. PrivilegeSafeguardAdapter (self-hosted, requires model_path)
+    3. None (if neither available)
+
+    Args:
+        settings: Application settings
+        model_path: Optional path to safeguard model (for fallback)
+        policy_path: Optional path to policy file (for fallback)
+
+    Returns:
+        PrivilegeReasoningPort adapter or None if unavailable
+    """
+    import logging
+
+    from rexlit.app.adapters.groq_privilege_reasoning_adapter import (
+        GroqPrivilegeReasoningAdapter,
+    )
+    from rexlit.app.adapters.privilege_safeguard import PrivilegeSafeguardAdapter
+    from rexlit.app.ports.privilege_reasoning import PrivilegeReasoningPort
+
+    logger = logging.getLogger(__name__)
+
+    # Try Groq adapter first when online and API key is configured
+    if settings.online:
+        groq_api_key = settings.get_groq_api_key()
+        if groq_api_key:
+            try:
+                # Prefer optimized Groq policy (400-600 words) for best performance
+                optimized_groq_policy = Path("rexlit/policies/privilege_groq_v1.txt")
+                if optimized_groq_policy.exists():
+                    logger.debug("Using optimized Groq policy: %s", optimized_groq_policy)
+                    groq_adapter = GroqPrivilegeAdapter(
+                        api_key=groq_api_key, policy_path=optimized_groq_policy
+                    )
+                    return GroqPrivilegeReasoningAdapter(groq_adapter)
+
+                # Fall back to full policy from settings
+                try:
+                    groq_policy_path = policy_path or settings.get_privilege_policy_path(stage=1)
+                    logger.debug("Using full policy from settings: %s", groq_policy_path)
+                    groq_adapter = GroqPrivilegeAdapter(
+                        api_key=groq_api_key, policy_path=groq_policy_path
+                    )
+                    return GroqPrivilegeReasoningAdapter(groq_adapter)
+                except FileNotFoundError:
+                    # Policy not found, use adapter without explicit policy (will use default)
+                    logger.debug("No policy found, using Groq adapter with empty policy")
+                    groq_adapter = GroqPrivilegeAdapter(api_key=groq_api_key)
+                    return GroqPrivilegeReasoningAdapter(groq_adapter)
+            except Exception as e:
+                logger.warning(
+                    "Failed to initialize Groq reasoning adapter, falling back to safeguard: %s", e
+                )
+
+    # Fall back to PrivilegeSafeguardAdapter if model_path provided
+    if model_path:
+        try:
+            safeguard_policy_path = policy_path or settings.get_privilege_policy_path(stage=1)
+            return PrivilegeSafeguardAdapter(
+                model_path=model_path,
+                policy_path=safeguard_policy_path,
+                log_full_cot=settings.privilege_log_full_cot,
+                cot_vault_path=settings.get_privilege_cot_vault_path(),
+                vault_key_path=settings.get_privilege_cot_vault_key_path(),
+                timeout_seconds=settings.privilege_timeout_seconds,
+                circuit_breaker_threshold=settings.privilege_circuit_breaker_threshold,
+            )
+        except Exception as e:
+            logger.warning("Failed to initialize safeguard adapter: %s", e)
+
+    return None
+
+
 def _safe_init_embedder(
     offline_gate: OfflineModeGate, *, api_key: str | None = None, api_base: str | None = None
 ) -> EmbeddingPort | None:

@@ -84,6 +84,11 @@ privilege = [
     "torch>=2.0.0",
     "accelerate>=0.20.0",
 ]
+dev-idl = [
+    "chug>=0.1.0",
+    "torch>=2.0.0",
+    "datasets>=2.14.0",
+]
 
 [project.scripts]
 rexlit = "rexlit.cli:app"
@@ -107,6 +112,15 @@ addopts = [
     "--strict-config",
     "--cov=rexlit",
     "--cov-report=term-missing",
+]
+markers = [
+    "idl: Tests using IDL fixture corpora",
+    "idl_small: Tests using the small IDL corpus (~100 docs)",
+    "idl_medium: Tests using the medium IDL corpus (~1,000 docs)",
+    "idl_large: Tests using the large IDL corpus (~10,000 docs)",
+    "idl_xl: Tests using the xl IDL corpus (~100,000 docs)",
+    "idl_edge: Tests using the IDL edge-case corpus",
+    "slow: Slow-running tests gated in fast CI",
 ]
 
 [tool.mypy]

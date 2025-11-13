@@ -1,6 +1,7 @@
 """Pytest configuration and fixtures."""
 
 import gc
+import os
 import shutil
 import tempfile
 import time
@@ -101,3 +102,64 @@ def override_settings(temp_dir: Path) -> Generator[Settings, None, None]:
         yield settings
     finally:
         config_module._settings = original_settings
+
+
+def _resolve_corpus_path(root: Path, name: str) -> Path:
+    corpus_path = root / name
+    if not corpus_path.exists():
+        pytest.skip(f"IDL fixture corpus '{name}' not initialized at {corpus_path}")
+    return corpus_path
+
+
+@pytest.fixture(scope="session")
+def idl_fixture_root() -> Path:
+    """Resolve the local root directory for IDL fixture corpora."""
+
+    env_path = os.getenv("IDL_FIXTURE_PATH")
+    if env_path:
+        path = Path(env_path).expanduser()
+        if not path.exists():
+            pytest.skip(f"IDL fixture path from IDL_FIXTURE_PATH does not exist: {path}")
+        return path
+
+    default = Path(__file__).resolve().parent.parent / "rexlit" / "docs" / "idl-fixtures"
+    if not default.exists():
+        pytest.skip(
+            "IDL fixtures not available. Set IDL_FIXTURE_PATH or run scripts/setup-idl-fixtures.sh."
+        )
+    return default
+
+
+@pytest.fixture(scope="session")
+def idl_small(idl_fixture_root: Path) -> Path:
+    """Small (~100 docs) IDL corpus for smoke tests."""
+
+    return _resolve_corpus_path(idl_fixture_root, "small")
+
+
+@pytest.fixture(scope="session")
+def idl_medium(idl_fixture_root: Path) -> Path:
+    """Medium (~1,000 docs) IDL corpus for integration tests."""
+
+    return _resolve_corpus_path(idl_fixture_root, "medium")
+
+
+@pytest.fixture(scope="session")
+def idl_large(idl_fixture_root: Path) -> Path:
+    """Large (~10,000 docs) IDL corpus for stress tests."""
+
+    return _resolve_corpus_path(idl_fixture_root, "large")
+
+
+@pytest.fixture(scope="session")
+def idl_xl(idl_fixture_root: Path) -> Path:
+    """XL (~100,000 docs) IDL corpus for benchmark runs."""
+
+    return _resolve_corpus_path(idl_fixture_root, "xl")
+
+
+@pytest.fixture(scope="session")
+def idl_edge_cases(idl_fixture_root: Path) -> Path:
+    """Edge-case IDL corpus (malformed PDFs, OCR challenges, privilege patterns)."""
+
+    return _resolve_corpus_path(idl_fixture_root, "edge-cases")
