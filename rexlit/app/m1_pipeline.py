@@ -29,7 +29,7 @@ from rexlit.config import Settings
 from rexlit.utils.deterministic import deterministic_order_documents
 from rexlit.utils.jsonl import atomic_write_jsonl
 from rexlit.utils.offline import OfflineModeGate
-from rexlit.utils.plans import validate_redaction_plan_file
+from rexlit.utils.plans import load_redaction_plan_entry, validate_redaction_plan_file
 
 StageStatus = Literal["pending", "completed", "skipped", "failed"]
 
@@ -121,6 +121,10 @@ class M1Pipeline:
         recursive: bool = True,
         include_extensions: set[str] | None = None,
         exclude_extensions: set[str] | None = None,
+        validate_redaction_plans: bool = True,
+        skip_redaction: bool = False,
+        skip_bates: bool = False,
+        skip_pack: bool = False,
     ) -> M1PipelineResult:
         """Execute the M1 pipeline."""
 
@@ -151,19 +155,30 @@ class M1Pipeline:
 
         unique_docs = self._run_dedupe(discovered, stages)
 
-        redaction_plan_paths, redaction_plan_ids = self._run_redaction_planning(unique_docs, stages)
+        redaction_plan_paths, redaction_plan_ids = self._run_redaction_planning(
+            unique_docs,
+            stages,
+            validate_plans=validate_redaction_plans,
+            skip=skip_redaction,
+        )
 
-        bates_plan = self._run_bates(unique_docs, stages)
+        bates_plan = self._run_bates(unique_docs, stages, skip=skip_bates)
 
         self._write_manifest(manifest, unique_docs, stages)
 
-        pack_path = self._run_pack(manifest.parent, stages)
+        pack_path = self._run_pack(manifest.parent, stages, skip=skip_pack)
 
         notes.append(f"Manifest written to {manifest}")
         if bates_plan is not None:
             notes.append(f"Bates plan stored at {bates_plan.path}")
         if pack_path is not None:
             notes.append(f"Pack archive created at {pack_path}")
+        if skip_redaction:
+            notes.append("Redaction planning skipped via CLI flag.")
+        if skip_bates:
+            notes.append("Bates planning skipped via CLI flag.")
+        if skip_pack:
+            notes.append("Packaging skipped via CLI flag.")
 
         plan_metadata = [
             {
@@ -265,35 +280,60 @@ class M1Pipeline:
         self,
         documents: Iterable[DocumentRecord],
         stages: list[PipelineStage],
+        *,
+        validate_plans: bool,
+        skip: bool,
     ) -> tuple[dict[str, Path], dict[str, str]]:
         with self._stage(stages, "redaction_plan") as stage:  # type: PipelineStage
+            if skip:
+                stage.status = "skipped"
+                stage.detail = "Skipped via CLI flag"
+                return {}, {}
             plans: dict[str, Path] = {}
             fingerprints: dict[str, str] = {}
             count = 0
             plan_key = self._settings.get_redaction_plan_key()
+            skipped_validations = 0
 
             for record in documents:
                 document_path = Path(record.path)
                 plan_path = self._redaction_planner.plan(document_path)
-                plan_id = validate_redaction_plan_file(
-                    plan_path,
-                    document_path=document_path,
-                    content_hash=record.sha256,
-                    key=plan_key,
-                )
+                try:
+                    plan_id = validate_redaction_plan_file(
+                        plan_path,
+                        document_path=document_path,
+                        content_hash=record.sha256,
+                        key=plan_key,
+                    )
+                except ValueError:
+                    if validate_plans:
+                        raise
+                    skipped_validations += 1
+                    entry = load_redaction_plan_entry(plan_path, key=plan_key)
+                    plan_id = str(entry.get("plan_id") or record.sha256)
+
                 plans[record.path] = plan_path
                 fingerprints[record.path] = plan_id
                 count += 1
 
             stage.detail = f"{count} plans generated"
+            if skipped_validations:
+                stage.detail += f" ({skipped_validations} skipped validation)"
+                stage.metrics = (stage.metrics or {}) | {"skipped_validation": skipped_validations}
         return plans, fingerprints
 
     def _run_bates(
         self,
         documents: Iterable[DocumentRecord],
         stages: list[PipelineStage],
+        *,
+        skip: bool,
     ) -> BatesPlan | None:
         with self._stage(stages, "bates_plan") as stage:  # type: PipelineStage
+            if skip:
+                stage.status = "skipped"
+                stage.detail = "Skipped via CLI flag"
+                return None
             docs = list(documents)
             if not docs:
                 stage.status = "skipped"
@@ -323,8 +363,14 @@ class M1Pipeline:
         self,
         artifact_dir: Path,
         stages: list[PipelineStage],
+        *,
+        skip: bool,
     ) -> Path | None:
         with self._stage(stages, "pack") as stage:  # type: PipelineStage
+            if skip:
+                stage.status = "skipped"
+                stage.detail = "Skipped via CLI flag"
+                return None
             if not artifact_dir.exists():
                 stage.status = "skipped"
                 stage.detail = "Artifact directory missing; skip packaging"
