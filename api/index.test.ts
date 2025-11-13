@@ -21,9 +21,6 @@ const POLICY_TEST_HOME = join(process.cwd(), '.tmp-rexlit-home')
 await rm(POLICY_TEST_HOME, { recursive: true, force: true }).catch(() => {})
 Bun.env.REXLIT_HOME = POLICY_TEST_HOME
 const { app, __setRunRexlitImplementation } = await import('./index')
-import { describe, it, expect, beforeEach, mock } from 'bun:test'
-import { homedir } from 'node:os'
-import { join, resolve, sep } from 'node:path'
 
 // Test helper to create mock process
 function createMockProcess(stdout: string, stderr: string, exitCode: number, delay: number = 0) {

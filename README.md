@@ -112,6 +112,22 @@ tesseract --version
 
 Run `pytest -v --no-cov` after installation to validate your environment (69 tests require Tesseract).
 
+### IDL Fixture Tests (Optional)
+
+```bash
+# Install dev tooling and generate the small (≈100 doc) corpus
+pip install -e '.[dev-idl]'
+scripts/setup-idl-fixtures.sh
+
+# Run smoke tests that rely on the fixtures (skips automatically if absent)
+pytest -m idl_small
+
+# Run all IDL-marked tests except slow ones, pointing to a custom fixture root
+IDL_FIXTURE_PATH=/path/to/idl-fixtures pytest -m "idl and not slow"
+```
+
+See [docs/BENCHMARKING.md](docs/BENCHMARKING.md) for IDL performance benchmarking guidance.
+
 ## Quick Start
 
 ### Basic Discovery Workflow

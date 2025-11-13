@@ -1,3 +1,5 @@
+# AGENTS instructions for /Users/bg/Documents/Coding/rex
+
 # Repository Guidelines
 
 ## Project Structure & Module Organization

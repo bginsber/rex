@@ -42,6 +42,28 @@ pytest tests/test_ocr_tesseract.py -v
 pytest tests/test_index.py::TestParallelProcessing -v
 ```
 
+#### IDL Fixture Tests (Opt-in)
+```bash
+# Generate IDL fixture corpora (~100 docs) – requires dev-idl extra
+pip install -e '.[dev-idl]'
+scripts/setup-idl-fixtures.sh
+
+# Run the fast smoke tests (skips automatically if fixtures missing)
+pytest -m idl_small
+
+# Run the medium tier (marked slow) with fixtures in a custom location
+IDL_FIXTURE_PATH=/data/rexlit/idl-fixtures pytest -m "idl and not slow"
+```
+
+#### Performance Benchmarks
+```bash
+# Benchmark discovery/index/search on the medium corpus
+python scripts/benchmark_idl.py --corpus medium --workers 6 --output results.json
+
+# Compare against a saved baseline
+python scripts/benchmark_idl.py --corpus medium --baseline benchmarks/medium-baseline.json
+```
+
 ### Linting and Type Checking
 ```bash
 # Run all quality checks
