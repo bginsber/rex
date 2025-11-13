@@ -1348,8 +1348,8 @@ def validate_corpus(corpus_path: Path) -> list[str]:
 **GitHub Actions workflow:**
 
 ```yaml
-# .github/workflows/chug-tests.yml
-name: Chug Fixture Tests
+# .github/workflows/idl-fixture-tests.yml
+name: IDL Fixture Tests
 
 on: [push, pull_request]
 
@@ -1358,39 +1358,58 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive  # Initialize chug-fixtures submodule
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Install dependencies (including dev-idl for fixture generation)
         run: |
-          pip install -e '.[dev]'
+          pip install -e '.[dev,dev-idl]'
 
-      - name: Validate Chug fixtures
-        run: python scripts/chug-validate.py --corpus small
+      - name: Generate IDL small corpus (local, not committed to repo)
+        run: |
+          python scripts/dev/idl_sample_docs.py \\
+            --tier small \\
+            --count 100 \\
+            --seed 42 \\
+            --output rexlit/docs/idl-fixtures/small \\
+            --validate
 
-      - name: Run Chug small corpus tests
-        run: pytest -m chug_small -v
+      - name: Run IDL small corpus tests
+        run: pytest -m idl_small -v
 
   benchmark-medium-corpus:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
+
+      - name: Cache IDL medium corpus
+        uses: actions/cache@v3
         with:
-          submodules: recursive
+          path: rexlit/docs/idl-fixtures/medium
+          key: idl-medium-seed42-${{ hashFiles('scripts/dev/idl_sample_docs.py') }}
+
+      - name: Generate medium corpus if not cached
+        run: |
+          if [ ! -d "rexlit/docs/idl-fixtures/medium" ]; then
+            python scripts/dev/idl_sample_docs.py \\
+              --tier medium \\
+              --count 1000 \\
+              --seed 42 \\
+              --output rexlit/docs/idl-fixtures/medium \\
+              --validate
+          fi
 
       - name: Run benchmark suite
         run: |
-          python scripts/benchmark_chug.py --corpus medium --workers 6
+          python scripts/benchmark_idl.py --corpus medium --workers 6
 
       - name: Compare to baseline
         run: |
-          python scripts/benchmark_chug.py --corpus medium --baseline benchmarks/baselines/medium-latest.json
+          python scripts/benchmark_idl.py --corpus medium --baseline benchmarks/baselines/medium-latest.json
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v3
@@ -1405,25 +1424,27 @@ jobs:
 
 This integration is successful when:
 
-1. **Infrastructure:**
-   - ✅ FixturePort and ChugFixtureAdapter implemented
+1. **Infrastructure** (Dev-Only, NO Core RexLit Changes):
+   - ✅ Optional `[dev-idl]` dependency group in pyproject.toml
    - ✅ Pytest fixtures for all corpus tiers (small, medium, large, xl, edge-cases)
-   - ✅ Configuration supports `CHUG_FIXTURE_PATH` environment variable
+   - ✅ Configuration supports `IDL_FIXTURE_PATH` environment variable
+   - ✅ NO new ports, adapters, or bootstrap wiring in RexLit core
 
 2. **Tooling:**
-   - ✅ Chug sampling tool can generate deterministic corpora from IDL
-   - ✅ Validation script detects corrupted/invalid fixtures
-   - ✅ Setup script initializes fixtures with one command
+   - ✅ `idl_sample_docs.py` can generate deterministic corpora from IDL (streaming mode)
+   - ✅ `idl_enrich_metadata.py` can add permissions/collection metadata (optional)
+   - ✅ Validation script (`validate-idl-fixtures.py`) detects corrupted/invalid fixtures
+   - ✅ Setup script (`setup-idl-fixtures.sh`) initializes fixtures with one command
 
 3. **Testing:**
-   - ✅ At least 10 tests use Chug fixtures
-   - ✅ Tests marked with appropriate `@pytest.mark.chug_*` decorators
-   - ✅ CI runs `chug_small` tests on every PR
+   - ✅ At least 10 tests use IDL fixtures
+   - ✅ Tests marked with appropriate `@pytest.mark.idl_*` decorators
+   - ✅ CI runs `idl_small` tests on every PR (fixtures generated locally, not committed)
    - ✅ All 146+ existing tests still pass (no regression)
 
 4. **Benchmarking:**
    - ✅ Baseline results established for medium and large corpora
-   - ✅ Benchmark suite runs automatically on main branch merges
+   - ✅ Benchmark suite (`benchmark_idl.py`) runs automatically on main branch merges
    - ✅ Regression detection alerts when performance degrades >10%
 
 5. **Performance:**
@@ -1433,40 +1454,50 @@ This integration is successful when:
    - ✅ Memory usage <4GB during indexing
 
 6. **Documentation:**
-   - ✅ `docs/CHUG_INTEGRATION.md` guide written
-   - ✅ `CLAUDE.md` updated with Chug usage patterns
-   - ✅ All Chug-related code has comprehensive docstrings
+   - ✅ `docs/IDL_FIXTURE_INTEGRATION.md` guide written
+   - ✅ `CLAUDE.md` updated with IDL fixture usage patterns
+   - ✅ All IDL/Chug-related scripts have comprehensive docstrings
+
+7. **Licensing & Storage Compliance:**
+   - ✅ PDFs are NOT committed to git (local generation only)
+   - ✅ Manifests with doc_ids + hashes ARE committed (reproducibility)
+   - ✅ Documentation clearly states "research/testing use only"
+   - ✅ No substantial reproduction of IDL corpus in distributed packages
 
 ---
 
 ## 10. Risks & Mitigation
 
-### Risk 1: Chug Tool Doesn't Exist Yet
+### Risk 1: Licensing Violations
 
-**Risk:** This plan assumes Chug is an existing tool, but it may need to be built from scratch.
+**Risk:** Committing IDL PDFs to git violates pixparse/idl-wds license ("substantial reproduction" prohibited).
 
 **Mitigation:**
-- Clarify Chug implementation status with user **before** Phase 3
-- If Chug needs to be built, add 1-2 week development phase
-- Consider simpler alternatives (manual curation, wget scripts) for initial prototyping
+- ✅ **DO NOT** commit PDFs to git repositories
+- ✅ Commit manifests only (doc_ids + hashes for reproducibility)
+- ✅ Developers generate fixtures locally via `idl_sample_docs.py`
+- ✅ CI caches fixtures separately (not in repo)
+- ✅ Documentation emphasizes "research/testing use only"
 
 ### Risk 2: IDL Access Restrictions
 
-**Risk:** UCSF IDL may have rate limits, authentication requirements, or download restrictions.
+**Risk:** HF may have rate limits or pixparse/idl-wds dataset may become unavailable.
 
 **Mitigation:**
-- Research IDL API terms of service
-- If API is restricted, download corpora manually in bulk
-- Cache downloaded documents to avoid repeated API calls
+- Use streaming mode (recommended) - no full 6TB download needed
+- HF datasets library handles rate limiting gracefully
+- If dataset unavailable, fixtures already generated remain usable
+- Only require `small` corpus for CI (100 docs, quick generation)
 
-### Risk 3: Large Corpus Storage Costs
+### Risk 3: Chug API Instability
 
-**Risk:** 100K document corpus (~50GB) may be too large for Git, CI caching, or developer machines.
+**Risk:** Chug is alpha-quality, API may break across versions.
 
 **Mitigation:**
-- Use Git LFS for large binary files
-- Store XL corpus separately (S3, network share) with opt-in download
-- Only require `small` corpus for CI (skip medium/large/xl unless explicitly requested)
+- Chug isolated in `scripts/dev/` only (never imported by RexLit core)
+- Pin Chug version in `[dev-idl]` optional dependency
+- Fixtures generated once, no ongoing Chug dependency
+- If Chug breaks, fixtures remain usable (plain PDFs + manifests)
 
 ### Risk 4: Fixture Corpus Staleness
 
@@ -1477,14 +1508,15 @@ This integration is successful when:
 - Pin corpus version in tests (fixture manifest includes version metadata)
 - Document corpus regeneration procedure (when to refresh fixtures)
 
-### Risk 5: Determinism Challenges
+### Risk 5: Metadata Enrichment Gaps
 
-**Risk:** Chug sampling may not be deterministic, causing fixture corpora to differ across regenerations.
+**Risk:** IDL Solr API may not have metadata for all documents (Bates, custodian often missing).
 
 **Mitigation:**
-- Enforce deterministic sampling in Chug (use fixed random seed)
-- Store sampling parameters in corpus metadata (seed, filter criteria)
-- Validate corpus checksums match expected values
+- Phase A (minimal manifest) doesn't depend on Solr metadata
+- Phase B (enrichment) is optional and best-effort
+- Tests gate on enrichment availability (`if manifest.enriched.jsonl exists`)
+- Document which fields are "likely unavailable" in plan (Bates, custodian, dates)
 
 ---
 
