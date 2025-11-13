@@ -134,6 +134,8 @@ def validate_path(path: Path, allowed_root: Path) -> bool:
         return False
 ```
 
+Implementation detail: RexLit resolves every candidate path with `fs.realpathSync` (following all symlinks and junctions) before performing the boundary comparison, ensuring that symlink chains cannot escape `REXLIT_HOME` even if the original string appears safe.
+
 #### Protected Against
 
 ✅ Symlinks outside document root
