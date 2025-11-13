@@ -234,11 +234,11 @@ Each corpus tier has specific use cases:
 
 | Tier | Doc Count | Size | Use Case | Test Marker |
 |------|-----------|------|----------|-------------|
-| **small** | 100 | ~50MB | CI smoke tests, quick iteration | `@pytest.mark.chug_small` |
-| **medium** | 1,000 | ~500MB | Full integration tests | `@pytest.mark.chug_medium` |
-| **large** | 10,000 | ~5GB | Stress tests, parallel processing | `@pytest.mark.chug_large` |
-| **xl** | 100,000 | ~50GB | Benchmarking, performance baselines | `@pytest.mark.chug_xl` |
-| **edge-cases** | ~50 | ~25MB | Malformed PDFs, OCR failures, edge cases | `@pytest.mark.chug_edge` |
+| **small** | 100 | ~50MB | CI smoke tests, quick iteration | `@pytest.mark.idl_small` |
+| **medium** | 1,000 | ~500MB | Full integration tests | `@pytest.mark.idl_medium` |
+| **large** | 10,000 | ~5GB | Stress tests, parallel processing | `@pytest.mark.idl_large` |
+| **xl** | 100,000 | ~50GB | Benchmarking, performance baselines | `@pytest.mark.idl_xl` |
+| **edge-cases** | ~50 | ~25MB | Malformed PDFs, OCR failures, edge cases | `@pytest.mark.idl_edge` |
 
 **Curation criteria:**
 - **File type diversity:** PDFs (70%), DOCX (15%), RTF (5%), emails (10%)
@@ -247,24 +247,57 @@ Each corpus tier has specific use cases:
 - **Privilege patterns:** Mix of privileged/non-privileged (10-20% privileged)
 - **OCR complexity:** Native text PDFs + scanned images requiring OCR
 
-### 3.3 Corpus Manifest Format
+### 3.3 Corpus Manifest Format (Two-Phase Approach)
 
-Each corpus includes a `manifest.jsonl` with IDL metadata:
+IDL fixtures use a **two-manifest pattern** to separate minimal requirements from optional enrichment:
+
+#### Minimal Manifest (`manifest.jsonl`)
+
+**Produced by:** `idl_sample_docs.py` (Phase A - Sampling)
+**Required for:** All tests (ingest, indexing, search, performance)
+**Source:** `pixparse/idl-wds` HF dataset structure
 
 ```jsonl
-{"doc_id": "JLI00489744", "bates": "JLI00489744", "custodian": "jerry.masoudi", "case": "NC-v-JUUL", "filepath": "docs/JLI00489744.pdf", "sha256": "a1b2c3...", "file_size": 245678, "page_count": 3, "datesent": "2019-04-14", "type": "email", "ocr_text_path": "ocr/JLI00489744.txt", "privilege_claimed": false, "idl_url": "https://industrydocuments.ucsf.edu/tobacco/docs/#id=JLI00489744"}
-{"doc_id": "JLI00490012", "bates": "JLI00490012", "custodian": "sarah.chen", "case": "NC-v-JUUL", "filepath": "docs/JLI00490012.pdf", "sha256": "d4e5f6...", "file_size": 102400, "page_count": 2, "datesent": "2019-05-20", "type": "email", "ocr_text_path": "ocr/JLI00490012.txt", "privilege_claimed": true, "idl_url": "https://industrydocuments.ucsf.edu/tobacco/docs/#id=JLI00490012"}
+{"schema_version": "1.0", "doc_id": "kykb0006", "filepath": "docs/kykb0006.pdf", "sha256": "a1b2c3d4...", "file_size": 245678, "page_count": 3, "idl_url": "https://www.industrydocuments.ucsf.edu/docs/kykb0006"}
+{"schema_version": "1.0", "doc_id": "hqcx0242", "filepath": "docs/hqcx0242.pdf", "sha256": "e5f6g7h8...", "file_size": 102400, "page_count": 2, "idl_url": "https://www.industrydocuments.ucsf.edu/docs/hqcx0242"}
 ```
 
-**Key fields:**
-- `doc_id` - IDL unique identifier
-- `bates` - Bates number from original production
-- `custodian` - Document custodian (for RexLit's custodian hierarchy)
-- `case` - Source litigation (NC-v-JUUL, etc.)
-- `filepath` - Relative path to document within corpus
-- `sha256` - Document hash (for deterministic processing)
-- `privilege_claimed` - Ground truth for privilege classification tests
+**Minimal fields (always present):**
+- `schema_version` - Manifest format version (for compatibility)
+- `doc_id` - IDL unique identifier (8-char, from `__key__` field)
+- `filepath` - Relative path to PDF within corpus
+- `sha256` - Document hash (for deterministic processing & validation)
+- `file_size` - PDF file size in bytes
+- `page_count` - Number of pages (from `len(json['pages'])`)
 - `idl_url` - Link back to original IDL document (for provenance)
+
+#### Enriched Manifest (`manifest.enriched.jsonl`)
+
+**Produced by:** `idl_enrich_metadata.py` (Phase B - Enrichment, **optional**)
+**Required for:** Privilege/permissions-aware tests only
+**Source:** IDL Solr API or `idl_data` metadata dumps
+
+```jsonl
+{"schema_version": "1.1", "enrichment_source": "idl_data_dump_2025-11-01", "doc_id": "kykb0006", "filepath": "docs/kykb0006.pdf", "sha256": "a1b2c3d4...", "file_size": 245678, "page_count": 3, "idl_url": "https://www.industrydocuments.ucsf.edu/docs/kykb0006", "collection": "tobacco", "permissions_raw": "public/formerly privileged", "was_ever_privileged": true, "bates": null, "custodian": "unknown", "datesent": null, "type": "document"}
+{"schema_version": "1.1", "enrichment_source": "idl_data_dump_2025-11-01", "doc_id": "hqcx0242", "filepath": "docs/hqcx0242.pdf", "sha256": "e5f6g7h8...", "file_size": 102400, "page_count": 2, "idl_url": "https://www.industrydocuments.ucsf.edu/docs/hqcx0242", "collection": "tobacco", "permissions_raw": "public", "was_ever_privileged": false, "bates": null, "custodian": "unknown", "datesent": null, "type": "document"}
+```
+
+**Enriched fields (optional, best-effort):**
+- `schema_version` - Updated to 1.1 for enriched records
+- `enrichment_source` - Metadata source (Solr API, idl_data dump version, etc.)
+- `collection` - IDL collection type (tobacco, drug, fossil_fuel, chemical)
+- `permissions_raw` - Original IDL permissions string (e.g., "public/formerly privileged")
+- `was_ever_privileged` - Boolean: `true` if doc was ever privileged (even if public now)
+- `bates` - Bates number from production (likely `null` for most IDL docs)
+- `custodian` - Document custodian (likely `"unknown"` for most IDL docs)
+- `datesent` - Document date (may be `null` if not in metadata)
+- `type` - Document type (email, letter, memo, report, etc.)
+
+**Important notes:**
+1. **All IDL docs are now public** - "formerly privileged" means historical protection, not current
+2. **Bates/custodian often unavailable** - IDL docs come from productions, not original discovery
+3. **Enrichment is optional** - Tests requiring these fields should check for `manifest.enriched.jsonl` existence
+4. **Minimal manifest is canonical** - Enrichment adds fields but doesn't replace minimal manifest
 
 ### 3.4 NO Hexagonal Architecture Changes Required
 
@@ -506,12 +539,18 @@ def sample_idl_documents(
     Args:
         count: Number of documents to sample
         seed: Random seed for reproducibility
-        filters: Optional filters (case, custodian, date_range, file_type, privilege_claimed)
+        filters: Optional filters (page_count_min, page_count_max, etc.)
 
     Yields:
-        Document records with keys: pdf_bytes, metadata (Bates, custodian, case, etc.)
+        Document records with keys matching actual pixparse/idl-wds structure:
+        - doc_id: str (from __key__)
+        - pdf: bytes (PDF file contents)
+        - json: dict (Textract-style OCR annotations)
+        - ocr: str (legacy OCR text)
+        - page_count: int (derived from json)
     """
     # Configure Chug to load IDL webdataset
+    # Note: DataTaskDocReadCfg may provide additional fields depending on configuration
     task_cfg = DataTaskDocReadCfg(
         page_sampling='all',  # Include all pages per document
     )
@@ -529,19 +568,42 @@ def sample_idl_documents(
 
     sampled = 0
     for sample in loader:
-        # Apply filters
+        # Actual pixparse/idl-wds structure:
+        # sample.keys() → ['__key__', '__url__', 'json', 'ocr', 'pdf', 'tif']
+
+        doc_id = sample['__key__']  # e.g., "kykb0006"
+        pdf_blob = sample['pdf']     # PDF bytes (or file-like, depending on chug config)
+        json_obj = sample['json']    # Textract-style OCR: {"pages": [{"text": [...], "bbox": [...], ...}]}
+        ocr_text = sample['ocr']     # Legacy OCR text string
+
+        # Extract page count from json structure
+        page_count = len(json_obj.get('pages', [])) if json_obj else 0
+
+        # Apply filters (basic examples - extend as needed)
         if filters:
-            if 'case' in filters and sample['metadata'].get('case') != filters['case']:
+            if 'page_count_min' in filters and page_count < filters['page_count_min']:
                 continue
-            if 'custodian' in filters and sample['metadata'].get('custodian') not in filters['custodian']:
+            if 'page_count_max' in filters and page_count > filters['page_count_max']:
                 continue
-            if 'privilege_claimed' in filters and sample['metadata'].get('privilege_claimed') != filters['privilege_claimed']:
+            # Note: Rich metadata (case, custodian, permissions) NOT in HF dataset
+            # Those require separate enrichment from IDL Solr API / idl_data dumps
+
+        # Ensure pdf_blob is bytes (may be file-like depending on chug configuration)
+        if not isinstance(pdf_blob, bytes):
+            if hasattr(pdf_blob, 'read'):
+                pdf_bytes = pdf_blob.read()
+            else:
+                print(f"Warning: Unexpected pdf type for {doc_id}: {type(pdf_blob)}")
                 continue
-            # ... more filter logic ...
+        else:
+            pdf_bytes = pdf_blob
 
         yield {
-            'pdf_bytes': sample['pdf_bytes'],
-            'metadata': sample['metadata'],
+            'doc_id': doc_id,
+            'pdf': pdf_bytes,
+            'json': json_obj,
+            'ocr': ocr_text,
+            'page_count': page_count,
         }
 
         sampled += 1
@@ -554,15 +616,18 @@ def export_corpus(
     output_dir: Path,
 ) -> None:
     """
-    Export sampled documents to filesystem directory.
+    Export sampled documents to filesystem directory with MINIMAL manifest.
 
     Structure:
         output_dir/
         ├── docs/
-        │   ├── JLI00489744.pdf
-        │   ├── JLI00490012.pdf
+        │   ├── kykb0006.pdf
+        │   ├── hqcx0242.pdf
         │   └── ...
-        └── manifest.jsonl
+        └── manifest.jsonl  (minimal schema v1.0)
+
+    Note: This produces the MINIMAL manifest only. For enrichment (permissions,
+    collection, etc.), run idl_enrich_metadata.py separately.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     docs_dir = output_dir / "docs"
@@ -572,42 +637,41 @@ def export_corpus(
     manifest_records = []
 
     for doc in documents:
-        metadata = doc['metadata']
-        pdf_bytes = doc['pdf_bytes']
+        # Extract from actual pixparse/idl-wds structure
+        doc_id = doc['doc_id']         # from __key__
+        pdf_bytes = doc['pdf']         # PDF bytes
+        page_count = doc['page_count'] # from len(json['pages'])
 
         # Write PDF to disk
-        doc_id = metadata['doc_id']
         pdf_path = docs_dir / f"{doc_id}.pdf"
         pdf_path.write_bytes(pdf_bytes)
 
         # Compute SHA-256 hash
         sha256 = hashlib.sha256(pdf_bytes).hexdigest()
 
-        # Build manifest record
+        # Build MINIMAL manifest record (schema v1.0)
+        # NO bates, custodian, case, permissions - those come from enrichment
         manifest_record = {
+            'schema_version': '1.0',
             'doc_id': doc_id,
-            'bates': metadata.get('bates', doc_id),
-            'custodian': metadata.get('custodian', 'unknown'),
-            'case': metadata.get('case', 'unknown'),
             'filepath': f"docs/{doc_id}.pdf",
             'sha256': sha256,
             'file_size': len(pdf_bytes),
-            'page_count': metadata.get('page_count', 0),
-            'datesent': metadata.get('datesent'),
-            'type': metadata.get('type', 'document'),
-            'privilege_claimed': metadata.get('privilege_claimed', False),
-            'idl_url': f"https://industrydocuments.ucsf.edu/tobacco/docs/#id={doc_id}",
+            'page_count': page_count,
+            'idl_url': f"https://www.industrydocuments.ucsf.edu/docs/{doc_id}",
         }
         manifest_records.append(manifest_record)
 
     # Write manifest.jsonl
     with open(manifest_path, 'w') as f:
         for record in manifest_records:
-            f.write(json.dumps(record) + '\\n')
+            f.write(json.dumps(record) + '\n')
 
     print(f"✓ Exported {len(manifest_records)} documents to {output_dir}")
     print(f"  - PDFs: {docs_dir}")
-    print(f"  - Manifest: {manifest_path}")
+    print(f"  - Manifest: {manifest_path} (minimal schema v1.0)")
+    print(f"\nTo add permissions/collection/metadata, run:")
+    print(f"  python scripts/dev/idl_enrich_metadata.py --manifest {manifest_path}")
 
 
 def validate_corpus(corpus_dir: Path) -> bool:
@@ -684,52 +748,105 @@ if __name__ == "__main__":
     main()
 ```
 
-### 5.3 Corpus Generation Workflow
+### 5.3 Two-Phase Corpus Generation Workflow
 
-**One-time generation per tier:**
+#### Phase A: Sampling (Required - Minimal Manifests)
+
+**Install dev dependencies:**
+```bash
+pip install 'rexlit[dev-idl]'
+```
+
+**Generate corpora (streaming mode recommended, no 6TB snapshot needed):**
 
 ```bash
-# 1. Install dev dependencies
-pip install 'rexlit[dev-idl]'
-
-# 2. Generate small corpus (100 docs, for CI)
-python scripts/dev/idl_to_rexlit_fixture.py \\
+# 1. Small corpus (100 docs, for CI smoke tests)
+python scripts/dev/idl_sample_docs.py \\
     --tier small \\
     --count 100 \\
     --seed 42 \\
     --output rexlit/docs/idl-fixtures/small \\
     --validate
 
-# 3. Generate medium corpus (1K docs, for integration tests)
-python scripts/dev/idl_to_rexlit_fixture.py \\
+# 2. Medium corpus (1K docs, for integration tests)
+python scripts/dev/idl_sample_docs.py \\
     --tier medium \\
     --count 1000 \\
     --seed 42 \\
     --output rexlit/docs/idl-fixtures/medium \\
     --validate
 
-# 4. Generate edge case corpus (privileged documents only)
-python scripts/dev/idl_to_rexlit_fixture.py \\
+# 3. Edge case: Large multi-page documents (OCR stress tests)
+python scripts/dev/idl_sample_docs.py \\
     --tier edge-cases \\
     --count 50 \\
-    --filter "privilege_claimed=true" \\
-    --output rexlit/docs/idl-fixtures/edge-cases/privilege-patterns \\
+    --filter "page_count_min=10" \\
+    --output rexlit/docs/idl-fixtures/edge-cases/large-docs \\
     --validate
 
-# 5. Generate edge case corpus (OCR failures)
-python scripts/dev/idl_to_rexlit_fixture.py \\
+# 4. Edge case: Single-page documents (layout tests)
+python scripts/dev/idl_sample_docs.py \\
     --tier edge-cases \\
     --count 50 \\
-    --filter "quality=poor_ocr" \\
-    --output rexlit/docs/idl-fixtures/edge-cases/ocr-failures \\
+    --filter "page_count_max=1" \\
+    --output rexlit/docs/idl-fixtures/edge-cases/single-page \\
     --validate
 ```
 
-**After generation:**
-- Fixtures are plain filesystem directories
-- Commit to git (small/medium) or store separately (large/xl)
-- RexLit ingests them like any other evidence directory
-- Chug/IDL are no longer needed at runtime
+**After Phase A:**
+- ✅ Minimal `manifest.jsonl` created (schema v1.0)
+- ✅ Contains: `doc_id`, `filepath`, `sha256`, `file_size`, `page_count`, `idl_url`
+- ✅ Ready for ingest/indexing/search/performance tests
+- ✅ NO metadata dependencies (Solr, idl_data, etc.)
+
+#### Phase B: Enrichment (Optional - For Privilege Tests)
+
+**Download metadata source (choose one):**
+
+```bash
+# Option 1: Use idl_data metadata dumps (recommended, offline)
+# Clone idl_data repo and use their metadata exports
+git clone https://github.com/ventureresearch/idl_data.git
+# Use data/idl_metadata_dump.json as --metadata-source
+
+# Option 2: Use live IDL Solr API (fallback, network required)
+# Script will call metadata.idl.ucsf.edu per doc_id
+```
+
+**Enrich manifests with permissions/collection:**
+
+```bash
+# Enrich small corpus (offline mode with metadata dump)
+python scripts/dev/idl_enrich_metadata.py \\
+    --manifest rexlit/docs/idl-fixtures/small/manifest.jsonl \\
+    --metadata-source data/idl_metadata_dump.json \\
+    --output rexlit/docs/idl-fixtures/small/manifest.enriched.jsonl
+
+# Enrich medium corpus
+python scripts/dev/idl_enrich_metadata.py \\
+    --manifest rexlit/docs/idl-fixtures/medium/manifest.jsonl \\
+    --metadata-source data/idl_metadata_dump.json \\
+    --output rexlit/docs/idl-fixtures/medium/manifest.enriched.jsonl
+
+# OR use live Solr API (slower, requires REXLIT_ONLINE=1)
+python scripts/dev/idl_enrich_metadata.py \\
+    --manifest rexlit/docs/idl-fixtures/small/manifest.jsonl \\
+    --use-solr \\
+    --output rexlit/docs/idl-fixtures/small/manifest.enriched.jsonl
+```
+
+**After Phase B:**
+- ✅ Enriched `manifest.enriched.jsonl` created (schema v1.1)
+- ✅ Adds: `collection`, `permissions_raw`, `was_ever_privileged`, `bates` (if avail), etc.
+- ✅ Tests requiring privilege/permissions metadata can now run
+- ✅ Minimal manifest remains canonical for basic operations
+
+**Storage & Licensing:**
+- ⚠️ **DO NOT commit PDFs to git** (IDL license prohibits substantial reproduction)
+- ✅ Commit manifests only (`manifest.jsonl` with doc_ids + hashes)
+- ✅ Developers generate fixtures locally via these scripts
+- ✅ CI can cache fixtures separately (not in main repo)
+- ✅ After generation, no runtime Chug/IDL dependencies
 
 ### 5.4 Alternative: ML Model Training Workflows
 
@@ -776,14 +893,14 @@ model.save_pretrained("models/idl-privilege-classifier")
 ### 6.1 New Benchmark: benchmark_idl.py
 
 ```python
-# scripts/benchmark_chug.py
+# scripts/benchmark_idl.py
 
 """
-Benchmark RexLit performance against Chug IDL fixture corpora.
+Benchmark RexLit performance against IDL fixture corpora.
 
 Usage:
-    python scripts/benchmark_chug.py --corpus medium --workers 6
-    python scripts/benchmark_chug.py --corpus xl --baseline results/baseline_2025-11-01.json
+    python scripts/benchmark_idl.py --corpus medium --workers 6
+    python scripts/benchmark_idl.py --corpus xl --baseline results/baseline_2025-11-01.json
 """
 
 import json
@@ -846,7 +963,7 @@ def benchmark_search(index_dir: Path, queries: list[str]) -> dict:
 
 def run_benchmark_suite(corpus_name: str, workers: int, baseline_path: Path | None):
     """Run full benchmark suite and compare to baseline."""
-    corpus_path = Path(f"rexlit/docs/chug-fixtures/{corpus_name}")
+    corpus_path = Path(f"rexlit/docs/idl-fixtures/{corpus_name}/docs")
     index_dir = Path(f"/tmp/rexlit-benchmark-{corpus_name}")
 
     print(f"Running benchmark suite on {corpus_name} corpus...")
