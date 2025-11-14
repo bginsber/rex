@@ -44,6 +44,7 @@ export function DocumentViewer({ document, getDocumentUrl }: DocumentViewerProps
           src={getDocumentUrl(document.sha256)}
           title={`Document: ${document.path}`}
           className={styles.iframe}
+          sandbox="allow-same-origin allow-scripts"
         />
       </div>
     </div>

@@ -19,13 +19,24 @@ export function SearchPanel({
   loading = false
 }: SearchPanelProps) {
   const [query, setQuery] = useState('')
+  const [hasSearched, setHasSearched] = useState(false)
+  const [lastSearchedQuery, setLastSearchedQuery] = useState('')
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
-    if (query.trim()) {
-      onSearch(query.trim())
+    const trimmedQuery = query.trim()
+    if (trimmedQuery) {
+      onSearch(trimmedQuery)
+      setHasSearched(true)
+      setLastSearchedQuery(trimmedQuery)
     }
   }
+
+  const emptyMessage = loading
+    ? 'Searching...'
+    : hasSearched
+      ? `No results for "${lastSearchedQuery}"`
+      : 'Enter a query to search documents'
 
   return (
     <aside className={styles.searchPanel}>
@@ -61,7 +72,7 @@ export function SearchPanel({
           documents={results}
           selectedDocumentHash={selectedDocumentHash}
           onSelectDocument={onSelectDocument}
-          emptyMessage={loading ? 'Searching...' : 'Enter a query to search documents'}
+          emptyMessage={emptyMessage}
         />
       </div>
     </aside>
