@@ -1,0 +1,171 @@
+/* ============================================
+   RexLit Animations - Essential Effects Only
+   ============================================
+
+   Focused on the most impactful visual effects:
+   - Amber glow for privileged documents
+   - Status indicator pulse
+   - Toast notifications
+   - Smooth transitions
+   ============================================ */
+
+/* ============================================
+   Amber Pulse - Privileged Document Glow
+   ============================================ */
+
+@keyframes amberPulse {
+    0%, 100% {
+        box-shadow: 0 0 12px rgba(255, 107, 107, 0.4), 0 0 24px rgba(255, 107, 107, 0.2);
+    }
+    50% {
+        box-shadow: 0 0 20px rgba(255, 107, 107, 0.6), 0 0 40px rgba(255, 107, 107, 0.3);
+    }
+}
+
+/* Apply to privileged documents */
+.privileged-glow {
+    animation: amberPulse 3s ease-in-out infinite;
+}
+
+/* ============================================
+   Status Indicator Pulse - LED Effect
+   ============================================ */
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
+/* Apply to status dots */
+.status-pulse {
+    animation: pulse 2s ease-in-out infinite;
+}
+
+/* ============================================
+   Toast Notifications - Slide In/Out
+   ============================================ */
+
+@keyframes slideInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes slideOutDown {
+    from {
+        opacity: 1;
+        transform: translateY(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+}
+
+/* Toast classes */
+.toast-enter {
+    animation: slideInUp 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.toast-exit {
+    animation: slideOutDown 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ============================================
+   Fade Transitions - Document Viewer
+   ============================================ */
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes fadeOut {
+    from {
+        opacity: 1;
+    }
+    to {
+        opacity: 0;
+    }
+}
+
+/* Subtle fade for document transitions */
+.fade-enter {
+    animation: fadeIn 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.fade-exit {
+    animation: fadeOut 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ============================================
+   Focus Visible - Accessibility
+   ============================================ */
+
+@keyframes focusRing {
+    0% {
+        box-shadow: 0 0 0 0 rgba(79, 195, 247, 0.6);
+    }
+    100% {
+        box-shadow: 0 0 0 4px rgba(79, 195, 247, 0);
+    }
+}
+
+/* Keyboard focus indicator */
+*:focus-visible {
+    outline: 2px solid var(--cyan-500);
+    outline-offset: 2px;
+    animation: focusRing 600ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Remove default outline */
+*:focus {
+    outline: none;
+}
+
+/* ============================================
+   Utility Classes
+   ============================================ */
+
+/* Smooth transitions for interactive elements */
+.transition-colors {
+    transition: background-color var(--transition-base),
+                border-color var(--transition-base),
+                color var(--transition-base);
+}
+
+.transition-transform {
+    transition: transform var(--transition-base);
+}
+
+.transition-opacity {
+    transition: opacity var(--transition-base);
+}
+
+.transition-all {
+    transition: all var(--transition-base);
+}
+
+/* Reduce motion for accessibility */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}

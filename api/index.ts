@@ -2,14 +2,16 @@ import { Elysia } from 'elysia'
 import { cors } from '@elysiajs/cors'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
+import { realpathSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
-import { isAbsolute, join, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 export const REXLIT_BIN = Bun.env.REXLIT_BIN ?? 'rexlit'
 export const PORT = Number(Bun.env.PORT ?? 3000)
 export const REXLIT_HOME = resolve(
   Bun.env.REXLIT_HOME ?? join(homedir(), '.local', 'share', 'rexlit')
 )
+const REXLIT_HOME_REALPATH = resolveRealPathAllowMissing(REXLIT_HOME)
 
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'dynamic'
 
@@ -45,27 +47,6 @@ export const ALLOWED_REASONING_EFFORTS: ReadonlySet<ReasoningEffort> = new Set([
   'high',
   'dynamic'
 ])
-
-function isPatternMatch(value: unknown): value is PatternMatch {
-  if (!value || typeof value !== 'object') {
-    return false
-  }
-  const candidate = value as Record<string, unknown>
-  const ruleOk =
-    candidate.rule === undefined || typeof candidate.rule === 'string'
-  const confidenceOk =
-    candidate.confidence === undefined ||
-    typeof candidate.confidence === 'number'
-  const snippetOk =
-    candidate.snippet === undefined ||
-    candidate.snippet === null ||
-    typeof candidate.snippet === 'string'
-  const stageOk =
-    candidate.stage === undefined ||
-    candidate.stage === null ||
-    typeof candidate.stage === 'string'
-  return ruleOk && confidenceOk && snippetOk && stageOk
-}
 
 export interface RunOptions {
   timeoutMs?: number
@@ -149,12 +130,37 @@ export async function runRexlit(
   return impl(args, options)
 }
 
-export const ROOT_PREFIX = `${REXLIT_HOME}${sep}`
+export const ROOT_PREFIX = `${REXLIT_HOME_REALPATH}${sep}`
+
+function resolveRealPathAllowMissing(target: string): string {
+  try {
+    return realpathSync(target)
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException
+    if (err.code === 'ENOENT') {
+      const parent = dirname(target)
+      if (!parent || parent === target) {
+        return resolve(target)
+      }
+      const resolvedParent = resolveRealPathAllowMissing(parent)
+      return resolve(resolvedParent, basename(target))
+    }
+    throw error
+  }
+}
 
 export function ensureWithinRoot(filePath: string) {
+  if (!filePath) {
+    throw new Error('Path traversal detected')
+  }
   const absolute = resolve(filePath)
-  if (absolute === REXLIT_HOME || absolute.startsWith(ROOT_PREFIX)) {
-    return absolute
+  const resolved = resolveRealPathAllowMissing(absolute)
+  const relativePath = relative(REXLIT_HOME_REALPATH, resolved)
+  if (
+    relativePath === '' ||
+    (!relativePath.startsWith('..') && !isAbsolute(relativePath))
+  ) {
+    return resolved
   }
   throw new Error('Path traversal detected')
 }
@@ -256,6 +262,52 @@ export type StageStatus = {
 
 type PrivilegeCliDecision = PolicyDecision & {
   pattern_matches?: PatternMatch[]
+}
+
+function sanitizePatternMatch(entry: unknown): PatternMatch | null {
+  if (!entry || typeof entry !== 'object') {
+    return null
+  }
+  const candidate = entry as Record<string, unknown>
+  const sanitized: PatternMatch = {}
+  let hasField = false
+
+  if (typeof candidate.rule === 'string' && candidate.rule.trim()) {
+    sanitized.rule = candidate.rule
+    hasField = true
+  }
+  if (
+    typeof candidate.confidence === 'number' &&
+    Number.isFinite(candidate.confidence)
+  ) {
+    sanitized.confidence = candidate.confidence
+    hasField = true
+  }
+  if (candidate.stage === null || typeof candidate.stage === 'string') {
+    sanitized.stage = candidate.stage ?? null
+    hasField = true
+  }
+  if (candidate.snippet === null) {
+    sanitized.snippet = null
+    hasField = true
+  } else if (
+    typeof candidate.snippet === 'string' &&
+    !/[\\/]/.test(candidate.snippet)
+  ) {
+    sanitized.snippet = candidate.snippet
+    hasField = true
+  }
+
+  return hasField ? sanitized : null
+}
+
+function sanitizePatternMatches(value: unknown): PatternMatch[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value
+    .map((entry) => sanitizePatternMatch(entry))
+    .filter((entry): entry is PatternMatch => Boolean(entry))
 }
 
 export function buildStageStatus(decision: PolicyDecision): StageStatus[] {
@@ -510,9 +562,9 @@ export function createApp() {
         const decision = (await runRexlit(args, {
           timeoutMs: 2 * 60 * 1000
         })) as PrivilegeCliDecision
-        const patternMatches = Array.isArray(decision?.pattern_matches)
-          ? decision.pattern_matches.filter(isPatternMatch)
-          : []
+        const patternMatches = sanitizePatternMatches(
+          decision?.pattern_matches
+        )
 
         return {
           decision,
@@ -571,9 +623,9 @@ export function createApp() {
           args,
           { timeoutMs: 3 * 60 * 1000 }
         )) as PrivilegeCliDecision
-        const patternMatches = Array.isArray(decision?.pattern_matches)
-          ? decision.pattern_matches.filter(isPatternMatch)
-          : []
+        const patternMatches = sanitizePatternMatches(
+          decision?.pattern_matches
+        )
 
         return {
           decision,

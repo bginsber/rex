@@ -1,0 +1,34 @@
+.appLayout {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.mainContainer {
+    flex: 1;
+    display: grid;
+    grid-template-columns: var(--size-nav-rail) var(--size-search-panel) 1fr;
+    overflow: hidden;
+}
+
+/* Tablet: narrower search panel */
+@media (max-width: 1200px) {
+    .mainContainer {
+        grid-template-columns: var(--size-nav-rail) 350px 1fr;
+    }
+}
+
+@media (max-width: 900px) {
+    .mainContainer {
+        grid-template-columns: var(--size-nav-rail) 300px 1fr;
+    }
+}
+
+/* Mobile: vertical stack */
+@media (max-width: 768px) {
+    .mainContainer {
+        display: flex;
+        flex-direction: column;
+        overflow: visible;
+    }
+}

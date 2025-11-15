@@ -1,0 +1,40 @@
+.indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.dot.active {
+    background: var(--green-production);
+    box-shadow: 0 0 8px rgba(81, 207, 102, 0.6);
+}
+
+.dot.inactive {
+    background: var(--text-tertiary);
+    box-shadow: none;
+}
+
+.dot.warning {
+    background: var(--orange-review);
+    box-shadow: 0 0 8px rgba(255, 146, 43, 0.6);
+}
+
+.dot.error {
+    background: var(--red-privilege);
+    box-shadow: 0 0 8px rgba(255, 107, 107, 0.6);
+}
+
+.label {
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wider);
+    font-family: var(--font-mono);
+}

@@ -1,0 +1,123 @@
+/* ============================================
+   RexLit Typography - Font Definitions
+   ============================================
+
+   FONT SETUP INSTRUCTIONS:
+
+   To use self-hosted fonts (recommended for offline-first):
+   1. Download WOFF2 files from Google Fonts or Font Squirrel
+   2. Place in src/assets/fonts/ following the structure below
+   3. Uncomment the @font-face declarations below
+   4. Remove or comment out the @import statements
+
+   For quick setup (requires network):
+   - The @import statements below load from Google Fonts CDN
+   - Works immediately but requires internet connection
+   ============================================ */
+
+/* ============================================
+   Option 1: CDN Imports (Quick Setup)
+   ============================================ */
+
+/* Newsreader - Editorial serif for document titles and headings */
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:wght@400;500;700&display=swap');
+
+/* Manrope - Modern sans-serif for UI elements */
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600&display=swap');
+
+/* JetBrains Mono - Technical monospace for Bates numbers and code */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ============================================
+   Option 2: Self-Hosted (Offline-First)
+   ============================================ */
+
+/*
+ * Uncomment these when font files are added to:
+ * src/assets/fonts/newsreader/
+ * src/assets/fonts/manrope/
+ * src/assets/fonts/jetbrains-mono/
+ */
+
+/* Newsreader - Serif */
+/*
+@font-face {
+  font-family: 'Newsreader';
+  src: url('../assets/fonts/newsreader/newsreader-regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Newsreader';
+  src: url('../assets/fonts/newsreader/newsreader-medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Newsreader';
+  src: url('../assets/fonts/newsreader/newsreader-bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+*/
+
+/* Manrope - Sans Serif */
+/*
+@font-face {
+  font-family: 'Manrope';
+  src: url('../assets/fonts/manrope/manrope-regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Manrope';
+  src: url('../assets/fonts/manrope/manrope-medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Manrope';
+  src: url('../assets/fonts/manrope/manrope-semibold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+*/
+
+/* JetBrains Mono - Monospace */
+/*
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('../assets/fonts/jetbrains-mono/jetbrains-mono-regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('../assets/fonts/jetbrains-mono/jetbrains-mono-medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+*/
+
+/* ============================================
+   Font Loading Optimization
+   ============================================ */
+
+/*
+ * font-display: swap ensures text remains visible during font load
+ * WOFF2 provides best compression (~30-50% smaller than WOFF)
+ * No legacy formats (TTF, EOT, WOFF) = smaller bundle, modern browsers only
+ */

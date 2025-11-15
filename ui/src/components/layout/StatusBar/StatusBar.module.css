@@ -1,0 +1,120 @@
+.statusBar {
+    height: var(--size-status-bar);
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 var(--spacing-md);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: var(--tracking-wider);
+    position: relative;
+    z-index: var(--z-sticky);
+}
+
+/* Subtle amber scanline effect */
+.statusBar::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg,
+        transparent,
+        var(--amber-500) 30%,
+        var(--amber-500) 70%,
+        transparent
+    );
+    opacity: 0.2;
+}
+
+.section {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-lg);
+}
+
+.section.center {
+    flex: 1;
+    justify-content: center;
+}
+
+/* Case Badge */
+.caseBadge {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: 4px 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+}
+
+.caseNumber {
+    color: var(--amber-500);
+    font-weight: var(--font-semibold);
+}
+
+.caseName {
+    color: var(--text-primary);
+    font-family: var(--font-serif);
+    font-size: var(--text-sm);
+    letter-spacing: normal;
+}
+
+/* Audit Chain */
+.auditChain {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    color: var(--text-secondary);
+}
+
+.auditChain svg {
+    color: var(--amber-500);
+}
+
+.chainCount {
+    font-size: var(--text-xs);
+}
+
+/* Bates Counter */
+.batesCounter {
+    padding: 4px 8px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--amber-500);
+    font-weight: var(--font-medium);
+    transition: color var(--transition-fast);
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+    .statusBar {
+        font-size: 10px;
+        padding: 0 var(--spacing-sm);
+    }
+
+    .section {
+        gap: var(--spacing-sm);
+    }
+
+    .caseName {
+        display: none;
+    }
+}
+
+@media (max-width: 480px) {
+    .section:first-child {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+    }
+
+    .chainCount {
+        display: none;
+    }
+}

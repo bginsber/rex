@@ -13,14 +13,22 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, afterAll, mock } from 'bun:test'
-import { homedir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
+import { tmpdir } from 'node:os'
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 
 const POLICY_TEST_HOME = join(process.cwd(), '.tmp-rexlit-home')
 await rm(POLICY_TEST_HOME, { recursive: true, force: true }).catch(() => {})
+mkdirSync(POLICY_TEST_HOME, { recursive: true })
 Bun.env.REXLIT_HOME = POLICY_TEST_HOME
-const { app, __setRunRexlitImplementation } = await import('./index')
+const {
+  app,
+  __setRunRexlitImplementation,
+  ensureWithinRoot,
+  resolveDocumentPath,
+  REXLIT_HOME
+} = await import('./index')
 
 // Test helper to create mock process
 function createMockProcess(stdout: string, stderr: string, exitCode: number, delay: number = 0) {
@@ -48,27 +56,18 @@ function createMockProcess(stdout: string, stderr: string, exitCode: number, del
 }
 
 describe('Security Boundaries - Path Traversal Protection', () => {
-  const REXLIT_HOME = resolve(Bun.env.REXLIT_HOME ?? join(homedir(), '.local', 'share', 'rexlit'))
-  const ROOT_PREFIX = `${REXLIT_HOME}${sep}`
-
-  function ensureWithinRoot(filePath: string): string {
-    const absolute = resolve(filePath)
-    if (absolute === REXLIT_HOME || absolute.startsWith(ROOT_PREFIX)) {
-      return absolute
-    }
-    throw new Error('Path traversal detected')
-  }
+  const root = REXLIT_HOME
 
   describe('ensureWithinRoot', () => {
     it('should allow paths within REXLIT_HOME', () => {
-      const validPath = join(REXLIT_HOME, 'documents', 'test.pdf')
+      const validPath = join(root, 'documents', 'test.pdf')
       expect(() => ensureWithinRoot(validPath)).not.toThrow()
       expect(ensureWithinRoot(validPath)).toBe(resolve(validPath))
     })
 
     it('should allow REXLIT_HOME itself', () => {
-      expect(() => ensureWithinRoot(REXLIT_HOME)).not.toThrow()
-      expect(ensureWithinRoot(REXLIT_HOME)).toBe(REXLIT_HOME)
+      expect(() => ensureWithinRoot(root)).not.toThrow()
+      expect(ensureWithinRoot(root)).toBe(root)
     })
 
     it('should reject absolute paths outside REXLIT_HOME', () => {
@@ -91,13 +90,26 @@ describe('Security Boundaries - Path Traversal Protection', () => {
     })
 
     it('should reject symlink traversal attempts', () => {
-      // Even if resolved, should still be outside root
-      const symlinkTarget = '/etc/passwd'
-      expect(() => ensureWithinRoot(symlinkTarget)).toThrow('Path traversal detected')
+      const outsideDir = mkdtempSync(join(tmpdir(), 'rexlit-outside-'))
+      const outsideFile = join(outsideDir, 'secret.txt')
+      writeFileSync(outsideFile, 'secret')
+
+      const docsDir = join(root, 'documents')
+      mkdirSync(docsDir, { recursive: true })
+      const symlinkPath = join(docsDir, 'outside-link.txt')
+      try {
+        rmSync(symlinkPath)
+      } catch {
+        // ignore if not present
+      }
+      symlinkSync(outsideFile, symlinkPath)
+
+      expect(() => ensureWithinRoot(symlinkPath)).toThrow('Path traversal detected')
+      rmSync(outsideDir, { recursive: true, force: true })
     })
 
     it('should handle edge cases with trailing slashes', () => {
-      const validWithSlash = join(REXLIT_HOME, 'documents', 'test.pdf') + sep
+      const validWithSlash = join(root, 'documents', 'test.pdf') + sep
       expect(() => ensureWithinRoot(validWithSlash)).not.toThrow()
       
       const invalidWithSlash = '/etc/passwd' + sep
@@ -106,11 +118,11 @@ describe('Security Boundaries - Path Traversal Protection', () => {
 
     it('should normalize paths before checking', () => {
       // Paths with . and .. should be normalized
-      const normalizedPath = join(REXLIT_HOME, 'documents', '..', 'documents', 'test.pdf')
+      const normalizedPath = join(root, 'documents', '..', 'documents', 'test.pdf')
       expect(() => ensureWithinRoot(normalizedPath)).not.toThrow()
       
       // But should still catch escapes
-      const escapePath = join(REXLIT_HOME, 'documents', '..', '..', 'etc', 'passwd')
+      const escapePath = join(root, 'documents', '..', '..', 'etc', 'passwd')
       expect(() => ensureWithinRoot(escapePath)).toThrow('Path traversal detected')
     })
 
@@ -126,7 +138,7 @@ describe('Security Boundaries - Path Traversal Protection', () => {
     })
 
     it('should handle Unicode and special characters', () => {
-      const unicodePath = join(REXLIT_HOME, 'documents', 'test-测试.pdf')
+      const unicodePath = join(root, 'documents', 'test-测试.pdf')
       expect(() => ensureWithinRoot(unicodePath)).not.toThrow()
       
       const maliciousUnicode = '/etc/passwd-测试'
@@ -135,29 +147,20 @@ describe('Security Boundaries - Path Traversal Protection', () => {
   })
 
   describe('resolveDocumentPath', () => {
-    async function resolveDocumentPath(body: any): Promise<string> {
-      if (body?.hash) {
-        // Mock: In real code, this would call runRexlit
-        const metadata = { path: join(REXLIT_HOME, 'documents', 'test.pdf') }
-        const path = metadata?.path
-        if (!path) {
-          throw new Error('Document not found')
-        }
-        return ensureWithinRoot(path)
-      }
-
-      const inputPath = body?.path
-      if (!inputPath) {
-        throw new Error('Either hash or path is required')
-      }
-
-      const candidate = resolve(REXLIT_HOME, inputPath)
-      return ensureWithinRoot(candidate)
-    }
+    afterEach(() => {
+      __setRunRexlitImplementation(undefined)
+    })
 
     it('should resolve paths from hash lookup securely', async () => {
+      const hashedPath = join(root, 'documents', 'test.pdf')
+      __setRunRexlitImplementation(async (args) => {
+        if (args[0] === 'index' && args[1] === 'get') {
+          return { path: hashedPath }
+        }
+        throw new Error('Unexpected CLI invocation')
+      })
       const result = await resolveDocumentPath({ hash: 'abc123' })
-      expect(result).toContain(REXLIT_HOME)
+      expect(result).toContain(root)
       expect(() => ensureWithinRoot(result)).not.toThrow()
     })
 
@@ -174,7 +177,7 @@ describe('Security Boundaries - Path Traversal Protection', () => {
 
     it('should normalize relative paths before validation', async () => {
       const result = await resolveDocumentPath({ path: 'documents/test.pdf' })
-      expect(result).toContain(REXLIT_HOME)
+      expect(result).toContain(root)
       expect(() => ensureWithinRoot(result)).not.toThrow()
     })
   })
@@ -881,4 +884,3 @@ describe('Security Boundaries - Stage Status Building', () => {
 afterAll(async () => {
   await rm(POLICY_TEST_HOME, { recursive: true, force: true }).catch(() => {})
 })
-
