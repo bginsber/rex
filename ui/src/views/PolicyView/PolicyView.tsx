@@ -60,6 +60,27 @@ export function PolicyView() {
   const [showPolicyDiff, setShowPolicyDiff] = useState(false)
   const [policyReloadKey, setPolicyReloadKey] = useState(0)
 
+  // CLI health status
+  const [cliHealthy, setCliHealthy] = useState<boolean | null>(null)
+  const [cliError, setCliError] = useState<string | null>(null)
+  const [rexlitHome, setRexlitHome] = useState<string | null>(null)
+
+  // Check CLI status on mount
+  useEffect(() => {
+    fetch('/api/cli-status')
+      .then(res => res.json())
+      .then(data => {
+        setCliHealthy(data.healthy)
+        setCliError(data.error)
+        setRexlitHome(data.rexlitHome)
+      })
+      .catch(() => {
+        // If we can't even check CLI status, something is seriously wrong
+        setCliHealthy(false)
+        setCliError('Unable to connect to API server')
+      })
+  }, [])
+
   useEffect(() => {
     rexlitApi
       .listPolicies()
@@ -203,6 +224,40 @@ export function PolicyView() {
           </select>
         </label>
       </header>
+
+      {/* CLI Health Warning */}
+      {cliHealthy === false && (
+        <div className={`${styles.alert} ${styles.warning}`}>
+          <div className={styles.alertTitle}>
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <path d="M10 2L2 17H18L10 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M10 8V11" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              <circle cx="10" cy="14" r="0.5" fill="currentColor"/>
+            </svg>
+            <strong>RexLit CLI Not Available</strong>
+          </div>
+          <p className={styles.alertBody}>
+            {cliError || 'The RexLit CLI is not properly configured. Policy operations will not work.'}
+          </p>
+          {rexlitHome && (
+            <p className={styles.alertBody}>
+              <strong>Current REXLIT_HOME:</strong> <code>{rexlitHome}</code>
+            </p>
+          )}
+          <details className={styles.alertDetails}>
+            <summary>How to fix this</summary>
+            <ol>
+              <li>Make sure RexLit is installed: <code>pip install -e .</code></li>
+              <li>Activate the project virtualenv: <code>source .venv/bin/activate</code></li>
+              <li>Restart the API server from within the activated environment</li>
+              <li>Or set <code>REXLIT_BIN</code> environment variable to the correct CLI path</li>
+              {rexlitHome && (
+                <li>If REXLIT_HOME is wrong, set it with: <code>REXLIT_HOME=/correct/path bun run index.ts</code></li>
+              )}
+            </ol>
+          </details>
+        </div>
+      )}
 
       {policyOverview.length > 0 && (
         <div className={styles.policyOverview}>

@@ -5,9 +5,10 @@ export interface DocumentCardProps {
   document: SearchResult
   isActive?: boolean
   onClick?: () => void
+  index?: number
 }
 
-export function DocumentCard({ document, isActive = false, onClick }: DocumentCardProps) {
+export function DocumentCard({ document, isActive = false, onClick, index = 0 }: DocumentCardProps) {
   // Generate Bates-style number from hash (first 8 chars)
   const batesNumber = `DOC-${document.sha256.substring(0, 8).toUpperCase()}`
 
@@ -18,12 +19,16 @@ export function DocumentCard({ document, isActive = false, onClick }: DocumentCa
       : document.snippet
     : 'No preview available'
 
+  // Calculate stagger delay (50ms per item, max 400ms)
+  const animationDelay = `${Math.min(index * 50, 400)}ms`
+
   return (
     <div
       className={`${styles.card} ${isActive ? styles.active : ''}`}
       onClick={onClick}
       role="button"
       tabIndex={0}
+      style={{ animationDelay }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()

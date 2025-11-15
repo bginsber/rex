@@ -48,38 +48,51 @@ body {
 }
 
 /* ============================================
-   Typography
+   Typography - Legal Authority Hierarchy
    ============================================ */
 
+/* Headings - Newsreader serif for gravitas */
 h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-serif);
-    font-weight: var(--font-semibold);
+    font-weight: var(--font-bold);
     line-height: var(--leading-tight);
     color: var(--text-primary);
+    margin: 0;
 }
 
 h1 {
     font-size: var(--text-3xl);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
 }
 
 h2 {
     font-size: var(--text-2xl);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
 }
 
 h3 {
     font-size: var(--text-xl);
+    font-family: var(--font-sans);
+    font-weight: var(--font-semibold);
 }
 
 h4 {
     font-size: var(--text-lg);
+    font-family: var(--font-sans);
+    font-weight: var(--font-medium);
 }
 
 p {
-    margin-bottom: var(--spacing-md);
+    margin: 0 0 var(--spacing-md) 0;
+    line-height: var(--leading-normal);
 }
 
+/* Mono - technical content */
 code, pre {
     font-family: var(--font-mono);
+    font-size: var(--text-sm);
 }
 
 /* ============================================
@@ -214,9 +227,10 @@ a:focus-visible {
 }
 
 /* ============================================
-   Utility Classes
+   Utility Classes - Typography & Layout
    ============================================ */
 
+/* Accessibility */
 .sr-only {
     position: absolute;
     width: 1px;
@@ -229,17 +243,100 @@ a:focus-visible {
     border-width: 0;
 }
 
+/* Font Families */
 .mono {
     font-family: var(--font-mono);
+    font-size: 0.9em;
+    letter-spacing: -0.01em;
 }
 
 .serif {
     font-family: var(--font-serif);
 }
 
+.sans {
+    font-family: var(--font-sans);
+}
+
+/* Text Transforms */
 .uppercase {
     text-transform: uppercase;
     letter-spacing: var(--tracking-wider);
+    font-weight: var(--font-semibold);
+}
+
+.uppercase-wide {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: var(--font-semibold);
+}
+
+/* Labels & Captions - Legal authority aesthetic */
+.label {
+    font-size: var(--text-xs);
+    font-weight: var(--font-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+}
+
+.label-primary {
+    font-size: var(--text-xs);
+    font-weight: var(--font-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--amber-500);
+}
+
+.caption {
+    font-size: var(--text-xs);
+    color: var(--text-tertiary);
+    line-height: var(--leading-relaxed);
+}
+
+/* Legal document styling */
+.document-title {
+    font-family: var(--font-serif);
+    font-size: var(--text-2xl);
+    font-weight: var(--font-bold);
+    color: var(--text-primary);
+    line-height: var(--leading-tight);
+}
+
+.bates-number {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--amber-500);
+    letter-spacing: 0.02em;
+}
+
+.hash-display {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-tertiary);
+    letter-spacing: -0.01em;
+}
+
+/* Text Colors */
+.text-primary {
+    color: var(--text-primary);
+}
+
+.text-secondary {
+    color: var(--text-secondary);
+}
+
+.text-tertiary {
+    color: var(--text-tertiary);
+}
+
+.text-amber {
+    color: var(--amber-500);
+}
+
+.text-cyan {
+    color: var(--cyan-500);
 }
 
 /* ============================================

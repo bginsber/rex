@@ -8,9 +8,14 @@
     padding: 0 var(--spacing-md);
     font-family: var(--font-mono);
     font-size: 11px;
-    letter-spacing: var(--tracking-wider);
+    font-weight: var(--font-medium);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
     position: relative;
     z-index: var(--z-sticky);
+
+    /* Slide in from top on mount */
+    animation: slideInDown 400ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* Subtle amber scanline effect */
@@ -80,15 +85,23 @@
     font-size: var(--text-xs);
 }
 
-/* Bates Counter */
+/* Bates Counter - Prominent legal authority */
 .batesCounter {
-    padding: 4px 8px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
+    padding: 6px 12px;
+    background: rgba(232, 183, 106, 0.08);
+    border: 1px solid var(--amber-700);
     border-radius: var(--radius-sm);
     color: var(--amber-500);
-    font-weight: var(--font-medium);
-    transition: color var(--transition-fast);
+    font-weight: var(--font-semibold);
+    letter-spacing: 0.04em;
+    transition: all var(--transition-fast);
+    cursor: help;
+}
+
+.batesCounter:hover {
+    background: rgba(232, 183, 106, 0.12);
+    box-shadow: 0 0 10px rgba(232, 183, 106, 0.2);
+    transform: scale(1.02);
 }
 
 /* Mobile responsive */

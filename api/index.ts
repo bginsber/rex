@@ -2,16 +2,80 @@ import { Elysia } from 'elysia'
 import { cors } from '@elysiajs/cors'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
-import { realpathSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
-export const REXLIT_BIN = Bun.env.REXLIT_BIN ?? 'rexlit'
+/**
+ * Auto-detect the RexLit CLI binary.
+ * Priority:
+ * 1. REXLIT_BIN environment variable
+ * 2. Project virtualenv (.venv/bin/rexlit)
+ * 3. Common virtualenv paths
+ * 4. Global 'rexlit' on PATH (last resort)
+ */
+function detectRexlitBin(): string {
+  // 1. Explicit env var
+  if (Bun.env.REXLIT_BIN) {
+    return Bun.env.REXLIT_BIN
+  }
+
+  // 2. Check project venv (relative to API directory)
+  const projectRoot = resolve(__dirname, '..')
+  const venvPaths = [
+    join(projectRoot, '.venv', 'bin', 'rexlit'),
+    join(projectRoot, 'venv', 'bin', 'rexlit'),
+    join(projectRoot, '.venv', 'Scripts', 'rexlit.exe'), // Windows
+    join(projectRoot, 'venv', 'Scripts', 'rexlit.exe')   // Windows
+  ]
+
+  for (const path of venvPaths) {
+    if (existsSync(path)) {
+      console.log(`[CLI Detection] Found RexLit at: ${path}`)
+      return path
+    }
+  }
+
+  // 3. Fallback to global 'rexlit' (may be broken)
+  console.warn('[CLI Detection] No venv rexlit found, falling back to PATH. Set REXLIT_BIN to override.')
+  return 'rexlit'
+}
+
+/**
+ * Detect Python interpreter with rexlit module.
+ * Fallback for `python -m rexlit.cli` invocation.
+ */
+function detectPythonWithRexlit(): string | null {
+  const projectRoot = resolve(__dirname, '..')
+  const pythonPaths = [
+    join(projectRoot, '.venv', 'bin', 'python'),
+    join(projectRoot, '.venv', 'bin', 'python3'),
+    join(projectRoot, 'venv', 'bin', 'python'),
+    join(projectRoot, '.venv', 'Scripts', 'python.exe'), // Windows
+    join(projectRoot, 'venv', 'Scripts', 'python.exe')
+  ]
+
+  for (const path of pythonPaths) {
+    if (existsSync(path)) {
+      console.log(`[CLI Detection] Found Python at: ${path}`)
+      return path
+    }
+  }
+
+  return null
+}
+
+export const REXLIT_BIN = detectRexlitBin()
+export const PYTHON_BIN = detectPythonWithRexlit()
 export const PORT = Number(Bun.env.PORT ?? 3000)
 export const REXLIT_HOME = resolve(
   Bun.env.REXLIT_HOME ?? join(homedir(), '.local', 'share', 'rexlit')
 )
 const REXLIT_HOME_REALPATH = resolveRealPathAllowMissing(REXLIT_HOME)
+
+// CLI health status (set during startup check)
+export let cliHealthy = false
+export let cliHealthError: string | null = null
 
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'dynamic'
 
@@ -52,6 +116,53 @@ export interface RunOptions {
   timeoutMs?: number
 }
 
+/**
+ * Detect common CLI error patterns and return user-friendly messages.
+ */
+function detectCliErrorType(stderr: string): { type: string; message: string } | null {
+  const stderrLower = stderr.toLowerCase()
+
+  // ModuleNotFoundError: No module named 'rexlit'
+  if (
+    stderrLower.includes('modulenotfounderror') &&
+    stderrLower.includes('rexlit')
+  ) {
+    return {
+      type: 'MODULE_NOT_FOUND',
+      message:
+        'RexLit CLI is not properly installed in the Python environment. ' +
+        'The API is trying to run RexLit but Python cannot import the rexlit module. ' +
+        `Current CLI path: ${REXLIT_BIN}. ` +
+        'Make sure you activate the virtualenv where RexLit is installed, or set REXLIT_BIN to the correct path.'
+    }
+  }
+
+  // Command not found (binary missing entirely)
+  if (
+    stderrLower.includes('command not found') ||
+    stderrLower.includes('no such file or directory')
+  ) {
+    return {
+      type: 'BINARY_NOT_FOUND',
+      message:
+        `RexLit binary not found at: ${REXLIT_BIN}. ` +
+        'Install RexLit or set REXLIT_BIN environment variable to the correct path.'
+    }
+  }
+
+  // Permission denied
+  if (stderrLower.includes('permission denied')) {
+    return {
+      type: 'PERMISSION_DENIED',
+      message:
+        `Permission denied when trying to execute: ${REXLIT_BIN}. ` +
+        'Check file permissions or use a different path.'
+    }
+  }
+
+  return null
+}
+
 async function runRexlitNative(
   args: string[],
   options: RunOptions = {}
@@ -90,6 +201,15 @@ async function runRexlitNative(
     }
 
     if (exitCode !== 0) {
+      // Detect common error patterns and provide helpful messages
+      const errorInfo = detectCliErrorType(stderr)
+      if (errorInfo) {
+        const detailedError = new Error(errorInfo.message)
+        ;(detailedError as any).cliErrorType = errorInfo.type
+        ;(detailedError as any).rawStderr = stderr.trim()
+        throw detailedError
+      }
+
       throw new Error(`rexlit ${args.join(' ')} failed: ${stderr.trim()}`)
     }
 
@@ -368,10 +488,66 @@ export function buildStageStatus(decision: PolicyDecision): StageStatus[] {
 
 
 
+/**
+ * Check if the RexLit CLI is available and working.
+ * Runs on server startup to detect configuration issues early.
+ */
+export async function checkCliHealth(): Promise<void> {
+  try {
+    console.log('[CLI Health Check] Testing RexLit CLI...')
+    console.log(`[CLI Health Check] Binary path: ${REXLIT_BIN}`)
+
+    // Try running --version as a simple health check
+    const proc = Bun.spawn([REXLIT_BIN, '--version'], {
+      stdout: 'pipe',
+      stderr: 'pipe'
+    })
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited
+    ])
+
+    if (exitCode !== 0) {
+      const errorInfo = detectCliErrorType(stderr)
+      if (errorInfo) {
+        cliHealthError = errorInfo.message
+        console.error(`[CLI Health Check] FAILED: ${errorInfo.type}`)
+        console.error(`[CLI Health Check] ${errorInfo.message}`)
+        console.error(`[CLI Health Check] Raw stderr:\n${stderr}`)
+      } else {
+        cliHealthError = `RexLit CLI failed: ${stderr.trim()}`
+        console.error(`[CLI Health Check] FAILED with exit code ${exitCode}`)
+        console.error(`[CLI Health Check] stderr:\n${stderr}`)
+      }
+      return
+    }
+
+    cliHealthy = true
+    cliHealthError = null
+    const version = stdout.trim() || '(unknown version)'
+    console.log(`[CLI Health Check] SUCCESS: ${version}`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    cliHealthError = `RexLit CLI check failed: ${message}`
+    console.error(`[CLI Health Check] EXCEPTION: ${message}`)
+  }
+}
+
 export function createApp() {
   return new Elysia()
     .use(cors())
     .get('/api/health', () => ({ status: 'ok' }))
+    .get('/api/cli-status', () => {
+      return {
+        healthy: cliHealthy,
+        error: cliHealthError,
+        bin: REXLIT_BIN,
+        pythonBin: PYTHON_BIN,
+        rexlitHome: REXLIT_HOME
+      }
+    })
     .get('/api/policy', async () => {
       try {
         return await runRexlit(['privilege', 'policy', 'list', '--json'])
@@ -700,6 +876,27 @@ export function createApp() {
 export const app = createApp()
 
 if (import.meta.main) {
+  // Run CLI health check before starting server
+  await checkCliHealth()
+
+  console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+  console.log('RexLit API Server Configuration')
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+  console.log(`REXLIT_BIN:  ${REXLIT_BIN}`)
+  console.log(`REXLIT_HOME: ${REXLIT_HOME}`)
+  console.log(`PORT:        ${PORT}`)
+  console.log(`CLI Status:  ${cliHealthy ? '✓ Healthy' : '✗ Unhealthy'}`)
+
+  if (!cliHealthy) {
+    console.error('\n⚠️  WARNING: RexLit CLI is not healthy!')
+    console.error('The API will start, but CLI commands will fail.')
+    console.error(`Error: ${cliHealthError}`)
+    console.error(`Check /api/cli-status for details.`)
+  }
+
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n')
+
   app.listen(PORT)
-  console.log(`RexLit API listening on http://localhost:${PORT}`)
+  console.log(`Server listening on http://localhost:${PORT}`)
+  console.log(`Endpoints: /api/health, /api/cli-status, /api/search, etc.\n`)
 }

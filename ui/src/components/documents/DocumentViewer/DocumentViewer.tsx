@@ -21,12 +21,20 @@ export function DocumentViewer({ document, getDocumentUrl }: DocumentViewerProps
     )
   }
 
+  // Extract document title from path
+  const documentTitle = document.path.split('/').pop() || 'Untitled Document'
+  const batesNumber = `DOC-${document.sha256.substring(0, 8).toUpperCase()}`
+
   return (
     <div className={styles.viewer}>
       {/* Document Header */}
       <div className={styles.header}>
         <div className={styles.breadcrumb}>
-          <span className={styles.path}>{document.path}</span>
+          <h2 className={styles.title}>{documentTitle}</h2>
+          <div className={styles.metadata}>
+            <span className={`${styles.bates} bates-number`}>{batesNumber}</span>
+            <span className={styles.path}>{document.path}</span>
+          </div>
         </div>
         <div className={styles.actions}>
           <button className={styles.actionButton} title="Download">
@@ -45,6 +53,45 @@ export function DocumentViewer({ document, getDocumentUrl }: DocumentViewerProps
           title={`Document: ${document.path}`}
           className={styles.iframe}
           sandbox="allow-same-origin allow-scripts"
+          onLoad={(e) => {
+            // Detect if iframe loaded JSON error instead of HTML document
+            const iframe = e.currentTarget
+            try {
+              const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document
+              if (iframeDoc) {
+                const text = iframeDoc.body?.textContent || ''
+                // Check if response looks like JSON error
+                if (text.trim().startsWith('{') && text.includes('"error"')) {
+                  try {
+                    const errorData = JSON.parse(text)
+                    if (errorData.error) {
+                      // Replace iframe content with friendly error message
+                      iframeDoc.body.innerHTML = `
+                        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 2rem; max-width: 600px; margin: 0 auto;">
+                          <div style="background: rgba(255, 107, 107, 0.1); border: 1px solid rgba(255, 107, 107, 0.3); border-radius: 8px; padding: 1.5rem;">
+                            <h3 style="margin: 0 0 1rem 0; color: #ff6b6b; font-size: 1.1rem;">⚠️ Document Not Available</h3>
+                            <p style="margin: 0 0 1rem 0; color: #e6edf3; line-height: 1.6;">${errorData.error}</p>
+                            <details style="margin-top: 1rem; padding: 1rem; background: rgba(0, 0, 0, 0.3); border-radius: 4px; cursor: pointer;">
+                              <summary style="font-weight: 600; color: #e8b76a; user-select: none;">Common causes and fixes</summary>
+                              <ul style="margin: 1rem 0 0 1.5rem; padding: 0; color: #9ca3af; line-height: 1.8;">
+                                <li><strong>Index mismatch:</strong> The search results and document storage are in different REXLIT_HOME locations. Check that the API server's REXLIT_HOME matches where documents were indexed.</li>
+                                <li><strong>Stale index:</strong> The document may have been removed after indexing. Try rebuilding the index with <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; color: #e8b76a;">rexlit index build</code></li>
+                                <li><strong>Document moved/deleted:</strong> The file may no longer exist at the expected path.</li>
+                              </ul>
+                            </details>
+                          </div>
+                        </div>
+                      `
+                    }
+                  } catch {
+                    // Not JSON, ignore
+                  }
+                }
+              }
+            } catch {
+              // Cross-origin or other access issue, ignore
+            }
+          }}
         />
       </div>
     </div>
