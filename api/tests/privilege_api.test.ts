@@ -1,9 +1,10 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 
-const testHome = mkdtempSync(join(tmpdir(), 'rexlit-api-tests-'))
+// Use same test home as index.test.ts to avoid module caching issues
+const testHome = join(process.cwd(), '.tmp-rexlit-home')
 Bun.env.REXLIT_HOME = testHome
 Bun.env.REXLIT_BIN = 'rexlit'
 
@@ -37,7 +38,8 @@ beforeAll(async () => {
 })
 
 afterAll(() => {
-  rmSync(testHome, { recursive: true, force: true })
+  // Don't delete testHome since it's shared with other test files
+  // It will be cleaned up by index.test.ts or manually
 })
 
 afterEach(() => {
