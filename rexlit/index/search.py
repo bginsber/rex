@@ -183,18 +183,19 @@ def search_index(
 
     def _extract_field(doc: Any, field_handle: Any, field_name: str) -> list[str]:
         """Extract stored field values regardless of Tantivy version."""
-        if field_handle is None:
-            return []
         get_all = getattr(doc, "get_all", None)
         if callable(get_all):
-            try:
-                values = get_all(field_handle) or []
-            except TypeError:  # pragma: no cover - compatibility
+            candidate_tokens = []
+            if field_handle is not None:
+                candidate_tokens.append(field_handle)
+            candidate_tokens.append(field_name)
+            for token in candidate_tokens:
                 try:
-                    values = get_all(field_name) or []
-                except TypeError:
-                    values = []
-            return [_coerce_value(value) for value in values if value is not None]
+                    values = get_all(token) or []
+                except TypeError:  # pragma: no cover - compatibility
+                    continue
+                if values:
+                    return [_coerce_value(value) for value in values if value is not None]
 
         # Fallback for older bindings where Document behaves like a mapping.
         if hasattr(doc, "get"):
@@ -205,25 +206,43 @@ def search_index(
             except Exception:
                 raw = None
 
+        if raw is None and hasattr(doc, "__iter__"):
+            iter_values: list[str] = []
+            try:
+                for key, value in doc:
+                    if key == field_name:
+                        iter_values.append(_coerce_value(value))
+            except Exception:  # pragma: no cover - defensive
+                return []
+            return iter_values
+
         if raw is None:
             return []
         if isinstance(raw, (list, tuple, set)):
             return [_coerce_value(value) for value in raw if value is not None]
         return [_coerce_value(raw)]
 
+    def _first(values: list[str]) -> str:
+        return values[0] if values else ""
+
     # Convert to SearchResult objects
     results: list[SearchResult] = []
     for score, doc_address in search_results.hits[offset : offset + limit]:
         doc = searcher.doc(doc_address)
-        # Use to_dict() method which works reliably across Tantivy versions
-        doc_dict = doc.to_dict()
 
-        # Extract fields from dict (values are lists in Tantivy)
-        path = doc_dict.get("path", [""])[0] if "path" in doc_dict else ""
-        sha256 = doc_dict.get("sha256", [""])[0] if "sha256" in doc_dict else ""
-        custodian = doc_dict.get("custodian", [""])[0] if "custodian" in doc_dict else None
-        doctype = doc_dict.get("doctype", [""])[0] if "doctype" in doc_dict else None
-        metadata = doc_dict.get("metadata", [""])[0] if "metadata" in doc_dict else None
+        if hasattr(doc, "to_dict"):
+            doc_dict = doc.to_dict()
+            path = _first([_coerce_value(value) for value in doc_dict.get("path", [])])
+            sha256 = _first([_coerce_value(value) for value in doc_dict.get("sha256", [])])
+            custodian = _first([_coerce_value(value) for value in doc_dict.get("custodian", [])])
+            doctype = _first([_coerce_value(value) for value in doc_dict.get("doctype", [])])
+            metadata = _first([_coerce_value(value) for value in doc_dict.get("metadata", [])])
+        else:
+            path = _first(_extract_field(doc, path_field, "path"))
+            sha256 = _first(_extract_field(doc, sha_field, "sha256"))
+            custodian = _first(_extract_field(doc, custodian_field, "custodian"))
+            doctype = _first(_extract_field(doc, doctype_field, "doctype"))
+            metadata = _first(_extract_field(doc, metadata_field, "metadata"))
 
         # Extract snippet from document
         snippet = None

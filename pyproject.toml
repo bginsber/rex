@@ -7,7 +7,7 @@ name = "rexlit"
 version = "0.1.0"
 description = "Offline-first UNIX litigation SDK/CLI for e-discovery and deadline management"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 license = {text = "MIT"}
 authors = [
     {name = "RexLit Contributors"}
@@ -19,7 +19,6 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
     "Topic :: Office/Business",
     "Topic :: Text Processing",
 ]
@@ -73,9 +72,6 @@ email = [
     "extract-msg>=0.48.0",
     "mail-parser>=3.15.0",
 ]
-pst = [
-    "pypff>=20211114",
-]
 agent = [
     "anthropic>=0.34.0",
 ]
@@ -83,11 +79,6 @@ privilege = [
     "transformers>=4.35.0",
     "torch>=2.0.0",
     "accelerate>=0.20.0",
-]
-dev-idl = [
-    "chug>=0.1.0",
-    "torch>=2.0.0",
-    "datasets>=2.14.0",
 ]
 
 [project.scripts]

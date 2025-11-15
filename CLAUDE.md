@@ -22,37 +22,43 @@ source .venv/bin/activate
 
 # Install for development
 pip install -e '.[dev]'
+# or: uv sync --extra dev
 ```
 
 ### Testing
 ```bash
+# Disable accidental plugins from user-level site-packages
+export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+
 # Run all tests (146 tests, expect 100% passing)
-pytest -v --no-cov
+uv run pytest -v --no-cov
 
 # Run with coverage
-pytest -v
+uv run pytest -v
 
 # Run specific test suite
-pytest tests/test_index.py -v
-pytest tests/test_security_path_traversal.py -v
-pytest tests/test_app_adapters.py -v
-pytest tests/test_ocr_tesseract.py -v
+uv run pytest tests/test_index.py -v
+uv run pytest tests/test_security_path_traversal.py -v
+uv run pytest tests/test_app_adapters.py -v
+uv run pytest tests/test_ocr_tesseract.py -v
 
 # Run single test
-pytest tests/test_index.py::TestParallelProcessing -v
+uv run pytest tests/test_index.py::TestParallelProcessing -v
 ```
 
 #### IDL Fixture Tests (Opt-in)
 ```bash
-# Generate IDL fixture corpora (~100 docs) – requires dev-idl extra
-pip install -e '.[dev-idl]'
+# Generate IDL fixture corpora (~100 docs) – install HF tooling first
+uv tool install huggingface_hub
+uv tool run python -m pip install datasets
+# or: pip install --upgrade huggingface_hub datasets
 scripts/setup-idl-fixtures.sh
 
 # Run the fast smoke tests (skips automatically if fixtures missing)
-pytest -m idl_small
+uv run pytest -m idl_small
 
 # Run the medium tier (marked slow) with fixtures in a custom location
-IDL_FIXTURE_PATH=/data/rexlit/idl-fixtures pytest -m "idl and not slow"
+IDL_FIXTURE_PATH=/data/rexlit/idl-fixtures uv run pytest -m "idl and not slow"
 ```
 
 #### Performance Benchmarks
@@ -291,7 +297,7 @@ Benchmarks (8 cores):
 - **Security**: 13 path traversal regression tests + document endpoint access control
 - **Performance**: `benchmark_metadata.py` for metadata cache validation
 - **Determinism**: Verify identical outputs across multiple runs
-- **Use `pytest -v --no-cov`** for faster development iteration
+- **Use `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest -v --no-cov`** for faster development iteration
 
 ### Web API Testing (Node/Bun)
 

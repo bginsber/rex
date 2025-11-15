@@ -24,6 +24,8 @@ import time
 from pathlib import Path
 from dataclasses import dataclass
 
+import pytest
+
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -39,6 +41,7 @@ class SirenResult:
     confidence: float = 0.0
 
 
+@pytest.mark.skip(reason="Requires LM Studio API base fixture")
 def test_via_lm_studio(api_base: str, model_name: str = "kanana-safeguard-siren", use_mock: bool = False) -> bool:
     """Test Kanana Safeguard-Siren via LM Studio's OpenAI-compatible API."""
     if use_mock:
@@ -620,4 +623,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

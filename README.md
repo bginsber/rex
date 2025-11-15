@@ -13,7 +13,7 @@ Offline-first UNIX litigation toolkit for e-discovery, Bates stamping, OCR, dead
 🚧 **Phase 3 (M2)** – Redaction, email threading, advanced analytics
 
 **Latest Release:** v0.2.0-m1
-**Tests:** 146/146 passing (`pytest -v --no-cov`)
+**Tests:** 146/146 passing (`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest -v --no-cov`)
 **Performance:** 100K documents indexed in 4-6 hours | OCR: 2-5s per page
 
 ## Overview
@@ -87,6 +87,9 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
 
+# Or with uv (installs runtime + dev extras in one step)
+uv sync --extra dev
+
 # Optional: Initialize test data submodule (168MB)
 # Test data is maintained in a separate repository to keep the main repo lean
 ./scripts/setup-test-data.sh
@@ -105,18 +108,38 @@ apt-get install tesseract-ocr  # Ubuntu
 
 # Install Python dependencies
 pip install -e '.[ocr-tesseract]'
+# or: uv sync --extra ocr-tesseract
 
 # Verify installation
 tesseract --version
 ```
 
-Run `pytest -v --no-cov` after installation to validate your environment (69 tests require Tesseract).
+Run `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest -v --no-cov` after installation to validate your environment (69 tests require Tesseract).
+
+### Experimental UI Toolchain
+
+The offline-friendly React UI bridges to the CLI through the Bun/Elysia API, so the frontend stack requires Node.js 22.12+ (pinned in `.node-version`) before running `bun dev`.
+
+```bash
+cd api && bun install
+REXLIT_HOME=${REXLIT_HOME:-$HOME/.local/share/rexlit} bun run index.ts
+
+cd ../ui && bun install
+cd ui
+VITE_API_URL=${VITE_API_URL:-http://localhost:3000/api} bun dev
+```
+
+Any privilege policy edits made via the UI are persisted through `rexlit privilege policy apply` and immediately reflected across the CLI, API, and React front end. Tools such as `fnm`, `nvm`, or `asdf` will respect the pinned `.node-version` (22.12.0) for this flow.
 
 ### IDL Fixture Tests (Optional)
 
 ```bash
-# Install dev tooling and generate the small (≈100 doc) corpus
-pip install -e '.[dev-idl]'
+# Install Hugging Face tooling used by the fixture generator (one time)
+uv tool install huggingface_hub
+uv tool run python -m pip install datasets
+# or: pip install --upgrade huggingface_hub datasets
+
+# Generate the small (≈100 doc) corpus; set IDL_SETUP_TIERS for others
 scripts/setup-idl-fixtures.sh
 
 # Run smoke tests that rely on the fixtures (skips automatically if absent)
@@ -514,7 +537,7 @@ RexLit reads settings from `rexlit.config.AppConfig`, environment variables, and
 
 ### Discovery & Indexing
 - **`PathOutsideRootError` during ingest**: Verify the directory is within the allowed root and that symlinks resolve inside the boundary.
-- **`tantivy` import failures**: Ensure system dependencies for Tantivy bindings are installed; reinstall with `pip install -e '.[dev]'`.
+- **`tantivy` import failures**: Ensure system dependencies for Tantivy bindings are installed; rerun `uv sync --extra dev` (or `pip install -e '.[dev]'`) after fixing toolchain issues.
 - **Slow indexing performance**: Increase `--workers` or reduce `--batch-size` to match available cores and memory; monitor disk throughput.
 - **Audit verification fails**: Run `rexlit audit show --tail 20` to locate the first failing entry and regenerate the ledger from trusted manifests.
 
@@ -531,28 +554,31 @@ RexLit reads settings from `rexlit.config.AppConfig`, environment variables, and
 
 ### General
 - **Permission errors on output directories**: Confirm RexLit has write access to `out/` paths or set `--data-dir` to a writable location.
-- **Import errors after upgrade**: Reinstall with `pip install -e '.[dev,ocr-tesseract]'` to pick up new dependencies.
+- **Import errors after upgrade**: Rerun `uv sync --extra dev --extra ocr-tesseract` (or `pip install -e '.[dev,ocr-tesseract]'`) to pick up new dependencies.
 
 ## Testing
 
 ```bash
+# Disable accidental plugins from the user site-packages (set once per shell)
+export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+
 # Run the complete suite (146 tests)
-pytest -v --no-cov
+uv run pytest -v --no-cov
 
 # Focus on security hardening
-pytest tests/test_security_path_traversal.py -v
+uv run pytest tests/test_security_path_traversal.py -v
 
 # Exercise indexing flows
-pytest tests/test_index.py -v
+uv run pytest tests/test_index.py -v
 
 # Test OCR adapter (requires Tesseract installed)
-pytest tests/test_ocr_tesseract.py -v
+uv run pytest tests/test_ocr_tesseract.py -v
 
 # Test rules engine
-pytest tests/test_rules_engine.py -v
+uv run pytest tests/test_rules_engine.py -v
 
 # Test Bates stamping
-pytest tests/test_app_adapters.py::test_sequential_bates_planner -v
+uv run pytest tests/test_app_adapters.py::test_sequential_bates_planner -v
 ```
 
 ## Performance Tuning
@@ -564,10 +590,10 @@ pytest tests/test_app_adapters.py::test_sequential_bates_planner -v
 
 ## Contributing
 
-1. Install tooling: `pip install -e '.[dev]'`
-2. Lint and type-check: `ruff check . && mypy rexlit/`
-3. Format: `black .`
-4. Run tests: `pytest -v --no-cov`
+1. Install tooling: `uv sync --extra dev` (or `pip install -e '.[dev]'`)
+2. Lint and type-check: `uv run ruff check . && uv run mypy rexlit/`
+3. Format: `uv run black .`
+4. Run tests: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest -v --no-cov`
 
 ## Documentation
 

@@ -17,6 +17,7 @@ Bun-based privilege API tests.
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -e .[dev]
+# or: uv sync --extra dev
 
 # Bun API dependencies
 cd api
@@ -32,7 +33,8 @@ bun test
 
 # Full Python suite
 cd ..
-pytest -v --no-cov
+export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+uv run pytest -v --no-cov
 ```
 
 The Bun tests stub out `rexlit`, so they succeed without Groq keys or index data. Python

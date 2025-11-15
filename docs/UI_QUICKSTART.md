@@ -17,6 +17,7 @@ If RexLit not installed:
 cd /home/user/rex
 source .venv/bin/activate
 pip install -e '.[dev]'
+# or: uv sync --extra dev
 ```
 
 ---

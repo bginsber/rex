@@ -10,7 +10,8 @@ Create a clean toolchain before hacking:
 ```bash
 python3.11 -m venv .venv && source .venv/bin/activate
 pip install -e .[dev]
-pytest -v --no-cov
+# or: uv sync --extra dev
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest -v --no-cov
 python -m build
 
 # Optional: Initialize test data submodule (for CLI smoke tests)
@@ -28,7 +29,7 @@ Target Python 3.11 with strict typing (`from __future__ import annotations`, `ty
 Write focused `pytest` cases that exercise streaming discovery, parallel indexing, and security boundaries. Name tests after the behavior under scrutiny (`test_discover_blocks_path_traversal`). Regenerate golden manifests in `tests/fixtures/` rather than editing inline constants. For long-running flows, add smoke tests that operate on the tiny sample corpus so CI stays fast while still covering the audit chain.
 
 ## Commit & Pull Request Guidelines
-Follow the existing short, imperative commit style (`Fix path traversal guard`). Every PR must summarize intent, list affected commands, and note security implications when touching ingest or audit modules. Link planning documents (`todos/*.md`) for context, include `pytest -v --no-cov` output, and attach CLI snippets (`rexlit index build ...`) when manual validation was involved.
+Follow the existing short, imperative commit style (`Fix path traversal guard`). Every PR must summarize intent, list affected commands, and note security implications when touching ingest or audit modules. Link planning documents (`todos/*.md`) for context, include `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest -v --no-cov` output, and attach CLI snippets (`rexlit index build ...`) when manual validation was involved.
 
 ## Security & Configuration Tips
 RexLit is offline-by-default—feature flags that require network access must stay behind `--online` toggles with explicit warnings. Secure builds by resolving symlinks, rejecting files outside the requested root, and logging `WARNING` events for any skipped path. Document new environment variables (e.g., OCR providers) in `README.md` and keep secrets out of the repo.

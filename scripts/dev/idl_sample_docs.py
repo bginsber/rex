@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
-"""Generate RexLit-friendly IDL fixture corpora via Chug.
+"""Generate RexLit-friendly IDL fixture corpora via the Hugging Face dataset API.
 
 This script is a *developer tool* that converts a sampled slice of the UCSF
 Industry Documents Library (IDL) webdataset into a plain filesystem directory
 containing PDFs and a minimal `manifest.jsonl`. RexLit can ingest the output
 directory just like any other evidence root.
 
-The script depends on Hugging Face's experimental `chug` loader and is therefore
-distributed as part of the optional `dev-idl` extra (`pip install 'rexlit[dev-idl]'`).
+The script relies on the standard Hugging Face tooling (``datasets`` +
+``huggingface_hub``). Install them with:
+
+    uv tool install huggingface_hub
+    uv tool run python -m pip install datasets
+
+or via pip:
+
+    pip install --upgrade huggingface_hub datasets
 
 Example usage:
     python scripts/dev/idl_sample_docs.py \
@@ -32,14 +39,13 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterator, Mapping, Tuple, Type
+from typing import Any, Iterable, Iterator, Mapping
 
 try:
-    import chug
-    from chug import DataCfg, DataTaskDocReadCfg
+    from datasets import IterableDataset, load_dataset
 except ModuleNotFoundError:  # pragma: no cover - exercised via CLI
-    chug = None  # type: ignore[assignment]
-    DataCfg = DataTaskDocReadCfg = None  # type: ignore[assignment]
+    IterableDataset = None  # type: ignore[assignment]
+    load_dataset = None  # type: ignore[assignment]
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -47,17 +53,11 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from idl_fixtures.utils import MANIFEST_FILENAME, filters_help, parse_filter_args, validate_corpus  # noqa: E402
 
-if TYPE_CHECKING:  # pragma: no cover - typing helper
-    from chug import DataCfg as _DataCfgType, DataTaskDocReadCfg as _DataTaskDocReadCfgType
-else:
-    _DataCfgType = Any
-    _DataTaskDocReadCfgType = Any
-
 IDL_DATASET_NAME = "pixparse/idl-wds"
 
 
-class ChugNotInstalledError(RuntimeError):
-    """Raised when chug is not available in the current Python environment."""
+class HuggingFaceToolsMissingError(RuntimeError):
+    """Raised when Hugging Face's dataset tooling is unavailable."""
 
 
 @dataclass(frozen=True)
@@ -69,15 +69,64 @@ class SampledDocument:
     page_count: int
 
 
-def _require_chug() -> Tuple[Type[_DataCfgType], Type[_DataTaskDocReadCfgType]]:  # pragma: no cover - trivial
-    """Ensure the chug dependencies are present before continuing."""
+def _require_dataset_loader() -> Any:  # pragma: no cover - trivial
+    """Ensure the Hugging Face dataset tooling is present before continuing."""
 
-    if chug is None or DataCfg is None or DataTaskDocReadCfg is None:
-        raise ChugNotInstalledError(
-            "Chug is not installed. Install the optional dev dependency group:\n"
-            "    pip install 'rexlit[dev-idl]'"
+    if load_dataset is None:
+        raise HuggingFaceToolsMissingError(
+            "Hugging Face tools are not installed. Install them with:\n"
+            "    uv tool install huggingface_hub && uv tool run python -m pip install datasets\n"
+            "or:\n"
+            "    pip install --upgrade huggingface_hub datasets"
         )
-    return DataCfg, DataTaskDocReadCfg
+    return load_dataset
+
+
+def _extract_pdf_bytes(pdf_payload: Any) -> bytes | None:
+    """Normalize the Hugging Face payload into raw PDF bytes."""
+
+    if pdf_payload is None:
+        return None
+
+    if isinstance(pdf_payload, (bytes, bytearray)):
+        return bytes(pdf_payload)
+
+    if isinstance(pdf_payload, str):
+        candidate = Path(pdf_payload)
+        if candidate.exists():
+            return candidate.read_bytes()
+        return None
+
+    if isinstance(pdf_payload, Mapping):
+        if "bytes" in pdf_payload and isinstance(pdf_payload["bytes"], (bytes, bytearray)):
+            return bytes(pdf_payload["bytes"])
+        if "path" in pdf_payload:
+            candidate = Path(str(pdf_payload["path"]))
+            if candidate.exists():
+                return candidate.read_bytes()
+
+    if hasattr(pdf_payload, "read"):
+        return pdf_payload.read()
+
+    return None
+
+
+def _extract_page_count(json_payload: Any) -> int:
+    """Pull the page count from the JSON sidecar payload."""
+
+    if isinstance(json_payload, Mapping):
+        pages = json_payload.get("pages")
+        if isinstance(pages, list):
+            return len(pages)
+
+    if isinstance(json_payload, str):
+        try:
+            parsed = json.loads(json_payload)
+        except json.JSONDecodeError:
+            return 0
+        return _extract_page_count(parsed)
+
+    return 0
 
 
 def sample_idl_documents(
@@ -86,7 +135,7 @@ def sample_idl_documents(
     seed: int,
     filters: Mapping[str, object] | None = None,
 ) -> Iterator[SampledDocument]:
-    """Stream documents from the IDL webdataset via Chug.
+    """Stream documents from the IDL webdataset via the Hugging Face dataset API.
 
     Parameters
     ----------
@@ -95,8 +144,8 @@ def sample_idl_documents(
         documents have been yielded even if the dataset contains more.
 
     seed:
-        Random seed fed to Chug's loader configuration to provide reproducible
-        sampling.
+        Random seed fed to the Hugging Face iterable dataset shuffler so runs
+        remain reproducible.
 
     filters:
         Optional mapping of filter criteria such as ``page_count_min`` or
@@ -104,19 +153,13 @@ def sample_idl_documents(
         helper; call sites may expand it over time as new use cases emerge.
     """
 
-    DataCfgClass, DataTaskDocReadCfgClass = _require_chug()
+    load_dataset_fn = _require_dataset_loader()
+    dataset = load_dataset_fn(IDL_DATASET_NAME, split="train", streaming=True)
 
-    task_cfg = DataTaskDocReadCfgClass(page_sampling="all")
-    data_cfg = DataCfgClass(
-        source=IDL_DATASET_NAME,
-        split="train",
-        batch_size=None,
-        format="hfids",
-        num_workers=0,
-        seed=seed,
-    )
-
-    loader = chug.create_loader(data_cfg, task_cfg)
+    if IterableDataset is not None and isinstance(dataset, IterableDataset):
+        loader: Iterable[Mapping[str, Any]] = dataset.shuffle(seed=seed, buffer_size=10_000)
+    else:  # pragma: no cover - defensive
+        loader = dataset
     sampled = 0
     active_filters = filters or {}
 
@@ -126,23 +169,13 @@ def sample_idl_documents(
         if not doc_id:
             continue
 
-        pdf_blob = sample.get("pdf")
-        if pdf_blob is None:
-            continue
-        if isinstance(pdf_blob, bytes):
-            pdf_bytes = pdf_blob
-        elif hasattr(pdf_blob, "read"):
-            pdf_bytes = pdf_blob.read()
-        else:
-            # Unknown payload type; skip with a warning.
-            print(f"[warn] Skipping {doc_id}: unsupported pdf payload {type(pdf_blob)!r}", file=sys.stderr)
+        pdf_bytes = _extract_pdf_bytes(sample.get("pdf"))
+        if pdf_bytes is None:
+            print(f"[warn] Skipping {doc_id}: missing pdf payload", file=sys.stderr)
             continue
 
         json_payload = sample.get("json") or {}
-        if isinstance(json_payload, Mapping):
-            page_count = len(json_payload.get("pages", []))
-        else:
-            page_count = 0
+        page_count = _extract_page_count(json_payload)
 
         if not _passes_filters(page_count=page_count, filters=active_filters):
             continue
@@ -202,7 +235,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate IDL fixture corpora for RexLit.")
     parser.add_argument("--tier", required=True, help="Corpus tier name (small, medium, large, xl, edge-cases).")
     parser.add_argument("--count", required=True, type=int, help="Number of documents to sample.")
-    parser.add_argument("--seed", type=int, default=42, help="RNG seed forwarded to the Chug loader.")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="RNG seed forwarded to the Hugging Face iterable dataset shuffler.",
+    )
     parser.add_argument("--output", type=Path, required=True, help="Directory to write the exported corpus into.")
     parser.add_argument(
         "--filter",
@@ -233,7 +271,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - exercised 
     try:
         documents = sample_idl_documents(count=args.count, seed=args.seed, filters=parsed_filters)
         written = export_corpus(documents, output_dir)
-    except ChugNotInstalledError as exc:
+    except HuggingFaceToolsMissingError as exc:
         parser.error(str(exc))
         return 2
 
@@ -255,4 +293,3 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - exercised 
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
-

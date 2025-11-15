@@ -20,13 +20,18 @@ echo
 
 python - <<'PY' || {
     cat <<'EOF'
-[!] Missing optional dev dependencies for IDL fixture generation.
-    Run: pip install 'rexlit[dev-idl]'
+[!] Missing Hugging Face tooling for IDL fixture generation.
+    Install via uv:
+        uv tool install huggingface_hub
+        uv tool run python -m pip install datasets
+    or via pip:
+        pip install --upgrade huggingface_hub datasets
 EOF
     exit 1
 }
 try:
-    import chug  # noqa: F401
+    import datasets  # noqa: F401
+    import huggingface_hub  # noqa: F401
 except ModuleNotFoundError as exc:  # pragma: no cover - developer helper
     raise SystemExit(str(exc))
 PY
@@ -102,4 +107,3 @@ done
 
 echo
 echo "Done. Export IDL_FIXTURE_PATH=${FIXTURE_ROOT} to point tests at these corpora."
-

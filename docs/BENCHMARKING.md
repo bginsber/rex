@@ -4,8 +4,12 @@ This guide explains how to run RexLit's performance benchmarks against the optio
 
 ## Prerequisites
 
-- Install the dev-only extras (requires PyTorch + Chug):  
-  `pip install -e '.[dev-idl]'`
+- Install the Hugging Face tooling once (either via uv or pip):  
+  ```
+  uv tool install huggingface_hub
+  uv tool run python -m pip install datasets
+  # or: pip install --upgrade huggingface_hub datasets
+  ```
 - Generate the desired corpora (small/medium/large/xl) with the setup script:  
   `scripts/setup-idl-fixtures.sh`  
   (set `IDL_SETUP_TIERS=medium` to target a specific tier)
@@ -47,4 +51,3 @@ The `baseline_comparison` section of the results annotates each metric with huma
 - Use the same number of workers for comparable runs (the default is 4).
 - CI workflows can store baselines (e.g., in `benchmarks/baselines/`) to detect regressions automatically.
 - Large corpora (10k / 100k docs) require significant disk and compute resources; consider running them on dedicated hardware.
-

@@ -83,6 +83,7 @@ curl -fsSL https://bun.sh/install | bash
 cd /home/user/rex
 source .venv/bin/activate
 pip install -e '.[dev]'
+# or: uv sync --extra dev
 
 # Test CLI JSON output
 rexlit index search "test" --json

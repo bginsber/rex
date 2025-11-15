@@ -26,11 +26,14 @@ import argparse
 import sys
 from pathlib import Path
 
+import pytest
+
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 
+@pytest.mark.skip(reason="Requires LM Studio API base fixture")
 def test_via_lm_studio(api_base: str, model_name: str = "kanana-safeguard-prompt") -> bool:
     """Test Kanana Safeguard-Prompt via LM Studio's OpenAI-compatible API."""
     try:
@@ -164,6 +167,7 @@ def test_via_lm_studio(api_base: str, model_name: str = "kanana-safeguard-prompt
     return accuracy >= 60
 
 
+@pytest.mark.skip(reason="Requires transformers model fixture")
 def test_via_direct_model(model_name: str) -> bool:
     """Test Kanana Safeguard-Prompt by loading model directly."""
     try:
@@ -330,4 +334,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
