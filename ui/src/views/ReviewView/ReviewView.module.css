@@ -1,0 +1,282 @@
+.reviewView {
+    grid-column: 2 / span 2;
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+    gap: var(--spacing-xl);
+    padding: var(--spacing-xl);
+    background: var(--bg-secondary);
+    border-left: 1px solid var(--border-color);
+    height: calc(100vh - var(--size-status-bar));
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.documentColumn {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.panel {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-lg);
+    overflow-y: auto;
+}
+
+.panelHeader {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--spacing-lg);
+    align-items: flex-start;
+}
+
+.panelTitle {
+    margin-bottom: var(--spacing-sm);
+}
+
+.panelMeta {
+    color: var(--text-tertiary);
+    font-size: var(--text-sm);
+    margin: 0;
+}
+
+.actions {
+    display: flex;
+    gap: var(--spacing-sm);
+}
+
+.actions button {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    transition: background var(--transition-base), border-color var(--transition-base);
+}
+
+.actions button:hover:not(:disabled) {
+    border-color: var(--border-highlight);
+    background: var(--bg-elevated);
+}
+
+.alert {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+}
+
+.info {
+    background: rgba(79, 195, 247, 0.1);
+    color: var(--cyan-300);
+}
+
+.error {
+    background: rgba(255, 107, 107, 0.1);
+    color: var(--red-privilege);
+}
+
+.success {
+    background: rgba(81, 207, 102, 0.12);
+    color: var(--green-production);
+}
+
+.status {
+    padding: var(--spacing-md);
+    border: 1px dashed var(--border-color);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+}
+
+.metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: var(--spacing-md);
+}
+
+.metricCard {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-sm);
+    background: var(--bg-secondary);
+}
+
+.metricLabel {
+    display: block;
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-tertiary);
+}
+
+.metricValue {
+    font-size: var(--text-lg);
+    font-weight: var(--font-semibold);
+    margin-top: var(--spacing-xs);
+}
+
+.metricValuePrivileged {
+    composes: metricValue;
+    color: var(--amber-500);
+}
+
+.metricValueWarning {
+    composes: metricValue;
+    color: var(--orange-review);
+}
+
+.stageGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: var(--spacing-md);
+}
+
+.stageCard {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-sm);
+    background: var(--bg-secondary);
+}
+
+.stageTitle {
+    font-size: var(--text-sm);
+    font-weight: var(--font-semibold);
+}
+
+.stageState {
+    font-size: var(--text-xs);
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+}
+
+.reasoning {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+    background: var(--bg-secondary);
+}
+
+.reasoningRow {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+}
+
+.reasoningLabel {
+    font-size: var(--text-xs);
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+}
+
+.muted {
+    color: var(--text-tertiary);
+}
+
+.hashRow code {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    background: var(--bg-tertiary);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--radius-sm);
+}
+
+.patterns {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+    background: var(--bg-secondary);
+}
+
+.patterns h4 {
+    margin-bottom: var(--spacing-sm);
+}
+
+.patterns ul {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.patternHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: var(--font-semibold);
+}
+
+.patternConfidence {
+    font-size: var(--text-xs);
+    color: var(--cyan-300);
+}
+
+.decisionBar {
+    display: flex;
+    gap: var(--spacing-sm);
+}
+
+.decisionBar button {
+    flex: 1;
+    padding: var(--spacing-sm);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    font-size: var(--text-sm);
+}
+
+.decisionBar button:first-child {
+    border-color: var(--red-privilege);
+    color: var(--red-privilege);
+}
+
+.decisionBar button:nth-child(2) {
+    border-color: var(--green-production);
+    color: var(--green-production);
+}
+
+.decisionBar button:last-child {
+    border-color: var(--text-tertiary);
+    color: var(--text-tertiary);
+}
+
+.emptyState {
+    grid-column: 1 / -1;
+    border: 1px dashed var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-2xl);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+@media (max-width: 1200px) {
+    .reviewView {
+        grid-template-columns: 1fr;
+        overflow-y: auto;
+    }
+
+    .panelHeader {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .actions {
+        justify-content: flex-start;
+    }
+}

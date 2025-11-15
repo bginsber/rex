@@ -1,0 +1,87 @@
+.analyticsView {
+    grid-column: 2 / span 2;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-lg);
+    padding: var(--spacing-xl);
+    background: var(--bg-secondary);
+    border-left: 1px solid var(--border-color);
+    height: calc(100vh - var(--size-status-bar));
+    overflow-y: auto;
+    box-sizing: border-box;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+}
+
+.subtitle {
+    color: var(--text-tertiary);
+    margin-top: var(--spacing-xs);
+}
+
+.alert {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-radius: var(--radius-md);
+}
+
+.error {
+    background: rgba(255, 107, 107, 0.1);
+    color: var(--red-privilege);
+}
+
+.statGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: var(--spacing-md);
+}
+
+.statCard {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+    background: var(--bg-tertiary);
+}
+
+.statLabel {
+    display: block;
+    text-transform: uppercase;
+    font-size: var(--text-xs);
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-tertiary);
+}
+
+.statValue {
+    font-size: var(--text-2xl);
+    font-weight: var(--font-semibold);
+}
+
+.dataPanel {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-tertiary);
+    padding: var(--spacing-md);
+}
+
+.dataHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-sm);
+}
+
+.tag {
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+}
+
+.dataPanel pre {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    max-height: 400px;
+    overflow-y: auto;
+}

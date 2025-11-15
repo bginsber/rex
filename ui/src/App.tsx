@@ -5,6 +5,10 @@ import { AppLayout } from '@/components/layout/AppLayout'
 import { NavRail } from '@/components/layout/NavRail'
 import { SearchPanel } from '@/components/search/SearchPanel'
 import { DocumentViewer } from '@/components/documents/DocumentViewer'
+import { ReviewView } from './views/ReviewView/ReviewView.tsx'
+import { PolicyView } from './views/PolicyView/PolicyView.tsx'
+import { AnalyticsView } from './views/AnalyticsView/AnalyticsView.tsx'
+import { SettingsView } from './views/SettingsView/SettingsView.tsx'
 
 function App() {
   // Navigation state
@@ -55,20 +59,28 @@ function App() {
       {/* Navigation Rail */}
       <NavRail activeView={activeView} onViewChange={setActiveView} />
 
-      {/* Search Panel */}
-      <SearchPanel
-        results={results}
-        selectedDocumentHash={selected?.sha256}
-        onSearch={handleSearch}
-        onSelectDocument={handleSelectDocument}
-        loading={loading}
-      />
+      {activeView === 'search' && (
+        <>
+          <SearchPanel
+            results={results}
+            selectedDocumentHash={selected?.sha256}
+            onSearch={handleSearch}
+            onSelectDocument={handleSelectDocument}
+            loading={loading}
+          />
+          <DocumentViewer document={selected} getDocumentUrl={rexlitApi.getDocumentUrl} />
+        </>
+      )}
 
-      {/* Document Viewer */}
-      <DocumentViewer
-        document={selected}
-        getDocumentUrl={rexlitApi.getDocumentUrl}
-      />
+      {activeView === 'review' && (
+        <ReviewView document={selected} getDocumentUrl={rexlitApi.getDocumentUrl} />
+      )}
+
+      {activeView === 'policy' && <PolicyView />}
+
+      {activeView === 'analytics' && <AnalyticsView />}
+
+      {activeView === 'settings' && <SettingsView />}
 
       {/* Error display (if needed) */}
       {error && (

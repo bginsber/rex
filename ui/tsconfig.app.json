@@ -30,10 +30,13 @@
       "@/*": ["./src/*"],
       "@/types": ["./src/types"],
       "@/components": ["./src/components"],
+      "@/views": ["./src/views"],
+      "@/views/*": ["./src/views/*"],
       "@/hooks": ["./src/hooks"],
       "@/styles": ["./src/styles"],
       "@/api": ["./src/api"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/App.old.tsx"]
 }
