@@ -60,7 +60,8 @@ def create_schema() -> tantivy.Schema:
 
     # Document fields
     schema_builder.add_text_field("path", stored=True)
-    schema_builder.add_text_field("sha256", stored=True)
+    # SHA-256 hash field - use STRING tokenizer for exact matching
+    schema_builder.add_text_field("sha256", stored=True, tokenizer_name="raw")
     schema_builder.add_text_field("custodian", stored=True)
     schema_builder.add_text_field("doctype", stored=True)
     schema_builder.add_text_field("body", stored=False)  # Full text, not stored

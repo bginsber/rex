@@ -16,6 +16,7 @@ from rexlit.index.search import (
     _extract_snippet,
     get_custodians,
     get_doctypes,
+    search_by_hash,
     search_index,
 )
 
@@ -857,3 +858,36 @@ class TestSnippetExtraction:
             assert result.snippet is not None
             assert "privileged" in result.snippet.lower()
             assert len(result.snippet) <= 203  # max_length + "..."
+
+def test_search_by_hash_matches_exact_hash(temp_dir: Path) -> None:
+    """Test that SHA-256 hash lookups work with exact matching.
+    
+    Regression test for tokenizer_name="raw" on sha256 field.
+    Without this, Tantivy tokenizes hashes and search_by_hash fails.
+    """
+    from rexlit.utils.hashing import compute_sha256_file
+    
+    # Set up a tiny corpus
+    docs_dir = temp_dir / "docs"
+    docs_dir.mkdir()
+    doc_path = docs_dir / "sample.txt"
+    doc_path.write_text("hello world", encoding="utf-8")
+
+    index_dir = temp_dir / "index"
+    # Build index (uses sha256 tokenizer_name="raw")
+    build_index(
+        root=docs_dir,
+        index_dir=index_dir,
+        rebuild=True,
+        show_progress=False,
+        max_workers=1
+    )
+
+    # Compute the hash that should be stored in the index
+    sha256 = compute_sha256_file(doc_path)
+
+    # Exact hash lookup should return the document
+    result = search_by_hash(index_dir=index_dir, sha256=sha256)
+    assert result is not None, f"search_by_hash should find document with hash {sha256}"
+    assert result.sha256 == sha256, "Returned document should have matching hash"
+    assert result.path.endswith("sample.txt"), "Returned document should have correct path"

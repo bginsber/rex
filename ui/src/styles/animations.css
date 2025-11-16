@@ -1,28 +1,119 @@
 /* ============================================
-   RexLit Animations - Essential Effects Only
+   RexLit Animations - Orchestrated Effects
    ============================================
 
-   Focused on the most impactful visual effects:
-   - Amber glow for privileged documents
-   - Status indicator pulse
-   - Toast notifications
-   - Smooth transitions
+   High-impact animations for the Litigation Terminal:
+   - Staggered reveals and entrances
+   - Micro-interactions with personality
+   - Atmospheric glows and pulses
+   - Smooth, professional transitions
    ============================================ */
 
 /* ============================================
-   Amber Pulse - Privileged Document Glow
+   Staggered Reveal - Document Lists
    ============================================ */
 
-@keyframes amberPulse {
-    0%, 100% {
-        box-shadow: 0 0 12px rgba(255, 107, 107, 0.4), 0 0 24px rgba(255, 107, 107, 0.2);
+@keyframes staggerFadeSlide {
+    0% {
+        opacity: 0;
+        transform: translateX(-20px);
     }
-    50% {
-        box-shadow: 0 0 20px rgba(255, 107, 107, 0.6), 0 0 40px rgba(255, 107, 107, 0.3);
+    100% {
+        opacity: 1;
+        transform: translateX(0);
     }
 }
 
-/* Apply to privileged documents */
+/* Apply with animation-delay for stagger effect */
+.stagger-item {
+    animation: staggerFadeSlide 500ms cubic-bezier(0.16, 1, 0.3, 1);
+    animation-fill-mode: both;
+}
+
+/* ============================================
+   Elastic Scale - Interactive Elements
+   ============================================ */
+
+@keyframes elasticScale {
+    0% {
+        transform: scale(0.9);
+    }
+    50% {
+        transform: scale(1.05);
+    }
+    100% {
+        transform: scale(1);
+    }
+}
+
+.elastic-enter {
+    animation: elasticScale 600ms cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+/* ============================================
+   Slide In Animations - Various Directions
+   ============================================ */
+
+@keyframes slideInLeft {
+    0% {
+        opacity: 0;
+        transform: translateX(-40px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes slideInRight {
+    0% {
+        opacity: 0;
+        transform: translateX(40px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes slideInDown {
+    0% {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ============================================
+   Breathing Glow - Privileged/Important Items
+   ============================================ */
+
+@keyframes breathingGlow {
+    0%, 100% {
+        box-shadow: 0 0 15px rgba(232, 183, 106, 0.3), 0 0 30px rgba(232, 183, 106, 0.15);
+    }
+    50% {
+        box-shadow: 0 0 25px rgba(232, 183, 106, 0.5), 0 0 50px rgba(232, 183, 106, 0.25);
+    }
+}
+
+.breathing-glow {
+    animation: breathingGlow 4s ease-in-out infinite;
+}
+
+/* Amber variant for legal authority */
+@keyframes amberPulse {
+    0%, 100% {
+        box-shadow: 0 0 12px rgba(232, 183, 106, 0.4), 0 0 24px rgba(232, 183, 106, 0.2);
+    }
+    50% {
+        box-shadow: 0 0 20px rgba(232, 183, 106, 0.6), 0 0 40px rgba(232, 183, 106, 0.3);
+    }
+}
+
 .privileged-glow {
     animation: amberPulse 3s ease-in-out infinite;
 }
@@ -81,7 +172,91 @@
 }
 
 /* ============================================
-   Fade Transitions - Document Viewer
+   Shimmer Effect - Loading States
+   ============================================ */
+
+@keyframes shimmer {
+    0% {
+        background-position: -1000px 0;
+    }
+    100% {
+        background-position: 1000px 0;
+    }
+}
+
+.shimmer {
+    background: linear-gradient(
+        90deg,
+        var(--bg-tertiary) 0%,
+        var(--bg-elevated) 50%,
+        var(--bg-tertiary) 100%
+    );
+    background-size: 1000px 100%;
+    animation: shimmer 2s ease-in-out infinite;
+}
+
+/* ============================================
+   Ripple Effect - Button Clicks
+   ============================================ */
+
+@keyframes ripple {
+    0% {
+        transform: scale(0);
+        opacity: 0.6;
+    }
+    100% {
+        transform: scale(4);
+        opacity: 0;
+    }
+}
+
+.ripple-effect {
+    position: absolute;
+    border-radius: 50%;
+    background: rgba(79, 195, 247, 0.4);
+    pointer-events: none;
+    animation: ripple 600ms ease-out;
+}
+
+/* ============================================
+   Button Press - Haptic-like Feedback
+   ============================================ */
+
+@keyframes buttonPress {
+    0% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(0.95);
+    }
+    100% {
+        transform: scale(1);
+    }
+}
+
+.button-press {
+    animation: buttonPress 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ============================================
+   Icon Bounce - Navigation Hover
+   ============================================ */
+
+@keyframes iconBounce {
+    0%, 100% {
+        transform: translateY(0);
+    }
+    50% {
+        transform: translateY(-4px);
+    }
+}
+
+.icon-bounce:hover svg {
+    animation: iconBounce 400ms cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+/* ============================================
+   Fade Transitions - Views & Documents
    ============================================ */
 
 @keyframes fadeIn {
@@ -102,6 +277,17 @@
     }
 }
 
+@keyframes fadeSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 /* Subtle fade for document transitions */
 .fade-enter {
     animation: fadeIn 300ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -109,6 +295,38 @@
 
 .fade-exit {
     animation: fadeOut 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.fade-slide-enter {
+    animation: fadeSlideIn 400ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ============================================
+   Typewriter Effect - Mono Content
+   ============================================ */
+
+@keyframes typewriter {
+    from {
+        width: 0;
+    }
+    to {
+        width: 100%;
+    }
+}
+
+@keyframes blink {
+    50% {
+        border-color: transparent;
+    }
+}
+
+.typewriter {
+    overflow: hidden;
+    border-right: 2px solid var(--amber-500);
+    white-space: nowrap;
+    animation:
+        typewriter 1.5s steps(40, end),
+        blink 0.75s step-end infinite;
 }
 
 /* ============================================

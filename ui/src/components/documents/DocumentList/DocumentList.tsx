@@ -25,12 +25,13 @@ export function DocumentList({
 
   return (
     <div className={styles.list}>
-      {documents.map((doc) => (
+      {documents.map((doc, index) => (
         <DocumentCard
           key={doc.sha256}
           document={doc}
           isActive={doc.sha256 === selectedDocumentHash}
           onClick={() => onSelectDocument?.(doc)}
+          index={index}
         />
       ))}
     </div>

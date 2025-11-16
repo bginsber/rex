@@ -244,7 +244,32 @@ export function ReviewView({ document, getDocumentUrl }: ReviewViewProps) {
             {explanationBadge && (
               <div className={`${styles.alert} ${styles.info}`}>{explanationBadge}</div>
             )}
-            {reviewError && <div className={`${styles.alert} ${styles.error}`}>{reviewError}</div>}
+            {reviewError && (
+              <div className={`${styles.alert} ${styles.error}`}>
+                {reviewError.includes('No document found for SHA-256') ? (
+                  <>
+                    <div className={styles.alertTitle}>
+                      <strong>Document Not Found in Index</strong>
+                    </div>
+                    <p className={styles.alertBody}>
+                      The document appears in search results but cannot be retrieved from the index.
+                      This usually means REXLIT_HOME is pointing to a different location than where documents were indexed.
+                    </p>
+                    <details className={styles.alertDetails}>
+                      <summary>How to fix this</summary>
+                      <ol>
+                        <li>Check the API server's REXLIT_HOME environment variable matches your data directory</li>
+                        <li>Verify the document exists: <code>{document?.path || 'unknown path'}</code></li>
+                        <li>Rebuild the index if needed: <code>rexlit index build --workers 4</code></li>
+                        <li>Restart the API server after changing REXLIT_HOME</li>
+                      </ol>
+                    </details>
+                  </>
+                ) : (
+                  reviewError
+                )}
+              </div>
+            )}
             {explainError && <div className={`${styles.alert} ${styles.error}`}>{explainError}</div>}
             {decisionError && <div className={`${styles.alert} ${styles.error}`}>{decisionError}</div>}
             {decisionMessage && (

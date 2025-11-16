@@ -52,3 +52,7 @@ data/
 # Note: sample-docs is managed as a submodule, but we ignore any local changes
 rexlit/docs/sample-docs/
 rexlit/docs/idl-fixtures/
+
+# Runtime artifacts (development)
+/index/
+audit.meta
