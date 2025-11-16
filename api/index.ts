@@ -169,7 +169,12 @@ async function runRexlitNative(
 ): Promise<unknown> {
   const proc = Bun.spawn([REXLIT_BIN, ...args], {
     stdout: 'pipe',
-    stderr: 'pipe'
+    stderr: 'pipe',
+    env: {
+      ...Bun.env,
+      // Ensure REXLIT_DATA_DIR is passed to Python CLI subprocess
+      REXLIT_DATA_DIR: REXLIT_HOME
+    }
   })
 
   let timedOut = false
