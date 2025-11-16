@@ -22,12 +22,12 @@ download_fonts() {
   echo ""
   echo "Downloading $font_name fonts..."
 
-  # Fetch the CSS from Google Fonts with proper User-Agent
-  local css=$(curl -s -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36" \
+  # Fetch the CSS from Google Fonts with proper User-Agent (WOFF2-capable browser)
+  local css=$(curl -s -H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
     "https://fonts.googleapis.com/css2?family=$font_spec&display=swap")
 
-  # Extract WOFF2 URLs and download each one
-  echo "$css" | grep -oP 'https://[^"]+\.woff2' | while read url; do
+  # Extract WOFF2 URLs and download each one (macOS-compatible)
+  echo "$css" | grep -Eo 'https://[^"]+\.woff2' | while read url; do
     # Extract filename from URL (format: NAME-HASH.woff2)
     filename=$(basename "$url")
     echo "  Downloading: $filename"
