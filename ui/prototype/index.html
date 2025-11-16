@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RexLit - Litigation Terminal</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Newsreader:wght@400;600;700&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Status Bar - Hardware LED aesthetic -->
+    <div class="status-bar">
+        <div class="status-section">
+            <div class="status-indicator offline">
+                <span class="led"></span>
+                <span class="label">OFFLINE MODE</span>
+            </div>
+            <div class="status-indicator">
+                <span class="led active"></span>
+                <span class="label">INDEX: READY</span>
+            </div>
+        </div>
+        <div class="status-section center">
+            <div class="case-badge">
+                <span class="case-number">CASE-2024-CV-1847</span>
+                <span class="case-name">Martinez v. Apex Corp.</span>
+            </div>
+        </div>
+        <div class="status-section">
+            <div class="audit-chain">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M3 8L8 3L13 8M8 3V13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+                <span class="chain-count">1,847 events</span>
+            </div>
+            <div class="bates-counter">
+                <span class="mono">APEX-00428391</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Layout -->
+    <div class="main-container">
+        <!-- Navigation Rail -->
+        <nav class="nav-rail">
+            <div class="nav-section">
+                <button class="nav-item active" data-view="search">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="2"/>
+                        <path d="M12.5 12.5L17 17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    <span>Search</span>
+                </button>
+                <button class="nav-item" data-view="review">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <rect x="3" y="3" width="14" height="14" rx="2" stroke="currentColor" stroke-width="2"/>
+                        <path d="M7 10L9 12L13 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <span>Review</span>
+                </button>
+                <button class="nav-item" data-view="privilege">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <path d="M10 2L3 7V13C3 16 10 18 10 18C10 18 17 16 17 13V7L10 2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                    </svg>
+                    <span>Privilege</span>
+                </button>
+                <button class="nav-item" data-view="audit">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <circle cx="5" cy="10" r="2" fill="currentColor"/>
+                        <circle cx="10" cy="10" r="2" fill="currentColor"/>
+                        <circle cx="15" cy="10" r="2" fill="currentColor"/>
+                        <path d="M5 10H15" stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                    <span>Audit</span>
+                </button>
+            </div>
+            <div class="nav-section bottom">
+                <button class="nav-item" data-view="settings">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <circle cx="10" cy="10" r="3" stroke="currentColor" stroke-width="2"/>
+                        <path d="M10 2V4M10 16V18M18 10H16M4 10H2M15.5 4.5L14 6M6 14L4.5 15.5M15.5 15.5L14 14M6 6L4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    <span>Settings</span>
+                </button>
+            </div>
+        </nav>
+
+        <!-- Search Panel -->
+        <aside class="search-panel">
+            <div class="search-header">
+                <h2 class="panel-title">Document Search</h2>
+                <button class="mode-toggle" id="searchModeToggle">
+                    <span class="mode-label">GUI</span>
+                    <div class="toggle-switch">
+                        <div class="toggle-slider"></div>
+                    </div>
+                    <span class="mode-label">CLI</span>
+                </button>
+            </div>
+
+            <!-- GUI Search Mode -->
+            <div class="search-container gui-mode">
+                <div class="search-input-wrapper">
+                    <svg class="search-icon" width="18" height="18" viewBox="0 0 18 18" fill="none">
+                        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="2"/>
+                        <path d="M11 11L15 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    <input type="text" class="search-input" placeholder="Search documents..." value="attorney-client AND email">
+                    <kbd class="kbd">⌘K</kbd>
+                </div>
+
+                <div class="search-filters">
+                    <div class="filter-group">
+                        <label class="filter-label">Date Range</label>
+                        <div class="date-range">
+                            <input type="date" class="date-input" value="2024-01-01">
+                            <span class="range-separator">→</span>
+                            <input type="date" class="date-input" value="2024-12-31">
+                        </div>
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label">Classification</label>
+                        <div class="classification-pills">
+                            <button type="button" class="pill privileged" aria-pressed="false">Privileged</button>
+                            <button type="button" class="pill production active" aria-pressed="true">Production</button>
+                            <button type="button" class="pill responsive" aria-pressed="false">Responsive</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CLI Search Mode (hidden by default) -->
+            <div class="search-container cli-mode" style="display: none;">
+                <div class="terminal-input-wrapper">
+                    <span class="terminal-prompt">rex$</span>
+                    <input type="text" class="terminal-input" value="search --query 'attorney-client AND email' --class production --after 2024-01-01">
+                </div>
+                <div class="terminal-help">
+                    <div class="help-line"><kbd>--query</kbd> Full-text search query</div>
+                    <div class="help-line"><kbd>--class</kbd> privileged | production | responsive</div>
+                    <div class="help-line"><kbd>--after</kbd> <kbd>--before</kbd> Date filters (ISO 8601)</div>
+                </div>
+            </div>
+
+            <!-- Results List -->
+            <div class="results-container">
+                <div class="results-header">
+                    <span class="result-count">428 documents</span>
+                    <button class="export-btn">
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                            <path d="M7 1V9M7 1L4 4M7 1L10 4M1 13H13M3 9V13M11 9V13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        Export
+                    </button>
+                </div>
+
+                <div class="document-list">
+                    <!-- Document Card 1 - Privileged -->
+                    <div class="document-card privileged">
+                        <div class="card-header">
+                            <div class="bates-tag">
+                                <span class="bates-label">BATES</span>
+                                <span class="bates-number">APEX-00428391</span>
+                            </div>
+                            <div class="privilege-badge glow">
+                                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                                    <path d="M6 1L2 4V7C2 9 6 10.5 6 10.5C6 10.5 10 9 10 7V4L6 1Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+                                </svg>
+                                PRIVILEGED
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <h3 class="doc-title">Re: Litigation strategy discussion</h3>
+                            <div class="doc-meta">
+                                <span class="meta-item">
+                                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                                        <path d="M6 11C8.76142 11 11 8.76142 11 6C11 3.23858 8.76142 1 6 1C3.23858 1 1 3.23858 1 6C1 8.76142 3.23858 11 6 11Z" stroke="currentColor" stroke-width="1.5"/>
+                                        <path d="M6 3V6L8 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                                    </svg>
+                                    2024-03-15
+                                </span>
+                                <span class="meta-item">
+                                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                                        <path d="M10 10.5H2C1.5 10.5 1 10 1 9.5V2.5C1 2 1.5 1.5 2 1.5H10C10.5 1.5 11 2 11 2.5V9.5C11 10 10.5 10.5 10 10.5Z" stroke="currentColor" stroke-width="1.5"/>
+                                        <path d="M1 4H11" stroke="currentColor" stroke-width="1.5"/>
+                                    </svg>
+                                    Email
+                                </span>
+                            </div>
+                            <p class="doc-excerpt">Sarah, per our discussion yesterday regarding the Martinez case, I believe we should consider the following defense strategies. Please review the attached memo from outside counsel...</p>
+                            <div class="doc-tags">
+                                <span class="tag">attorney-client</span>
+                                <span class="tag">work-product</span>
+                                <span class="tag">confidential</span>
+                            </div>
+                        </div>
+                        <div class="card-footer">
+                            <span class="confidence-score">
+                                <span class="score-label">Privilege Confidence:</span>
+                                <span class="score-value high">94.2%</span>
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Document Card 2 - Production -->
+                    <div class="document-card production active">
+                        <div class="card-header">
+                            <div class="bates-tag">
+                                <span class="bates-label">BATES</span>
+                                <span class="bates-number">APEX-00428392</span>
+                            </div>
+                            <div class="privilege-badge production-badge">
+                                PRODUCTION
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <h3 class="doc-title">Q3 Sales Performance Report</h3>
+                            <div class="doc-meta">
+                                <span class="meta-item">
+                                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                                        <path d="M6 11C8.76142 11 11 8.76142 11 6C11 3.23858 8.76142 1 6 1C3.23858 1 1 3.23858 1 6C1 8.76142 3.23858 11 6 11Z" stroke="currentColor" stroke-width="1.5"/>
+                                        <path d="M6 3V6L8 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                                    </svg>
+                                    2024-10-01
+                                </span>
+                                <span class="meta-item">
+                                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                                        <path d="M2 1.5H10C10.5 1.5 11 2 11 2.5V9.5C11 10 10.5 10.5 10 10.5H2C1.5 10.5 1 10 1 9.5V2.5C1 2 1.5 1.5 2 1.5Z" stroke="currentColor" stroke-width="1.5"/>
+                                        <path d="M1 4H11M4 1.5V4M8 1.5V4" stroke="currentColor" stroke-width="1.5"/>
+                                    </svg>
+                                    PDF
+                                </span>
+                            </div>
+                            <p class="doc-excerpt">This quarterly report summarizes sales performance across all regions. Total revenue increased 12% YoY, with particularly strong growth in the Northeast territory...</p>
+                            <div class="doc-tags">
+                                <span class="tag">quarterly-report</span>
+                                <span class="tag">sales</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Document Card 3 - Responsive -->
+                    <div class="document-card responsive">
+                        <div class="card-header">
+                            <div class="bates-tag">
+                                <span class="bates-label">BATES</span>
+                                <span class="bates-number">APEX-00428393</span>
+                            </div>
+                            <div class="privilege-badge responsive-badge">
+                                RESPONSIVE
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <h3 class="doc-title">Meeting notes: Product roadmap discussion</h3>
+                            <div class="doc-meta">
+                                <span class="meta-item">
+                                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                                        <path d="M6 11C8.76142 11 11 8.76142 11 6C11 3.23858 8.76142 1 6 1C3.23858 1 1 3.23858 1 6C1 8.76142 3.23858 11 6 11Z" stroke="currentColor" stroke-width="1.5"/>
+                                        <path d="M6 3V6L8 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                                    </svg>
+                                    2024-06-22
+                                </span>
+                                <span class="meta-item">
+                                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                                        <path d="M2 3H10M2 6H10M2 9H7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                                    </svg>
+                                    TXT
+                                </span>
+                            </div>
+                            <p class="doc-excerpt">Attendees: John Martinez, Rachel Kim, David Thompson. Topics discussed: Q4 feature priorities, resource allocation, timeline for beta release...</p>
+                            <div class="doc-tags">
+                                <span class="tag">meeting-notes</span>
+                                <span class="tag">internal</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Document Viewer -->
+        <main class="document-viewer">
+            <div class="viewer-header">
+                <div class="breadcrumb">
+                    <span class="crumb">Documents</span>
+                    <span class="separator">/</span>
+                    <span class="crumb">Email</span>
+                    <span class="separator">/</span>
+                    <span class="crumb active">APEX-00428391</span>
+                </div>
+                <div class="viewer-actions">
+                    <button class="action-btn">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                            <path d="M13 9V13H3V9M8 2V11M8 2L5 5M8 2L11 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        Download
+                    </button>
+                    <button class="action-btn">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                            <path d="M14 9V14H2V9M11 5L8 2L5 5M8 2V10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        Annotate
+                    </button>
+                    <button class="action-btn danger">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                            <rect x="3" y="3" width="10" height="10" rx="1" stroke="currentColor" stroke-width="1.5"/>
+                            <path d="M6 6L10 10M10 6L6 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                        </svg>
+                        Redact
+                    </button>
+                </div>
+            </div>
+
+            <div class="document-content">
+                <!-- Document Metadata Panel -->
+                <div class="metadata-panel">
+                    <div class="metadata-section">
+                        <h4 class="section-title">Document Information</h4>
+                        <dl class="metadata-grid">
+                            <dt>Bates Number</dt>
+                            <dd class="mono highlight">APEX-00428391</dd>
+
+                            <dt>Date Created</dt>
+                            <dd>March 15, 2024 14:32 UTC</dd>
+
+                            <dt>Document Type</dt>
+                            <dd>Email (RFC 2822)</dd>
+
+                            <dt>File Size</dt>
+                            <dd>47.2 KB</dd>
+
+                            <dt>SHA-256</dt>
+                            <dd class="mono truncate">a3b5c2d1e4f6...</dd>
+                        </dl>
+                    </div>
+
+                    <div class="metadata-section">
+                        <h4 class="section-title">Classification</h4>
+                        <div class="classification-status privileged">
+                            <div class="status-icon">
+                                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                                    <path d="M10 2L3 7V13C3 16 10 18 10 18C10 18 17 16 17 13V7L10 2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                                </svg>
+                            </div>
+                            <div class="status-details">
+                                <div class="status-label">ATTORNEY-CLIENT PRIVILEGED</div>
+                                <div class="status-confidence">Confidence: 94.2%</div>
+                                <div class="status-basis">Basis: Pattern match + LLM confirmation</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="metadata-section">
+                        <h4 class="section-title">Audit Trail</h4>
+                        <div class="audit-timeline">
+                            <div class="audit-event">
+                                <div class="event-dot"></div>
+                                <div class="event-content">
+                                    <div class="event-action">Document ingested</div>
+                                    <div class="event-meta">2024-11-13 09:15 • admin@firm.com</div>
+                                </div>
+                            </div>
+                            <div class="audit-event">
+                                <div class="event-dot"></div>
+                                <div class="event-content">
+                                    <div class="event-action">Classified as privileged</div>
+                                    <div class="event-meta">2024-11-13 09:15 • system</div>
+                                </div>
+                            </div>
+                            <div class="audit-event">
+                                <div class="event-dot"></div>
+                                <div class="event-content">
+                                    <div class="event-action">Bates number assigned</div>
+                                    <div class="event-meta">2024-11-13 09:16 • system</div>
+                                </div>
+                            </div>
+                            <div class="audit-event active">
+                                <div class="event-dot active"></div>
+                                <div class="event-content">
+                                    <div class="event-action">Document viewed</div>
+                                    <div class="event-meta">2024-11-13 14:22 • bgsinsberg@firm.com</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Document Preview -->
+                <div class="document-preview">
+                    <div class="email-header">
+                        <div class="email-field">
+                            <span class="field-label">From:</span>
+                            <span class="field-value">Sarah Chen &lt;schen@apex-corp.com&gt;</span>
+                        </div>
+                        <div class="email-field">
+                            <span class="field-label">To:</span>
+                            <span class="field-value">David Thompson &lt;dthompson@apex-corp.com&gt;</span>
+                        </div>
+                        <div class="email-field">
+                            <span class="field-label">Cc:</span>
+                            <span class="field-value">Jennifer Martinez (Outside Counsel) &lt;jmartinez@law-firm.com&gt;</span>
+                        </div>
+                        <div class="email-field">
+                            <span class="field-label">Date:</span>
+                            <span class="field-value">March 15, 2024, 2:32 PM</span>
+                        </div>
+                        <div class="email-field">
+                            <span class="field-label">Subject:</span>
+                            <span class="field-value"><strong>Re: Litigation strategy discussion</strong></span>
+                        </div>
+                    </div>
+
+                    <div class="email-body">
+                        <p>Sarah,</p>
+
+                        <p>Per our discussion yesterday regarding the Martinez case, I believe we should consider the following defense strategies:</p>
+
+                        <ol>
+                            <li><strong>Motion to Dismiss:</strong> Based on the statute of limitations argument we discussed. Jennifer's memo (attached) suggests we have strong grounds here.</li>
+                            <li><strong>Discovery Scope Limitation:</strong> We should push back on their overly broad document requests, particularly categories 12-18.</li>
+                            <li><strong>Expert Witness Preparation:</strong> Need to engage Dr. Rodriguez soon for the technical aspects of the product liability claims.</li>
+                        </ol>
+
+                        <p><mark class="privilege-highlight">Jennifer - please review the privilege log draft and let me know if you think we should assert work product protection on the internal investigation materials.</mark></p>
+
+                        <p>I'm scheduling a call for next Tuesday to go over the deposition strategy. Please review the witness prep materials beforehand.</p>
+
+                        <p>Best regards,<br>David</p>
+
+                        <div class="email-signature">
+                            <p class="signature-line">David Thompson</p>
+                            <p class="signature-line">General Counsel</p>
+                            <p class="signature-line">Apex Corporation</p>
+                            <p class="signature-line confidential-notice">CONFIDENTIAL ATTORNEY-CLIENT COMMUNICATION</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Keyboard Shortcuts Overlay (hidden by default) -->
+    <div class="shortcuts-overlay" id="shortcutsOverlay" style="display: none;">
+        <div class="shortcuts-panel">
+            <div class="shortcuts-header">
+                <h3>Keyboard Shortcuts</h3>
+                <button class="close-btn" onclick="document.getElementById('shortcutsOverlay').style.display='none'">&times;</button>
+            </div>
+            <div class="shortcuts-grid">
+                <div class="shortcut-section">
+                    <h4>Navigation</h4>
+                    <div class="shortcut-item">
+                        <kbd>⌘</kbd> + <kbd>K</kbd>
+                        <span>Search</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <kbd>⌘</kbd> + <kbd>P</kbd>
+                        <span>Command palette</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <kbd>⌘</kbd> + <kbd>/</kbd>
+                        <span>Toggle CLI mode</span>
+                    </div>
+                </div>
+                <div class="shortcut-section">
+                    <h4>Document Actions</h4>
+                    <div class="shortcut-item">
+                        <kbd>⌘</kbd> + <kbd>D</kbd>
+                        <span>Download</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <kbd>⌘</kbd> + <kbd>R</kbd>
+                        <span>Redact</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <kbd>⌘</kbd> + <kbd>A</kbd>
+                        <span>Annotate</span>
+                    </div>
+                </div>
+                <div class="shortcut-section">
+                    <h4>Classification</h4>
+                    <div class="shortcut-item">
+                        <kbd>P</kbd>
+                        <span>Mark privileged</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <kbd>R</kbd>
+                        <span>Mark responsive</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <kbd>X</kbd>
+                        <span>Mark for production</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
