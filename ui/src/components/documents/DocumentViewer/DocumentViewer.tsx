@@ -25,6 +25,9 @@ export function DocumentViewer({ document, getDocumentUrl }: DocumentViewerProps
   const documentTitle = document.path.split('/').pop() || 'Untitled Document'
   const batesNumber = `DOC-${document.sha256.substring(0, 8).toUpperCase()}`
 
+  // Detect if this is a PDF document
+  const isPDF = document.mime_type?.startsWith('application/pdf') ?? false
+
   return (
     <div className={styles.viewer}>
       {/* Document Header */}
@@ -33,10 +36,51 @@ export function DocumentViewer({ document, getDocumentUrl }: DocumentViewerProps
           <h2 className={styles.title}>{documentTitle}</h2>
           <div className={styles.metadata}>
             <span className={`${styles.bates} bates-number`}>{batesNumber}</span>
+            {isPDF && (
+              <span
+                className={styles.badge}
+                title="PDF document"
+                style={{
+                  display: 'inline-block',
+                  padding: '4px 8px',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  backgroundColor: 'rgba(200, 50, 50, 0.15)',
+                  color: '#ff6b6b',
+                  marginRight: '8px'
+                }}
+              >
+                📄 PDF
+              </span>
+            )}
             <span className={styles.path}>{document.path}</span>
           </div>
         </div>
         <div className={styles.actions}>
+          <a
+            href={getDocumentUrl(document.sha256)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={styles.actionButton}
+            title={isPDF ? 'Open PDF in new tab' : 'Open document in new tab'}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M3 2H10.5C10.776 2 11 2.224 11 2.5V9M13 13V6.5C13 6.224 13.224 6 13.5 6H6"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M13 3L6.5 9.5"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+            </svg>
+          </a>
           <button className={styles.actionButton} title="Download">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               <path d="M8 2V10M8 10L5 7M8 10L11 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />

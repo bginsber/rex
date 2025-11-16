@@ -650,12 +650,18 @@ export function createApp() {
     })
     .get('/api/documents/:hash/file', async ({ params }) => {
       try {
+        // Look up document in index (authoritative source of truth)
         const metadata = (await runRexlit([
           'index',
           'get',
           params.hash,
           '--json'
-        ])) as { path?: unknown }
+        ])) as {
+          path?: unknown
+          mime_type?: string | null
+          size?: number
+          extension?: string
+        }
 
         if (!metadata || typeof metadata.path !== 'string') {
           return new Response(JSON.stringify({ error: 'Document not found' }), {
@@ -663,15 +669,42 @@ export function createApp() {
           })
         }
 
+        // Validate path is within REXLIT_HOME (security boundary)
         const trustedPath = ensureWithinRoot(metadata.path)
         const file = Bun.file(trustedPath)
 
+        // Check file exists on disk
         if (!(await file.exists())) {
           return new Response(JSON.stringify({ error: 'File not found on disk' }), {
             status: 404
           })
         }
 
+        // Optional: Add size validation to prevent huge file reads
+        // TODO: Consider adding a MAX_FILE_SIZE config (default: 50MB?)
+        // if (metadata.size && metadata.size > 50_000_000) {
+        //   return jsonError('File too large to serve', 413)
+        // }
+
+        // Determine if this is a PDF based on MIME type from index
+        const isPDF = metadata.mime_type?.startsWith('application/pdf') ?? false
+
+        if (isPDF) {
+          // For PDFs: serve raw binary content with appropriate headers
+          // Browser's built-in PDF viewer will handle rendering
+          const extension = metadata.extension || 'pdf'
+          const filename = `${params.hash.substring(0, 8)}.${extension}`
+
+          return new Response(file, {
+            headers: {
+              'Content-Type': 'application/pdf',
+              'Content-Disposition': `inline; filename="${filename}"`,
+              'Cache-Control': 'public, max-age=31536000' // 1 year (content-addressed)
+            }
+          })
+        }
+
+        // For non-PDF documents (text files, etc.): wrap in HTML for safety
         const text = await file.text()
         const htmlEscape: Record<string, string> = {
           '<': '&lt;',

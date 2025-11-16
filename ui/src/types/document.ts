@@ -7,6 +7,7 @@ export interface SearchResult {
   sha256: string
   custodian?: string | null
   doctype?: string | null
+  mime_type?: string | null
   score: number
   snippet?: string | null
   strategy?: string
