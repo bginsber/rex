@@ -14,6 +14,7 @@ from .privilege_patterns import PrivilegePatternsAdapter
 from .privilege_safeguard import PrivilegeSafeguardAdapter
 from .redaction import JSONLineRedactionPlanner, PassthroughRedactionApplier
 from .storage import FileSystemStorageAdapter
+from .null_concept_adapter import NullConceptAdapter
 try:
     from .tesseract_ocr import TesseractOCRAdapter
 except ModuleNotFoundError as _tesseract_err:  # pragma: no cover - optional dependency
@@ -40,4 +41,5 @@ __all__ = [
     "PrivilegeSafeguardAdapter",
     "PrivilegePatternsAdapter",
     "GroqPrivilegeAdapter",
+    "NullConceptAdapter",
 ]

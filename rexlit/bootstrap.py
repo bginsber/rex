@@ -7,7 +7,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from rexlit.app import M1Pipeline, PackService, RedactionService, ReportService
+from rexlit.app import (
+    HighlightService,
+    M1Pipeline,
+    PackService,
+    RedactionService,
+    ReportService,
+)
 from rexlit.app.adapters import (
     FileSystemStorageAdapter,
     GroqPrivilegeAdapter,
@@ -16,6 +22,7 @@ from rexlit.app.adapters import (
     IngestDiscoveryAdapter,
     JSONLineRedactionPlanner,
     Kanon2Adapter,
+    NullConceptAdapter,
     PDFStamperAdapter,
     PrivilegePatternsAdapter,
     SequentialBatesPlanner,
@@ -27,6 +34,7 @@ from rexlit.app.audit_service import AuditService
 from rexlit.app.ports import (
     BatesPlannerPort,
     DeduperPort,
+    ConceptPort,
     DiscoveryPort,
     EmbeddingPort,
     IndexPort,
@@ -90,6 +98,8 @@ class ApplicationContainer:
     ocr_providers: dict[str, OCRPort]
     privilege_port: PrivilegePort | None
     pii_port: PIIPort
+    highlight_service: HighlightService
+    concept_port: ConceptPort
 
 
 class NoOpLedger:
@@ -414,6 +424,15 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
 
     # Create privilege adapter (Groq when online, pattern-based otherwise)
     privilege_adapter = _create_privilege_adapter(active_settings)
+    concept_adapter: ConceptPort = NullConceptAdapter()
+
+    highlight_service = HighlightService(
+        concept_port=concept_adapter,
+        storage_port=storage,
+        ledger_port=ledger_for_services,
+        settings=active_settings,
+        offline_gate=offline_gate,
+    )
 
     return ApplicationContainer(
         settings=active_settings,
@@ -454,6 +473,8 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
         ocr_providers=ocr_providers,
         privilege_port=privilege_adapter,
         pii_port=pii_adapter,
+        highlight_service=highlight_service,
+        concept_port=concept_adapter,
     )
 
 
