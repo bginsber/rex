@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-This plan outlines the implementation of a "legal highlighter" feature that reuses RexLit's existing redaction pipeline architecture to provide confidence-based, color-coded visual annotations for legal review. The system will detect and highlight key concepts (emails, legal advice, party mentions, privilege markers) and present them as a visual heatmap in the web UI, enabling attorneys to triage high-value documents first.
+This plan outlines the implementation of a "legal highlighter" feature that reuses RexLit's existing redaction pipeline architecture to provide confidence-based, color-coded visual annotations for legal review. The system will detect and highlight key concepts (emails, legal advice, party mentions, privilege markers) and present them as a visual heatmap in the web UI, enabling attorneys to triage high-value documents first. The primary delivery path stays RexLit-compliant and offline-first: highlights are generated locally on a capable inference workstation (pattern adapter by default, optional local LLM) at test-time, with no raw document text persisted in plan artifacts.
 
 **Core Innovation:** Transform the redaction plan/apply pattern into a highlight plan/render pattern, leveraging existing port interfaces and LLM classification infrastructure.
 
@@ -61,20 +61,21 @@ The legal highlighter reuses the proven redaction architecture with concept-spec
 1. **Plan/Render Pattern** (mirrors redaction plan/apply):
    - Phase 1: `rexlit highlight plan` generates read-only highlight coordinates
    - Phase 2: Web UI renders highlights without modifying source documents
-   - Hash verification ensures highlights match current document state
+   - Hash verification ensures highlights match current document state; inputs validated against allowed roots
 
-2. **Concept Detection Strategy** (mirrors PII detection):
+2. **Concept Detection Strategy** (mirrors PII detection, offline-first):
    - Pattern-based pre-filtering (fast, offline, ≥85% confidence)
-   - LLM escalation for uncertain cases (50-84% confidence)
+   - Optional local LLM escalation for uncertain cases (50-84% confidence) when a workstation model path is provided
+   - Online adapters remain gated behind `--online`/`REXLIT_ONLINE=1` (disabled by default)
    - Confidence-based color shading (darker = higher confidence)
 
 3. **Ports and Adapters**:
    - New `ConceptPort` interface (similar to `PIIPort`)
-   - Adapters: `PatternConceptAdapter` (offline), `SafeguardConceptAdapter` (LLM)
+   - Adapters: `PatternConceptAdapter` (offline), `LocalLLMConceptAdapter` (offline LLM)
    - `HighlightService` orchestrates detection and plan generation
 
 4. **Web UI Rendering**:
-   - Highlight plans embedded in manifest or served via API
+   - Highlight plans embedded in manifest or served via API from cached exports (no per-request shelling)
    - PDF.js or custom viewer renders color overlays
    - Heatmap scroll bar shows document "temperature"
 
@@ -84,7 +85,7 @@ The legal highlighter reuses the proven redaction architecture with concept-spec
 
 ### JSONL Schema (v1)
 
-Following ADR 0004 (JSONL Schema Versioning), each highlight plan entry:
+Following ADR 0004 (JSONL Schema Versioning), each highlight plan entry (no raw text persisted):
 
 ```json
 {
@@ -93,15 +94,13 @@ Following ADR 0004 (JSONL Schema Versioning), each highlight plan entry:
   "producer": "rexlit-0.3.0",
   "produced_at": "2025-11-19T14:30:00Z",
 
-  "document": "/data/discovery/email_chain_2024.pdf",
-  "sha256": "a1b2c3d4e5f6...",
+  "document_hash": "a1b2c3d4e5f6...",
   "plan_id": "highlight_abc123...",
 
   "highlights": [
     {
       "concept": "EMAIL_COMMUNICATION",
       "category": "communication",
-      "text": "From: attorney@lawfirm.com",
       "confidence": 0.95,
       "start": 120,
       "end": 148,
@@ -109,12 +108,11 @@ Following ADR 0004 (JSONL Schema Versioning), each highlight plan entry:
       "color": "cyan",
       "shade_intensity": 0.95,
       "reasoning_hash": "sha256_of_reasoning",
-      "reasoning_summary": "Email header detected with high confidence"
+      "snippet_hash": "sha256_of_span_bytes"
     },
     {
       "concept": "LEGAL_ADVICE",
       "category": "privilege",
-      "text": "Our legal analysis suggests...",
       "confidence": 0.88,
       "start": 450,
       "end": 620,
@@ -122,12 +120,11 @@ Following ADR 0004 (JSONL Schema Versioning), each highlight plan entry:
       "color": "magenta",
       "shade_intensity": 0.88,
       "reasoning_hash": "sha256_of_reasoning",
-      "reasoning_summary": "Attorney opinion language with legal conclusions"
+      "snippet_hash": "sha256_of_span_bytes"
     },
     {
       "concept": "KEY_PARTY",
       "category": "entity",
-      "text": "Patent #455",
       "confidence": 0.92,
       "start": 890,
       "end": 900,
@@ -135,13 +132,13 @@ Following ADR 0004 (JSONL Schema Versioning), each highlight plan entry:
       "color": "yellow",
       "shade_intensity": 0.92,
       "reasoning_hash": "sha256_of_reasoning",
-      "reasoning_summary": "Specific patent number from case facts"
+      "snippet_hash": "sha256_of_span_bytes"
     }
   ],
 
   "annotations": {
     "concept_types": ["EMAIL_COMMUNICATION", "LEGAL_ADVICE", "KEY_PARTY"],
-    "detector": "SafeguardConceptAdapter",
+    "detector": "PatternConceptAdapter | LocalLLMConceptAdapter",
     "highlight_count": 3,
     "pages_with_highlights": [1, 2, 3],
     "confidence_range": [0.88, 0.95],
@@ -217,7 +214,7 @@ class ConceptPort(Protocol):
 
     Adapters:
     - PatternConceptAdapter (offline, regex-based)
-    - SafeguardConceptAdapter (LLM-based, online)
+    - LocalLLMConceptAdapter (offline LLM on workstation)
 
     Side effects: None (read-only analysis).
     """
@@ -429,7 +426,7 @@ class HighlightService:
 Generate highlight plan from documents:
 
 ```bash
-# Basic usage
+# Basic usage (offline, pattern adapter)
 rexlit highlight plan ./discovery --output highlights.jsonl
 
 # Specific concepts only
@@ -442,8 +439,14 @@ rexlit highlight plan ./hotdocs \
   --threshold 0.75 \
   --output hotdoc_highlights.jsonl
 
-# LLM-powered (online mode)
+# Local workstation LLM (offline model path)
+rexlit highlight plan ./production \
+  --local-model-path /models/llm-20b \
+  --output local_llm_highlights.jsonl
+
+# Optional online mode (explicitly opt-in)
 REXLIT_ONLINE=1 rexlit highlight plan ./production \
+  --online \
   --force-llm \
   --output llm_highlights.jsonl
 ```
@@ -460,18 +463,29 @@ def highlight_plan(
     concepts: str | None = typer.Option(None, help="Comma-separated concept types"),
     threshold: float = typer.Option(0.5, help="Confidence threshold"),
     force_llm: bool = typer.Option(False, help="Skip pattern pre-filter, use LLM"),
+    local_model_path: Path | None = typer.Option(None, help="Path to offline model for concept detection"),
+    online: bool = typer.Option(False, help="Allow network-backed adapters (requires REXLIT_ONLINE=1)"),
 ):
     """Generate highlight plan for legal review."""
     container = bootstrap.create_container()
     service = container.get_highlight_service()
+    settings = container.get_settings()
+
+    safe_input = validate_input_root(input_path, settings.allowed_input_roots)
+    safe_output = validate_output_root(output, settings.allowed_output_roots)
+
+    if force_llm and not (online and settings.online_enabled()):
+        raise UsageError("Online adapters require --online and REXLIT_ONLINE=1")
 
     concept_list = concepts.split(",") if concepts else None
 
     plan = service.plan(
-        input_path=input_path,
-        output_plan_path=output,
+        input_path=safe_input,
+        output_plan_path=safe_output,
         concepts=concept_list,
         threshold=threshold,
+        local_model_path=local_model_path,
+        online=online,
     )
 
     typer.echo(f"Generated highlight plan: {plan.plan_id}")
@@ -537,30 +551,22 @@ interface HighlightData {
   color_legend: Record<string, string>
 }
 
+const highlightCache = loadHighlightCache(HIGHLIGHTS_PLAN_PATH) // precomputed export per document hash
+
 // GET /api/highlights/:hash
 app.get('/api/highlights/:hash', async ({ params }) => {
   const { hash } = params
-
-  // Shell out to CLI: rexlit highlight export <plan> --format json --hash <hash>
-  const result = execSync(
-    `${REXLIT_BIN} highlight export ${HIGHLIGHTS_PLAN_PATH} --format json --hash ${hash}`,
-    { encoding: 'utf-8' }
-  )
-
-  return Response.json(JSON.parse(result))
+  const payload = highlightCache.get(hash)
+  if (!payload) return new Response('Not found', { status: 404 })
+  return Response.json(payload)
 })
 
 // GET /api/highlights/:hash/heatmap
 app.get('/api/highlights/:hash/heatmap', async ({ params }) => {
   const { hash } = params
-
-  // Shell out to CLI: rexlit highlight export <plan> --format heatmap --hash <hash>
-  const result = execSync(
-    `${REXLIT_BIN} highlight export ${HIGHLIGHTS_PLAN_PATH} --format heatmap --hash ${hash}`,
-    { encoding: 'utf-8' }
-  )
-
-  return Response.json(JSON.parse(result))
+  const payload = highlightCache.getHeatmap(hash)
+  if (!payload) return new Response('Not found', { status: 404 })
+  return Response.json(payload)
 })
 ```
 
@@ -720,10 +726,11 @@ export function DocumentViewer({ document, getDocumentUrl }: DocumentViewerProps
 
 - [ ] Define `ConceptPort` protocol (`rexlit/app/ports/concept.py`)
 - [ ] Define `ConceptFinding` model
-- [ ] Create highlight plan schema v1 (JSON Schema + JSONL format)
+- [ ] Create highlight plan schema v1 (JSON Schema + JSONL format; spans + hashes only)
 - [ ] Add `compute_highlight_plan_id()` to `rexlit/utils/plans.py`
 - [ ] Add `write_highlight_plan_entry()` / `load_highlight_plan_entry()`
-- [ ] Write unit tests for schema validation
+- [ ] Write unit tests for schema validation (hash-only highlights, no text leakage)
+- [ ] Write unit tests for path validation guards (input/output roots)
 
 **Deliverable:** Port interfaces and schema ready for adapter implementation
 
@@ -759,20 +766,20 @@ export function DocumentViewer({ document, getDocumentUrl }: DocumentViewerProps
 
 **Deliverable:** CLI can generate highlight plans from documents
 
-### Phase 4: LLM-Powered Detection (Week 5)
+### Phase 4: Local LLM Detection (Week 5)
 
-**Goal:** Safeguard integration for complex concepts
+**Goal:** Optional offline LLM integration for complex concepts on workstation hardware (LM Studio adapters available)
 
-- [ ] Implement `SafeguardConceptAdapter` (reuse `PrivilegeReasoningPort`)
+- [ ] Wire `LocalLLMConceptAdapter` to LM Studio adapter(s) already present (reuse `PrivilegeReasoningPort` policies)
 - [ ] Create concept detection policy templates:
   - `concept_detection_stage1.txt` (email/communication)
   - `concept_detection_stage2.txt` (legal advice)
   - `concept_detection_stage3.txt` (hotdoc indicators)
-- [ ] Add escalation logic (pattern → LLM for uncertain cases)
-- [ ] Privacy-preserving audit logs (hash reasoning chains)
+- [ ] Add escalation logic (pattern → local LLM for uncertain cases)
+- [ ] Privacy-preserving audit logs (hash reasoning chains; no snippets)
 - [ ] Write LLM integration tests (mocked responses)
 
-**Deliverable:** LLM-powered concept detection with confidence scoring
+**Deliverable:** Offline LLM concept detection with confidence scoring
 
 ### Phase 5: Web UI - Heatmap & Highlights (Week 6-7)
 
@@ -833,9 +840,9 @@ def test_pattern_adapter_detects_email_headers():
     assert findings[0].concept == "EMAIL_COMMUNICATION"
     assert findings[0].confidence >= 0.85
 
-def test_safeguard_adapter_detects_legal_advice():
-    """Safeguard adapter identifies legal advice language."""
-    adapter = SafeguardConceptAdapter(api_key="test")
+def test_local_llm_adapter_detects_legal_advice():
+    """Local LLM adapter identifies legal advice language."""
+    adapter = LocalLLMConceptAdapter(model_path="/models/llm-20b")
     text = "Our counsel advises that the patent infringement claim lacks merit."
 
     findings = adapter.analyze_text(text, concepts=["LEGAL_ADVICE"])
@@ -861,6 +868,23 @@ def test_highlight_plan_hash_verification():
 
     # Validation should fail
     assert service.validate_plan(plan_path) is False
+```
+
+**Path Validation** (`tests/test_highlight_paths.py`):
+```python
+def test_plan_rejects_input_outside_allowed_root(tmp_path):
+    settings = Settings(allowed_input_roots=[tmp_path])
+    outside = Path("/etc/hosts")
+    with pytest.raises(UsageError):
+        validate_input_root(outside, settings.allowed_input_roots)
+```
+
+**Hash-Only Plan Schema** (`tests/test_highlight_schema.py`):
+```python
+def test_plan_entry_contains_no_text_fields(sample_plan_entry):
+    assert "text" not in sample_plan_entry["highlights"][0]
+    assert "reasoning_summary" not in sample_plan_entry["highlights"][0]
+    assert "snippet_hash" in sample_plan_entry["highlights"][0]
 ```
 
 ### Integration Tests
@@ -916,19 +940,19 @@ test('heatmap scroll bar navigates to pages', async ({ page }) => {
 
 ### Audit Logging
 
-All highlight operations are logged to the audit trail:
+All highlight operations are logged to the audit trail (no raw text persisted):
 
 ```json
 {
   "operation": "highlight_plan_create",
-  "inputs": ["/data/discovery/email_chain.pdf"],
-  "outputs": ["/data/highlights/plan_abc123.jsonl"],
+  "inputs": ["manifest:email_chain_2024"],
+  "outputs": ["plan:plan_abc123.jsonl"],
   "args": {
     "plan_id": "highlight_abc123...",
     "document_sha256": "a1b2c3d4e5f6...",
     "concept_types": ["EMAIL_COMMUNICATION", "LEGAL_ADVICE"],
     "highlight_count": 15,
-    "detector": "SafeguardConceptAdapter",
+    "detector": "PatternConceptAdapter",
     "reasoning_hashes": ["sha256_1...", "sha256_2..."]
   },
   "timestamp": "2025-11-19T14:30:00Z"
@@ -937,10 +961,11 @@ All highlight operations are logged to the audit trail:
 
 ### Privacy Guarantees
 
-1. **No Document Text in Logs:** Only reasoning hashes and summaries logged
+1. **No Document Text in Plans/Logs:** Plans store offsets, hashes and colors only; snippets stay in authorized text stores or reconstructed at render time
 2. **Encrypted Plans:** Highlight plans encrypted at rest (same as redaction plans)
 3. **Hash Verification:** Prevents tampering with highlight coordinates
-4. **Offline-First:** Pattern detection works without network access
+4. **Offline-First:** Pattern detection works without network access; online adapters require explicit `--online` opt-in
+5. **Path Validation:** All inputs/outputs resolved and validated against allowed roots before access
 
 ### Path Traversal Defense
 
