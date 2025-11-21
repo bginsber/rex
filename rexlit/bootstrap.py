@@ -24,6 +24,7 @@ from rexlit.app.adapters import (
     Kanon2Adapter,
     LocalLLMConceptAdapter,
     NullConceptAdapter,
+    PatternConceptAdapter,
     PDFStamperAdapter,
     PrivilegePatternsAdapter,
     SequentialBatesPlanner,
