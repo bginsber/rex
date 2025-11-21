@@ -35,9 +35,12 @@ __all__ = [
     "AttorneyList",
     "PrivilegeLogMetadata",
     "PrivilegeLogPort",
+    "ConceptFinding",
+    "ConceptPort",
 ]
 
 from rexlit.app.ports.bates import BatesAssignment, BatesPlan, BatesPlannerPort
+from rexlit.app.ports.concept import ConceptFinding, ConceptPort
 from rexlit.app.ports.dedupe import DeduperPort
 from rexlit.app.ports.discovery import DiscoveryPort, DocumentRecord
 from rexlit.app.ports.embedding import EmbeddingPort, EmbeddingResult

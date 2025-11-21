@@ -104,6 +104,11 @@ class Settings(BaseSettings):
         description="Location of the key used to encrypt redaction plans",
     )
 
+    highlight_plan_key_path: Path | None = Field(
+        default=None,
+        description="Location of the key used to encrypt highlight plans",
+    )
+
     audit_hmac_key_path: Path | None = Field(
         default=None,
         description="Location of the audit ledger HMAC key for tamper detection",
@@ -262,6 +267,15 @@ class Settings(BaseSettings):
             self.redaction_plan_key_path
             if self.redaction_plan_key_path is not None
             else self.get_config_dir() / "redaction-plans.key"
+        )
+        return load_or_create_fernet_key(key_path)
+
+    def get_highlight_plan_key(self) -> bytes:
+        """Return the Fernet key used to encrypt highlight plans."""
+        key_path = (
+            self.highlight_plan_key_path
+            if self.highlight_plan_key_path is not None
+            else self.get_config_dir() / "highlight-plans.key"
         )
         return load_or_create_fernet_key(key_path)
 

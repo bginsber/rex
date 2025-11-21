@@ -132,6 +132,151 @@ def validate_redaction_plan_entry(
     return plan_id
 
 
+def compute_highlight_plan_id(
+    *,
+    document_hash: str,
+    highlights: Iterable[Mapping[str, Any]] | None = None,
+    annotations: Mapping[str, Any] | None = None,
+) -> str:
+    """Compute deterministic identifier for a highlight plan."""
+
+    components: list[str] = [document_hash]
+
+    normalized_highlights = _normalize_actions(highlights)
+    if normalized_highlights:
+        components.append(
+            json.dumps(
+                normalized_highlights,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+        )
+
+    normalized_annotations = _normalize_annotations(annotations)
+    if normalized_annotations:
+        components.append(
+            json.dumps(
+                normalized_annotations,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+        )
+
+    return compute_input_hash(components)
+
+
+def validate_highlight_plan_entry(
+    entry: Mapping[str, Any],
+    *,
+    document_hash: str,
+) -> str:
+    """Validate a highlight plan entry against expected provenance."""
+
+    entry_hash = entry.get("document_hash")
+    if entry_hash != document_hash:
+        raise ValueError(
+            "Highlight plan hash mismatch detected. "
+            f"Expected {document_hash}, found {entry_hash}."
+        )
+
+    plan_id = entry.get("plan_id")
+    if not isinstance(plan_id, str) or len(plan_id) != 64:
+        raise ValueError("Highlight plan missing deterministic plan_id.")
+
+    highlights = entry.get("highlights")
+    annotations = entry.get("annotations")
+
+    normalized_highlights = _normalize_actions(
+        highlights if isinstance(highlights, Iterable) else None
+    )
+    normalized_annotations = _normalize_annotations(
+        annotations if isinstance(annotations, Mapping) else None
+    )
+    expected_plan_id = compute_highlight_plan_id(
+        document_hash=document_hash,
+        highlights=normalized_highlights or None,
+        annotations=normalized_annotations or None,
+    )
+
+    if plan_id != expected_plan_id:
+        raise ValueError(
+            f"Highlight plan_id mismatch. Expected {expected_plan_id}, found {plan_id}."
+        )
+
+    return plan_id
+
+
+def validate_highlight_plan_file(
+    plan_path: Path,
+    *,
+    document_hash: str,
+    key: bytes | None = None,
+) -> str:
+    """Validate highlight plan file on disk and return its deterministic plan_id."""
+
+    entry = load_highlight_plan_entry(plan_path, key=key)
+
+    return validate_highlight_plan_entry(
+        entry,
+        document_hash=document_hash,
+    )
+
+
+def load_highlight_plan_entry(plan_path: Path, *, key: bytes | None = None) -> dict[str, Any]:
+    """Load (and decrypt) the single highlight entry stored in ``plan_path``."""
+
+    path = Path(plan_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Highlight plan not found at {path}.")
+
+    entries = _read_plan_entries(path, key)
+
+    if not entries:
+        raise ValueError(f"Highlight plan at {path} is empty.")
+
+    if len(entries) > 1:
+        raise ValueError(
+            f"Highlight plan at {path} contains multiple entries; expected a single record."
+        )
+
+    return entries[0]
+
+
+def write_highlight_plan_entry(
+    path: Path,
+    entry: Mapping[str, Any],
+    *,
+    key: bytes,
+) -> None:
+    """Write ``entry`` to ``path`` as an encrypted JSONL record."""
+    stamped_entry = stamp_metadata(
+        dict(entry),
+        schema_id="highlight_plan",
+        schema_version=1,
+    )
+
+    payload = json.dumps(
+        stamped_entry,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    token = encrypt_blob(payload, key=key).decode("utf-8")
+
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(token)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+    try:
+        os.chmod(path, 0o600)
+    except PermissionError:
+        pass
+
+
 def validate_redaction_plan_file(
     plan_path: Path,
     *,
