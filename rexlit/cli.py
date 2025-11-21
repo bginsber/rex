@@ -19,6 +19,7 @@ from rexlit.config import get_settings, set_settings
 from rexlit.utils.methods import sanitize_argv
 from rexlit.utils.offline import OfflineModeGate
 from rexlit.index.search import search_by_hash
+from rexlit.utils.paths import validate_input_root, validate_output_root
 
 if TYPE_CHECKING:
     from rexlit.app.ports import OCRPort
@@ -31,6 +32,8 @@ app = typer.Typer(
     add_completion=True,
     no_args_is_help=True,
 )
+highlight_app = typer.Typer(help="Highlight planning and validation")
+app.add_typer(highlight_app, name="highlight")
 
 
 def version_callback(value: bool) -> None:
@@ -139,6 +142,134 @@ def _collect_pdf_documents(container, source: Path) -> list:
         if extension == ".pdf":
             records.append(record)
     return records
+
+
+@highlight_app.command("plan")
+def highlight_plan(
+    input_path: Annotated[
+        Path,
+        typer.Argument(help="Document to analyze for highlights", exists=True, resolve_path=True),
+    ],
+    output_plan: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Destination for encrypted highlight plan (defaults to <file>.highlight-plan.enc)",
+        ),
+    ] = None,
+    concepts: Annotated[
+        str | None,
+        typer.Option(
+            "--concepts",
+            help="Comma-separated list of concept types to detect",
+        ),
+    ] = None,
+    threshold: Annotated[
+        float,
+        typer.Option(
+            "--threshold",
+            help="Confidence threshold for concept detection",
+        ),
+    ] = 0.5,
+) -> None:
+    """Generate a highlight plan for the provided document."""
+
+    container = bootstrap_application()
+    service = container.highlight_service
+    gate = container.offline_gate
+
+    if service.concept.requires_online():
+        require_online(gate, "Highlight concept detection")
+
+    resolved_input = input_path.expanduser()
+    resolved_output = (
+        output_plan.expanduser()
+        if output_plan is not None
+        else Path.cwd() / f"{resolved_input.stem}.highlight-plan.enc"
+    )
+
+    safe_input = validate_input_root(resolved_input, [Path.cwd()])
+    safe_output = validate_output_root(resolved_output, [Path.cwd()])
+
+    concept_list = [entry.strip() for entry in concepts.split(",")] if concepts else None
+
+    plan = service.plan(
+        safe_input,
+        safe_output,
+        concepts=concept_list,
+        threshold=threshold,
+        allowed_input_roots=[Path.cwd()],
+        allowed_output_roots=[Path.cwd()],
+    )
+
+    typer.secho(f"✅ Highlight plan created: {safe_output}", fg=typer.colors.GREEN)
+    typer.echo(f"   Plan ID: {plan.plan_id}")
+    typer.echo(f"   Highlights: {len(plan.highlights)}")
+
+
+@highlight_app.command("validate")
+def highlight_validate(
+    plan_path: Annotated[
+        Path,
+        typer.Argument(help="Encrypted highlight plan", exists=True, resolve_path=True),
+    ],
+    document_path: Annotated[
+        Path,
+        typer.Argument(help="Document to validate against", exists=True, resolve_path=True),
+    ],
+) -> None:
+    """Validate a highlight plan against a document hash."""
+
+    container = bootstrap_application()
+    service = container.highlight_service
+    gate = container.offline_gate
+
+    safe_document = validate_input_root(document_path.expanduser(), [Path.cwd()])
+    if service.concept.requires_online():
+        require_online(gate, "Highlight concept detection")
+    plan_valid = service.validate_plan(
+        plan_path.expanduser(),
+        safe_document,
+        allowed_input_roots=[Path.cwd()],
+    )
+
+    if plan_valid:
+        typer.secho("✅ Highlight plan is valid for the provided document.", fg=typer.colors.GREEN)
+    else:
+        typer.secho("❌ Highlight plan validation failed.", fg=typer.colors.RED)
+
+
+@highlight_app.command("export")
+def highlight_export(
+    plan_path: Annotated[
+        Path,
+        typer.Argument(help="Encrypted highlight plan", exists=True, resolve_path=True),
+    ],
+    output: Annotated[
+        Path,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Destination for exported highlights JSON",
+        ),
+    ],
+    format: Annotated[
+        Literal["json", "heatmap"],
+        typer.Option(
+            "--format",
+            "-f",
+            help="Export format (json for UI payload, heatmap for scroll bar)",
+        ),
+    ] = "json",
+) -> None:
+    """Export highlight plan to UI-friendly JSON."""
+
+    container = bootstrap_application()
+    service = container.highlight_service
+
+    exported = service.export(plan_path.expanduser(), output.expanduser(), format=format)
+    typer.secho(f"✅ Exported highlights to {exported}", fg=typer.colors.GREEN)
 
 
 @app.callback()

@@ -63,3 +63,10 @@ export type {
   PolicyStageLabels,
   AlertType
 } from './ui'
+
+// Highlight types
+export type {
+  Highlight,
+  HeatmapEntry,
+  HighlightData
+} from './highlight'

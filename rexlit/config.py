@@ -104,6 +104,31 @@ class Settings(BaseSettings):
         description="Location of the key used to encrypt redaction plans",
     )
 
+    highlight_plan_key_path: Path | None = Field(
+        default=None,
+        description="Location of the key used to encrypt highlight plans",
+    )
+
+    highlight_lmstudio_api_base: str | None = Field(
+        default=None,
+        description="LM Studio/OpenAI-compatible API base for local concept detection",
+    )
+
+    highlight_lmstudio_api_key: str | None = Field(
+        default=None,
+        description="API key for local LM Studio concept detection (optional)",
+    )
+
+    highlight_lmstudio_model: str | None = Field(
+        default=None,
+        description="Model name to use for LM Studio concept detection",
+    )
+
+    highlight_layout_dir: Path | None = Field(
+        default=None,
+        description="Directory containing OCR layout sidecars for highlight box mapping",
+    )
+
     audit_hmac_key_path: Path | None = Field(
         default=None,
         description="Location of the audit ledger HMAC key for tamper detection",
@@ -262,6 +287,15 @@ class Settings(BaseSettings):
             self.redaction_plan_key_path
             if self.redaction_plan_key_path is not None
             else self.get_config_dir() / "redaction-plans.key"
+        )
+        return load_or_create_fernet_key(key_path)
+
+    def get_highlight_plan_key(self) -> bytes:
+        """Return the Fernet key used to encrypt highlight plans."""
+        key_path = (
+            self.highlight_plan_key_path
+            if self.highlight_plan_key_path is not None
+            else self.get_config_dir() / "highlight-plans.key"
         )
         return load_or_create_fernet_key(key_path)
 

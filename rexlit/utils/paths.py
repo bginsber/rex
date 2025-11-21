@@ -1,31 +1,20 @@
 """Path utilities for directory and file operations."""
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
+from typing import Iterable
 
 
 def ensure_dir(path: Path) -> Path:
-    """Ensure directory exists, creating if necessary.
-
-    Args:
-        path: Directory path to ensure
-
-    Returns:
-        The created/verified directory path
-    """
+    """Ensure directory exists, creating if necessary."""
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def get_data_dir(app_name: str = "rexlit") -> Path:
-    """Get XDG data directory for application.
-
-    Args:
-        app_name: Application name for subdirectory
-
-    Returns:
-        Path to data directory
-    """
+    """Get XDG data directory for application."""
     xdg_data = os.getenv("XDG_DATA_HOME")
     if xdg_data:
         base = Path(xdg_data)
@@ -37,14 +26,7 @@ def get_data_dir(app_name: str = "rexlit") -> Path:
 
 
 def get_config_dir(app_name: str = "rexlit") -> Path:
-    """Get XDG config directory for application.
-
-    Args:
-        app_name: Application name for subdirectory
-
-    Returns:
-        Path to config directory
-    """
+    """Get XDG config directory for application."""
     xdg_config = os.getenv("XDG_CONFIG_HOME")
     if xdg_config:
         base = Path(xdg_config)
@@ -61,23 +43,7 @@ def find_files(
     recursive: bool = True,
     follow_symlinks: bool = False,
 ) -> list[Path]:
-    """Find files matching pattern in directory.
-
-    SECURITY: By default, symlinks are not followed to prevent path traversal attacks.
-    When follow_symlinks=True, symlinks are resolved but should still be validated
-    against security boundaries by the caller.
-
-    Args:
-        root: Root directory to search
-        pattern: Glob pattern to match (default: all files)
-        recursive: Search recursively (default: True)
-        follow_symlinks: Follow symbolic links (default: False).
-                        WARNING: Only enable if paths will be validated against
-                        security boundaries by the caller.
-
-    Returns:
-        List of matching file paths
-    """
+    """Find files matching pattern in directory."""
     if not root.is_dir():
         return []
 
@@ -88,12 +54,9 @@ def find_files(
 
     files = []
     for path in matches:
-        # SECURITY: Skip symlinks unless explicitly following
-        # This prevents traversal via malicious symlinks
         if path.is_symlink() and not follow_symlinks:
             continue
 
-        # Only include actual files (not directories or other special files)
         if path.is_file():
             files.append(path)
 
@@ -101,20 +64,48 @@ def find_files(
 
 
 def get_relative_path(path: Path, base: Path | None = None) -> Path:
-    """Get relative path from base directory.
-
-    Args:
-        path: Absolute or relative path
-        base: Base directory (defaults to current directory)
-
-    Returns:
-        Relative path
-    """
+    """Get relative path from base directory."""
     if base is None:
         base = Path.cwd()
 
     try:
         return path.relative_to(base)
     except ValueError:
-        # Path is not relative to base
         return path
+
+
+def _resolve_allowed_roots(allowed_roots: Iterable[Path] | None) -> list[Path]:
+    """Resolve allowed roots to absolute paths."""
+    if not allowed_roots:
+        return []
+    return [root.resolve() for root in allowed_roots]
+
+
+def validate_input_root(path: Path, allowed_roots: Iterable[Path] | None) -> Path:
+    """Resolve ``path`` and ensure it resides within one of ``allowed_roots``."""
+
+    resolved_path = Path(path).resolve()
+    roots = _resolve_allowed_roots(allowed_roots)
+    if not roots:
+        return resolved_path
+
+    for root in roots:
+        if resolved_path.is_relative_to(root):
+            return resolved_path
+
+    raise ValueError(f"Input path {resolved_path} is outside allowed roots: {roots}")
+
+
+def validate_output_root(path: Path, allowed_roots: Iterable[Path] | None) -> Path:
+    """Resolve ``path`` and ensure it resides within one of ``allowed_roots``."""
+
+    resolved_path = Path(path).resolve()
+    roots = _resolve_allowed_roots(allowed_roots)
+    if not roots:
+        return resolved_path
+
+    for root in roots:
+        if resolved_path.is_relative_to(root):
+            return resolved_path
+
+    raise ValueError(f"Output path {resolved_path} is outside allowed roots: {roots}")

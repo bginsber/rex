@@ -5,7 +5,9 @@ import type {
   PrivilegeRequestPayload,
   PrivilegePolicyMetadata,
   PrivilegePolicyDetail,
-  PrivilegePolicyValidation
+  PrivilegePolicyValidation,
+  HighlightData,
+  HeatmapEntry
 } from '@/types'
 
 const API_ROOT = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api'
@@ -116,5 +118,15 @@ export const rexlitApi = {
       method: 'POST'
     })
     return handleResponse<PrivilegePolicyValidation>(response)
+  },
+
+  async getHighlights(hash: string): Promise<HighlightData> {
+    const response = await fetch(`${API_ROOT}/highlights/${hash}`)
+    return handleResponse<HighlightData>(response)
+  },
+
+  async getHeatmap(hash: string): Promise<HeatmapEntry[]> {
+    const response = await fetch(`${API_ROOT}/highlights/${hash}/heatmap`)
+    return handleResponse<HeatmapEntry[]>(response)
   }
 }

@@ -1,4 +1,10 @@
 import type { SearchResult } from '@/types'
+import type { HighlightData } from '@/types'
+import { useEffect, useState } from 'react'
+import { rexlitApi } from '@/api/rexlit'
+import { HighlightOverlay } from './HighlightOverlay'
+import { HeatmapBar } from './HeatmapBar'
+import { HighlightLegend } from './HighlightLegend'
 import styles from './DocumentViewer.module.css'
 
 export interface DocumentViewerProps {
@@ -7,6 +13,24 @@ export interface DocumentViewerProps {
 }
 
 export function DocumentViewer({ document, getDocumentUrl }: DocumentViewerProps) {
+  const [highlights, setHighlights] = useState<HighlightData | null>(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [loadingHighlights, setLoadingHighlights] = useState(false)
+
+  useEffect(() => {
+    if (document?.sha256) {
+      setLoadingHighlights(true)
+      rexlitApi
+        .getHighlights(document.sha256)
+        .then(setHighlights)
+        .catch(() => setHighlights(null))
+        .finally(() => setLoadingHighlights(false))
+    } else {
+      setHighlights(null)
+      setCurrentPage(1)
+    }
+  }, [document?.sha256])
+
   if (!document) {
     return (
       <div className={styles.viewer}>
@@ -48,52 +72,58 @@ export function DocumentViewer({ document, getDocumentUrl }: DocumentViewerProps
 
       {/* Document Content */}
       <div className={styles.content}>
-        <iframe
-          src={getDocumentUrl(document.sha256)}
-          title={`Document: ${document.path}`}
-          className={styles.iframe}
-          sandbox="allow-same-origin allow-scripts"
-          onLoad={(e) => {
-            // Detect if iframe loaded JSON error instead of HTML document
-            const iframe = e.currentTarget
-            try {
-              const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document
-              if (iframeDoc) {
-                const text = iframeDoc.body?.textContent || ''
-                // Check if response looks like JSON error
-                if (text.trim().startsWith('{') && text.includes('"error"')) {
-                  try {
-                    const errorData = JSON.parse(text)
-                    if (errorData.error) {
-                      // Replace iframe content with friendly error message
-                      iframeDoc.body.innerHTML = `
-                        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 2rem; max-width: 600px; margin: 0 auto;">
-                          <div style="background: rgba(255, 107, 107, 0.1); border: 1px solid rgba(255, 107, 107, 0.3); border-radius: 8px; padding: 1.5rem;">
-                            <h3 style="margin: 0 0 1rem 0; color: #ff6b6b; font-size: 1.1rem;">⚠️ Document Not Available</h3>
-                            <p style="margin: 0 0 1rem 0; color: #e6edf3; line-height: 1.6;">${errorData.error}</p>
-                            <details style="margin-top: 1rem; padding: 1rem; background: rgba(0, 0, 0, 0.3); border-radius: 4px; cursor: pointer;">
-                              <summary style="font-weight: 600; color: #e8b76a; user-select: none;">Common causes and fixes</summary>
-                              <ul style="margin: 1rem 0 0 1.5rem; padding: 0; color: #9ca3af; line-height: 1.8;">
-                                <li><strong>Index mismatch:</strong> The search results and document storage are in different REXLIT_HOME locations. Check that the API server's REXLIT_HOME matches where documents were indexed.</li>
-                                <li><strong>Stale index:</strong> The document may have been removed after indexing. Try rebuilding the index with <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; color: #e8b76a;">rexlit index build</code></li>
-                                <li><strong>Document moved/deleted:</strong> The file may no longer exist at the expected path.</li>
-                              </ul>
-                            </details>
+        {highlights?.heatmap?.length ? (
+          <HeatmapBar heatmap={highlights.heatmap} currentPage={currentPage} onSelectPage={setCurrentPage} />
+        ) : null}
+
+        <div className={styles.documentPane}>
+          <iframe
+            src={getDocumentUrl(document.sha256)}
+            title={`Document: ${document.path}`}
+            className={styles.iframe}
+            sandbox="allow-same-origin allow-scripts"
+            onLoad={(e) => {
+              // Detect if iframe loaded JSON error instead of HTML document
+              const iframe = e.currentTarget
+              setCurrentPage(1)
+              try {
+                const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document
+                if (iframeDoc) {
+                  const text = iframeDoc.body?.textContent || ''
+                  if (text.trim().startsWith('{') && text.includes('"error"')) {
+                    try {
+                      const errorData = JSON.parse(text)
+                      if (errorData.error) {
+                        iframeDoc.body.innerHTML = `
+                          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 2rem; max-width: 600px; margin: 0 auto;">
+                            <div style="background: rgba(255, 107, 107, 0.1); border: 1px solid rgba(255, 107, 107, 0.3); border-radius: 8px; padding: 1.5rem;">
+                              <h3 style="margin: 0 0 1rem 0; color: #ff6b6b; font-size: 1.1rem;">⚠️ Document Not Available</h3>
+                              <p style="margin: 0 0 1rem 0; color: #e6edf3; line-height: 1.6;">${errorData.error}</p>
+                            </div>
                           </div>
-                        </div>
-                      `
+                        `
+                      }
+                    } catch {
+                      // Not JSON, ignore
                     }
-                  } catch {
-                    // Not JSON, ignore
                   }
                 }
+              } catch {
+                // Cross-origin or other access issue, ignore
               }
-            } catch {
-              // Cross-origin or other access issue, ignore
-            }
-          }}
-        />
+            }}
+          />
+          {highlights && (
+            <HighlightOverlay
+              highlights={highlights.highlights}
+              currentPage={currentPage}
+            />
+          )}
+        </div>
       </div>
+
+      {highlights?.color_legend ? <HighlightLegend legend={highlights.color_legend} /> : null}
+      {loadingHighlights && <div className={styles.loading}>Loading highlights…</div>}
     </div>
   )
 }
