@@ -2,7 +2,7 @@ import { Elysia } from 'elysia'
 import { cors } from '@elysiajs/cors'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync, realpathSync, readFileSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
@@ -72,6 +72,8 @@ export const REXLIT_HOME = resolve(
   Bun.env.REXLIT_HOME ?? join(homedir(), '.local', 'share', 'rexlit')
 )
 const REXLIT_HOME_REALPATH = resolveRealPathAllowMissing(REXLIT_HOME)
+const HIGHLIGHTS_PLAN_PATH = Bun.env.HIGHLIGHTS_PLAN_PATH ?? join(REXLIT_HOME, 'highlights', 'highlights.enc')
+const HIGHLIGHTS_CACHE_DIR = Bun.env.HIGHLIGHTS_CACHE_DIR ?? join(REXLIT_HOME, 'highlights', 'cache')
 
 // CLI health status (set during startup check)
 export let cliHealthy = false
@@ -103,6 +105,82 @@ export interface PatternMatch {
   confidence?: number
   snippet?: string | null
   stage?: string | null
+}
+
+export interface HighlightData {
+  document_hash: string
+  highlights: Array<{
+    concept: string
+    category: string
+    confidence: number
+    start: number
+    end: number
+    page: number
+    color: string
+    shade_intensity: number
+  }>
+  heatmap: Array<{
+    page: number
+    temperature: number
+    highlight_count: number
+  }>
+  color_legend: Record<string, string>
+}
+
+async function runRexlitHighlights(args: string[], options: RunOptions = {}): Promise<string> {
+  const proc = Bun.spawn([REXLIT_BIN, 'highlight', ...args], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: {
+      ...Bun.env,
+      REXLIT_HOME
+    }
+  })
+
+  let timedOut = false
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+
+  if (options.timeoutMs && options.timeoutMs > 0) {
+    timeoutHandle = setTimeout(() => {
+      timedOut = true
+      proc.kill()
+    }, options.timeoutMs)
+  }
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited
+  ])
+
+  if (timeoutHandle) clearTimeout(timeoutHandle)
+
+  if (timedOut) {
+    throw new Error('Highlight export timed out')
+  }
+  if (exitCode !== 0) {
+    throw new Error(stderr || 'Highlight export failed')
+  }
+  return stdout
+}
+
+async function getCachedHighlight(hash: string, format: 'json' | 'heatmap'): Promise<HighlightData | unknown> {
+  const cachePath = join(HIGHLIGHTS_CACHE_DIR, `${hash}.${format}.json`)
+  if (existsSync(cachePath)) {
+    return JSON.parse(readFileSync(cachePath, { encoding: 'utf-8' }))
+  }
+
+  await mkdir(HIGHLIGHTS_CACHE_DIR, { recursive: true })
+  await runRexlitHighlights([
+    'export',
+    HIGHLIGHTS_PLAN_PATH,
+    '--format',
+    format,
+    '--output',
+    cachePath
+  ])
+
+  return JSON.parse(readFileSync(cachePath, { encoding: 'utf-8' }))
 }
 
 export const ALLOWED_REASONING_EFFORTS: ReadonlySet<ReasoningEffort> = new Set([
@@ -544,6 +622,26 @@ export function createApp() {
   return new Elysia()
     .use(cors())
     .get('/api/health', () => ({ status: 'ok' }))
+    .get('/api/highlights/:hash', async ({ params }) => {
+      const { hash } = params
+      try {
+        const data = await getCachedHighlight(hash, 'json')
+        return data as HighlightData
+      } catch (error) {
+        console.error('Highlight export failed', error)
+        return jsonError('Highlight export failed', 500)
+      }
+    })
+    .get('/api/highlights/:hash/heatmap', async ({ params }) => {
+      const { hash } = params
+      try {
+        const data = await getCachedHighlight(hash, 'heatmap')
+        return data
+      } catch (error) {
+        console.error('Highlight heatmap export failed', error)
+        return jsonError('Highlight heatmap export failed', 500)
+      }
+    })
     .get('/api/cli-status', () => {
       return {
         healthy: cliHealthy,
