@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -82,7 +83,11 @@ class LocalLLMConceptAdapter(ConceptPort):
                 messages=[
                     {
                         "role": "system",
-                        "content": "Detect legal concepts in the user text. Return JSON lines with concept, category, confidence (0-1), start, end.",
+                        "content": (
+                            "Detect legal concepts in the user text. "
+                            "Return one JSON object per line with fields: "
+                            "concept, category, confidence (0-1), start, end."
+                        ),
                     },
                     {
                         "role": "user",
@@ -93,19 +98,51 @@ class LocalLLMConceptAdapter(ConceptPort):
                 max_tokens=400,
             )
             content = response.choices[0].message.content or ""
-            # Very lightweight parser: expect one span per line: concept|category|confidence|start|end
-            findings: list[ConceptFinding] = []
-            for line in content.splitlines():
+
+            def _parse_line(line: str) -> tuple[str, str, float, int, int] | None:
+                if not line:
+                    return None
+                if line.startswith("{"):
+                    # Primary path: JSONL per system prompt
+                    try:
+                        payload = json.loads(line)
+                    except json.JSONDecodeError:
+                        return None
+                    if not isinstance(payload, dict):
+                        return None
+                    concept = str(payload.get("concept", "")).strip()
+                    category = str(payload.get("category", "")).strip()
+                    try:
+                        confidence = float(payload.get("confidence"))
+                        start = int(payload.get("start"))
+                        end = int(payload.get("end"))
+                    except (TypeError, ValueError):
+                        return None
+                    if not concept or not category:
+                        return None
+                    return concept, category, confidence, start, end
+
+                # Fallback for legacy pipe-delimited responses
                 parts = [part.strip() for part in line.split("|")]
                 if len(parts) != 5:
-                    continue
+                    return None
                 concept, category, conf_str, start_str, end_str = parts
                 try:
                     confidence = float(conf_str)
                     start = int(start_str)
                     end = int(end_str)
                 except ValueError:
+                    return None
+                if not concept or not category:
+                    return None
+                return concept, category, confidence, start, end
+
+            findings: list[ConceptFinding] = []
+            for line in (entry.strip() for entry in content.splitlines()):
+                parsed = _parse_line(line)
+                if parsed is None:
                     continue
+                concept, category, confidence, start, end = parsed
                 if concepts and concept not in concepts:
                     continue
                 if confidence < threshold:
