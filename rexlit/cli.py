@@ -223,8 +223,11 @@ def highlight_validate(
 
     container = bootstrap_application()
     service = container.highlight_service
+    gate = container.offline_gate
 
     safe_document = validate_input_root(document_path.expanduser(), [Path.cwd()])
+    if service.concept.requires_online():
+        require_online(gate, "Highlight concept detection")
     plan_valid = service.validate_plan(
         plan_path.expanduser(),
         safe_document,
@@ -235,6 +238,38 @@ def highlight_validate(
         typer.secho("✅ Highlight plan is valid for the provided document.", fg=typer.colors.GREEN)
     else:
         typer.secho("❌ Highlight plan validation failed.", fg=typer.colors.RED)
+
+
+@highlight_app.command("export")
+def highlight_export(
+    plan_path: Annotated[
+        Path,
+        typer.Argument(help="Encrypted highlight plan", exists=True, resolve_path=True),
+    ],
+    output: Annotated[
+        Path,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Destination for exported highlights JSON",
+        ),
+    ],
+    format: Annotated[
+        Literal["json", "heatmap"],
+        typer.Option(
+            "--format",
+            "-f",
+            help="Export format (json for UI payload, heatmap for scroll bar)",
+        ),
+    ] = "json",
+) -> None:
+    """Export highlight plan to UI-friendly JSON."""
+
+    container = bootstrap_application()
+    service = container.highlight_service
+
+    exported = service.export(plan_path.expanduser(), output.expanduser(), format=format)
+    typer.secho(f"✅ Exported highlights to {exported}", fg=typer.colors.GREEN)
 
 
 @app.callback()

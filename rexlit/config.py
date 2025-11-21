@@ -109,6 +109,21 @@ class Settings(BaseSettings):
         description="Location of the key used to encrypt highlight plans",
     )
 
+    highlight_lmstudio_api_base: str | None = Field(
+        default=None,
+        description="LM Studio/OpenAI-compatible API base for local concept detection",
+    )
+
+    highlight_lmstudio_api_key: str | None = Field(
+        default=None,
+        description="API key for local LM Studio concept detection (optional)",
+    )
+
+    highlight_lmstudio_model: str | None = Field(
+        default=None,
+        description="Model name to use for LM Studio concept detection",
+    )
+
     audit_hmac_key_path: Path | None = Field(
         default=None,
         description="Location of the audit ledger HMAC key for tamper detection",

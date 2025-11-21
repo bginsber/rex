@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -180,3 +181,61 @@ class HighlightService:
         expected_hash = self.storage.compute_hash(resolved_document)
         validate_highlight_plan_entry(entry, document_hash=expected_hash)
         return True
+
+    def export(
+        self,
+        plan_path: Path,
+        output_path: Path,
+        *,
+        format: str = "json",
+        key: bytes | None = None,
+    ) -> Path:
+        """Export highlight plan to UI-friendly JSON formats."""
+
+        entry = load_highlight_plan_entry(Path(plan_path).resolve(), key=key or self._plan_key)
+        highlights = entry.get("highlights", [])
+
+        if format not in {"json", "heatmap"}:
+            raise ValueError("format must be 'json' or 'heatmap'")
+
+        if format == "heatmap":
+            payload = self._build_heatmap_payload(highlights)
+        else:
+            payload = {
+                "document_hash": entry.get("document_hash"),
+                "highlights": highlights,
+                "heatmap": self._build_heatmap_payload(highlights),
+                "color_legend": entry.get("annotations", {}).get(
+                    "color_palette", DEFAULT_CATEGORY_COLORS
+                ),
+            }
+
+        output_path = Path(output_path).resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return output_path
+
+    @staticmethod
+    def _build_heatmap_payload(highlights: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        pages: dict[int, list[dict[str, Any]]] = {}
+        for h in highlights:
+            page = h.get("page")
+            if page is None:
+                continue
+            pages.setdefault(int(page), []).append(h)
+
+        heatmap: list[dict[str, Any]] = []
+        for page, items in sorted(pages.items(), key=lambda kv: kv[0]):
+            temperatures = [item.get("shade_intensity", 0.0) or 0.0 for item in items]
+            temperature = max(temperatures) if temperatures else 0.0
+            heatmap.append(
+                {
+                    "page": page,
+                    "temperature": temperature,
+                    "highlight_count": len(items),
+                }
+            )
+        return heatmap

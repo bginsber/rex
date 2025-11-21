@@ -22,6 +22,7 @@ from rexlit.app.adapters import (
     IngestDiscoveryAdapter,
     JSONLineRedactionPlanner,
     Kanon2Adapter,
+    LocalLLMConceptAdapter,
     NullConceptAdapter,
     PDFStamperAdapter,
     PrivilegePatternsAdapter,
@@ -425,6 +426,12 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
     # Create privilege adapter (Groq when online, pattern-based otherwise)
     privilege_adapter = _create_privilege_adapter(active_settings)
     concept_adapter: ConceptPort = NullConceptAdapter()
+    if active_settings.highlight_lmstudio_api_base:
+        concept_adapter = LocalLLMConceptAdapter(
+            api_base=active_settings.highlight_lmstudio_api_base,
+            api_key=active_settings.highlight_lmstudio_api_key,
+            model=active_settings.highlight_lmstudio_model,
+        )
 
     highlight_service = HighlightService(
         concept_port=concept_adapter,

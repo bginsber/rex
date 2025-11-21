@@ -10,6 +10,7 @@ from .kanon2 import Kanon2Adapter
 from .pack import ZipPackager
 from .pdf_stamper import PDFStamperAdapter
 from .groq_privilege import GroqPrivilegeAdapter
+from .local_llm_concept_adapter import LocalLLMConceptAdapter
 from .privilege_patterns import PrivilegePatternsAdapter
 from .privilege_safeguard import PrivilegeSafeguardAdapter
 from .redaction import JSONLineRedactionPlanner, PassthroughRedactionApplier
@@ -42,4 +43,5 @@ __all__ = [
     "PrivilegePatternsAdapter",
     "GroqPrivilegeAdapter",
     "NullConceptAdapter",
+    "LocalLLMConceptAdapter",
 ]
