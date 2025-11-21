@@ -17,7 +17,9 @@ export function HighlightOverlay({ highlights, currentPage }: HighlightOverlayPr
           | Array<{ page: number; x0: number; y0: number; x1: number; y1: number }>
           | undefined
         if (boxes && boxes.length) {
-          return boxes.map((box, boxIdx) => (
+          return boxes
+            .filter((box) => box.page === currentPage)
+            .map((box, boxIdx) => (
             <span
               key={`${h.concept}-${idx}-box-${boxIdx}`}
               className={styles.highlight}
