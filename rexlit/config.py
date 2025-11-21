@@ -124,6 +124,11 @@ class Settings(BaseSettings):
         description="Model name to use for LM Studio concept detection",
     )
 
+    highlight_layout_dir: Path | None = Field(
+        default=None,
+        description="Directory containing OCR layout sidecars for highlight box mapping",
+    )
+
     audit_hmac_key_path: Path | None = Field(
         default=None,
         description="Location of the audit ledger HMAC key for tamper detection",

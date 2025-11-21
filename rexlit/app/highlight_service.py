@@ -19,6 +19,7 @@ from rexlit.utils.plans import (
     validate_highlight_plan_entry,
     write_highlight_plan_entry,
 )
+from rexlit.utils.layout import map_highlight_boxes
 
 
 DEFAULT_CATEGORY_COLORS: dict[str, str] = {
@@ -194,17 +195,36 @@ class HighlightService:
 
         entry = load_highlight_plan_entry(Path(plan_path).resolve(), key=key or self._plan_key)
         highlights = entry.get("highlights", [])
+        document_hash = entry.get("document_hash")
+
+        layout_dir = self._settings.highlight_layout_dir
+        if layout_dir is None:
+            layout_dir = self._settings.get_data_dir() / "layouts"
+
+        enriched_highlights: list[dict[str, Any]] = []
+        for h in highlights:
+            boxes = []
+            if document_hash:
+                boxes = map_highlight_boxes(
+                    highlight=h,
+                    document_hash=document_hash,
+                    layout_dir=layout_dir,
+                )
+            enriched = dict(h)
+            if boxes:
+                enriched["boxes"] = boxes
+            enriched_highlights.append(enriched)
 
         if format not in {"json", "heatmap"}:
             raise ValueError("format must be 'json' or 'heatmap'")
 
         if format == "heatmap":
-            payload = self._build_heatmap_payload(highlights)
+            payload = self._build_heatmap_payload(enriched_highlights)
         else:
             payload = {
                 "document_hash": entry.get("document_hash"),
-                "highlights": highlights,
-                "heatmap": self._build_heatmap_payload(highlights),
+                "highlights": enriched_highlights,
+                "heatmap": self._build_heatmap_payload(enriched_highlights),
                 "color_legend": entry.get("annotations", {}).get(
                     "color_palette", DEFAULT_CATEGORY_COLORS
                 ),
