@@ -11,6 +11,7 @@ from .pack import ZipPackager
 from .pdf_stamper import PDFStamperAdapter
 from .groq_privilege import GroqPrivilegeAdapter
 from .local_llm_concept_adapter import LocalLLMConceptAdapter
+from .pattern_concept_adapter import PatternConceptAdapter
 from .privilege_patterns import PrivilegePatternsAdapter
 from .privilege_safeguard import PrivilegeSafeguardAdapter
 from .redaction import JSONLineRedactionPlanner, PassthroughRedactionApplier
@@ -44,4 +45,5 @@ __all__ = [
     "GroqPrivilegeAdapter",
     "NullConceptAdapter",
     "LocalLLMConceptAdapter",
+    "PatternConceptAdapter",
 ]
