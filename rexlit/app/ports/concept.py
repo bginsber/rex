@@ -29,6 +29,7 @@ class ConceptPort(Protocol):
         *,
         concepts: list[str] | None = None,
         threshold: float = 0.5,
+        **kwargs: Any,
     ) -> list[ConceptFinding]:
         """Analyze text for legal concepts."""
         ...
