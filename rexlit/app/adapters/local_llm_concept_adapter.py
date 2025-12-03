@@ -40,7 +40,12 @@ HEURISTIC_RULES: tuple[_HeuristicRule, ...] = (
     _HeuristicRule(
         concept="HOTDOC",
         category="hotdoc",
-        keywords=("violate", "knew this was", "smoking gun"),
+        keywords=("violate", "knew this was", "smoking gun", "destroy", "shred"),
+    ),
+    _HeuristicRule(
+        concept="RESPONSIVE",
+        category="responsive",
+        keywords=("damages", "breach", "liable", "negligent", "settlement"),
     ),
 )
 
