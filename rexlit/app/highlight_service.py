@@ -9,10 +9,13 @@ Implements ADR 0008 hybrid pattern → LLM escalation architecture:
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Iterable
 
 from pydantic import BaseModel
+
+_logger = logging.getLogger(__name__)
 
 from rexlit.app.ports import LedgerPort, StoragePort
 from rexlit.app.ports.concept import ConceptFinding, ConceptPort
@@ -233,12 +236,15 @@ class HighlightService:
                 text = "\n\n".join(page.get_text() for page in doc)
                 doc.close()
                 return text
-            except Exception:
-                pass
+            except ImportError:
+                _logger.debug("fitz not available for PDF extraction")
+            except Exception as e:
+                _logger.warning("PDF text extraction failed for %s: %s", path, e)
         # Fallback to plain text read
         try:
             return path.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
+        except Exception as e:
+            _logger.warning("Text read failed for %s: %s", path, e)
             return ""
 
     def _escalate_uncertain_findings(
@@ -292,8 +298,12 @@ class HighlightService:
             )
             stats["refined"] = len(refined)
             return high_confidence + refined, stats
-        except Exception:
-            # On refinement failure, return original findings
+        except Exception as e:
+            _logger.warning(
+                "LLM refinement failed for %d findings, using pattern results: %s",
+                len(uncertain),
+                e,
+            )
             return findings, stats
 
     def validate_plan(

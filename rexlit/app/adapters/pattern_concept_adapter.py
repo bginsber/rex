@@ -7,11 +7,14 @@ Uncertain (0.50-0.84) → escalate to LLM
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import Iterable
 
 from rexlit.app.ports.concept import ConceptFinding, ConceptPort
+
+_logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -71,11 +74,12 @@ ATTORNEY_DOMAIN_PATTERN = re.compile(
 )
 
 # Quoted/forwarded text markers (reduce confidence - may be context, not substance)
+# NOTE: All patterns use non-greedy [^\n]*? to prevent ReDoS (catastrophic backtracking)
 QUOTED_TEXT_PATTERN = re.compile(
     r"^[>\|]{1,}\s*|"  # Quote markers at line start (> or | followed by content)
-    r"(?:^|\n)[-]{3,}.*(?:forwarded|original).*[-]{3,}|"  # Forwarded headers
-    r"(?:^|\n)on\s+\w.*wrote:\s*$|"  # "On ... wrote:" reply headers
-    r"(?:^|\n)from:.*\nsent:.*\nto:|"  # Outlook-style headers in body
+    r"(?:^|\n)-{3,}[^\n]*?(?:forwarded|original)[^\n]*?-{3,}|"  # Forwarded headers
+    r"(?:^|\n)on\s+[^\n]{1,50}?\s+wrote:\s*$|"  # "On ... wrote:" reply headers (bounded)
+    r"(?:^|\n)from:[^\n]*\nsent:[^\n]*\nto:|"  # Outlook-style headers in body
     r"\[cid:|<image\d+\.",  # Embedded image references
     re.IGNORECASE | re.MULTILINE,
 )
@@ -200,6 +204,9 @@ class PatternConceptAdapter(ConceptPort):
         - Strong legal context: +0.05
         - Multiple concepts in region: +0.05 per additional type
         - Quoted/forwarded text: -0.15
+
+        Performance: Uses O(n log n) sorted index for nearby concept lookup
+        instead of O(n²) nested iteration.
         """
         if not findings:
             return findings
@@ -209,9 +216,12 @@ class PatternConceptAdapter(ConceptPort):
         quoted_matches = list(QUOTED_TEXT_PATTERN.finditer(text))
         legal_context_matches = list(STRONG_LEGAL_CONTEXT_PATTERN.finditer(text))
 
+        # Build sorted index for O(n log n) nearby concept lookup
+        nearby_index = self._build_nearby_index(findings, window=500)
+
         scored_findings: list[ConceptFinding] = []
 
-        for finding in findings:
+        for idx, finding in enumerate(findings):
             factors: dict[str, float] = {"base": finding.confidence}
 
             # Check for attorney domain within 300 chars
@@ -228,8 +238,8 @@ class PatternConceptAdapter(ConceptPort):
             if has_legal_context:
                 factors["legal_context"] = 0.05
 
-            # Check for multiple concept types in region (within 500 chars)
-            nearby_concepts = self._count_nearby_concepts(finding, findings, window=500)
+            # Check for multiple concept types in region (O(1) lookup via index)
+            nearby_concepts = nearby_index.get(idx, 0)
             if nearby_concepts > 0:
                 factors["multi_concept"] = 0.05 * min(nearby_concepts, 3)
 
@@ -268,6 +278,60 @@ class PatternConceptAdapter(ConceptPort):
         return scored_findings
 
     @staticmethod
+    def _build_nearby_index(
+        findings: list[ConceptFinding],
+        window: int,
+    ) -> dict[int, int]:
+        """Build index of nearby concept counts using sorted position index.
+
+        Returns dict mapping finding index → count of distinct nearby concept types.
+
+        Complexity: O(n log n) sort + O(n * k) where k = avg findings in window.
+        For typical legal documents, k << n, making this much faster than O(n²).
+        """
+        import bisect
+
+        if not findings:
+            return {}
+
+        n = len(findings)
+        if n <= 1:
+            return {0: 0} if n == 1 else {}
+
+        # Build sorted index: list of (start_pos, original_index)
+        sorted_by_start = sorted(
+            [(f.start, idx) for idx, f in enumerate(findings)],
+            key=lambda x: x[0],
+        )
+        starts = [x[0] for x in sorted_by_start]
+        indices = [x[1] for x in sorted_by_start]
+
+        result: dict[int, int] = {}
+
+        for idx, f in enumerate(findings):
+            range_start = max(0, f.start - window)
+            range_end = f.end + window
+
+            # Binary search to find range of findings that might overlap
+            left = bisect.bisect_left(starts, range_start - window)
+            right = bisect.bisect_right(starts, range_end)
+
+            # Collect distinct concepts in range (excluding self)
+            nearby_types: set[str] = set()
+            for i in range(left, min(right, n)):
+                other_idx = indices[i]
+                if other_idx == idx:
+                    continue
+                other = findings[other_idx]
+                # Verify overlap (start already in range, check end)
+                if other.end >= range_start:
+                    nearby_types.add(other.concept)
+
+            result[idx] = len(nearby_types)
+
+        return result
+
+    @staticmethod
     def _has_nearby_match(
         start: int,
         end: int,
@@ -279,21 +343,6 @@ class PatternConceptAdapter(ConceptPort):
             if (m.start() <= end + window) and (m.end() >= start - window):
                 return True
         return False
-
-    @staticmethod
-    def _count_nearby_concepts(
-        finding: ConceptFinding,
-        all_findings: list[ConceptFinding],
-        window: int,
-    ) -> int:
-        """Count distinct concept types within window chars of this finding."""
-        nearby_types: set[str] = set()
-        for other in all_findings:
-            if other is finding:
-                continue
-            if (other.start <= finding.end + window) and (other.end >= finding.start - window):
-                nearby_types.add(other.concept)
-        return len(nearby_types)
 
     def analyze_document(
         self,
@@ -346,8 +395,12 @@ class PatternConceptAdapter(ConceptPort):
                 )
                 findings.extend(page_findings)
             doc.close()
-        except Exception:
-            # Fallback on any fitz error
+        except Exception as e:
+            _logger.warning(
+                "PDF extraction failed for %s, falling back to text: %s",
+                path,
+                e,
+            )
             with open(path, "r", encoding="utf-8", errors="ignore") as handle:
                 text = handle.read()
             return self.analyze_text(text, concepts=concepts, threshold=threshold, page=1)

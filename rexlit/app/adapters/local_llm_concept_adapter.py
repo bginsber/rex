@@ -73,6 +73,9 @@ class LocalLLMConceptAdapter(ConceptPort):
     - Analyzes surrounding context with LLM
     - Returns updated confidence scores
     - Stores reasoning hash for audit (no raw text)
+
+    Security: API keys are not stored in instance variables to prevent exposure
+    in logs, exceptions, or repr(). Keys are passed directly to the client.
     """
 
     def __init__(
@@ -82,20 +85,42 @@ class LocalLLMConceptAdapter(ConceptPort):
         api_key: str | None = None,
         model: str | None = None,
     ):
-        self._api_base = api_base
-        self._api_key = api_key
+        import logging
+
+        self._logger = logging.getLogger(__name__)
+        self._api_base = api_base or "http://localhost:1234/v1"
         self._model = model
+        # NOTE: Do NOT store api_key in instance variable (security)
+        self._has_api_key = api_key is not None
         self._client = None
+        self._client_available = False
+
         try:
             from openai import OpenAI
 
             self._client = OpenAI(
                 api_key=api_key or "lm-studio",
-                base_url=api_base or "http://localhost:1234/v1",
+                base_url=self._api_base,
             )
+            self._client_available = True
         except ModuleNotFoundError:
-            # Optional dependency; heuristics will handle detection
-            self._client = None
+            self._logger.info(
+                "OpenAI package not installed; LocalLLMConceptAdapter will use heuristics only"
+            )
+        except Exception as e:
+            self._logger.warning(
+                "Failed to initialize OpenAI client for LM Studio: %s", e
+            )
+
+    def __repr__(self) -> str:
+        """Return safe representation without exposing credentials."""
+        return (
+            f"{self.__class__.__name__}("
+            f"api_base={self._api_base!r}, "
+            f"model={self._model!r}, "
+            f"has_api_key={'[MASKED]' if self._has_api_key else 'None'}, "
+            f"client_available={self._client_available})"
+        )
 
     def _run_client(self, text: str, concepts: Iterable[str] | None, threshold: float) -> list[ConceptFinding]:
         """Attempt LM Studio inference; fall back to heuristics on any failure."""
@@ -183,8 +208,10 @@ class LocalLLMConceptAdapter(ConceptPort):
                     )
                 )
             return findings
-        except Exception:
-            # Fall back to heuristics on any failure
+        except Exception as e:
+            self._logger.warning(
+                "LLM inference failed, falling back to heuristics: %s", e
+            )
             return []
 
     def _run_heuristics(self, text: str, concepts: Iterable[str] | None, threshold: float) -> list[ConceptFinding]:
@@ -274,8 +301,14 @@ class LocalLLMConceptAdapter(ConceptPort):
                         needs_refinement=False,  # Refinement complete
                     )
                 )
-            except Exception:
-                # On any error, keep original finding
+            except Exception as e:
+                self._logger.warning(
+                    "LLM refinement failed for %s finding at %d-%d: %s",
+                    finding.concept,
+                    finding.start,
+                    finding.end,
+                    e,
+                )
                 refined.append(finding)
 
         return refined
@@ -349,8 +382,15 @@ Respond with JSON only:
 
             return confidence, reasoning
 
-        except Exception:
-            # On any parsing error, return original confidence
+        except json.JSONDecodeError as e:
+            self._logger.debug(
+                "LLM response parsing failed for %s: %s", concept, e
+            )
+            return original_confidence, ""
+        except Exception as e:
+            self._logger.warning(
+                "LLM evaluation failed for %s: %s", concept, e
+            )
             return original_confidence, ""
 
     def analyze_text(
