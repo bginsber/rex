@@ -10,7 +10,9 @@ def test_pattern_adapter_detects_email_header():
     assert any(f.concept == "EMAIL_COMMUNICATION" for f in findings)
     for f in findings:
         assert f.snippet_hash is None
-        assert f.confidence >= 0.85
+        # Pattern-only detection yields 0.8 confidence, which triggers LLM escalation
+        # per ADR 0008 hybrid pattern design (85%+ skips LLM)
+        assert f.confidence >= 0.8
 
 
 def test_pattern_adapter_detects_legal_advice():
