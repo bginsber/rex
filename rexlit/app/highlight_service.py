@@ -289,6 +289,10 @@ class HighlightService:
         if not uncertain:
             return findings, stats
 
+        # Check offline gate before escalating to refinement adapter
+        if self.refinement.requires_online():
+            self._offline_gate.require("Highlight concept refinement")
+
         # Escalate to LLM
         try:
             refined = self.refinement.refine_findings(

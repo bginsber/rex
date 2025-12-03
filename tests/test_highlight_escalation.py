@@ -48,6 +48,7 @@ class TestEscalationWorkflow:
 
         # Create mock refinement adapter that tracks calls
         mock_refinement = MagicMock(spec=LocalLLMConceptAdapter)
+        mock_refinement.requires_online = MagicMock(return_value=False)
         mock_refinement.refine_findings = MagicMock(return_value=[])
 
         service = HighlightService(
@@ -87,6 +88,7 @@ class TestEscalationWorkflow:
 
         # Create mock refinement adapter
         mock_refinement = MagicMock(spec=LocalLLMConceptAdapter)
+        mock_refinement.requires_online = MagicMock(return_value=False)
 
         def mock_refine(text, findings, threshold=0.5):
             # Return findings with boosted confidence
@@ -135,6 +137,7 @@ class TestEscalationWorkflow:
         doc.write_text("The claim was filed by plaintiff.", encoding="utf-8")
 
         mock_refinement = MagicMock(spec=LocalLLMConceptAdapter)
+        mock_refinement.requires_online = MagicMock(return_value=False)
 
         service = HighlightService(
             concept_port=PatternConceptAdapter(),
@@ -162,6 +165,7 @@ class TestEscalationWorkflow:
 
         # Create mock that raises exception
         mock_refinement = MagicMock(spec=LocalLLMConceptAdapter)
+        mock_refinement.requires_online = MagicMock(return_value=False)
         mock_refinement.refine_findings = MagicMock(
             side_effect=RuntimeError("LLM unavailable")
         )
@@ -209,6 +213,44 @@ class TestEscalationWorkflow:
         assert len(plan.highlights) > 0
         stats = plan.annotations.get("escalation_stats", {})
         assert stats.get("escalated", 0) == 0
+
+    def test_offline_gate_blocks_online_refinement_adapter(self, tmp_path: Path) -> None:
+        """Online refinement adapter should be blocked in offline mode."""
+        # Create document that will produce uncertain findings
+        doc = tmp_path / "ambiguous.txt"
+        doc.write_text(
+            "The claim was settled for damages.",
+            encoding="utf-8",
+        )
+
+        # Create mock refinement adapter that requires online
+        mock_refinement = MagicMock(spec=LocalLLMConceptAdapter)
+        mock_refinement.requires_online = MagicMock(return_value=True)
+        mock_refinement.refine_findings = MagicMock(return_value=[])
+
+        # Create settings with offline mode enabled (default)
+        settings = Settings(
+            highlight_plan_key_path=tmp_path / "key",
+            rexlit_online=False,  # Offline mode
+        )
+
+        service = HighlightService(
+            concept_port=PatternConceptAdapter(),
+            refinement_port=mock_refinement,
+            storage_port=MockStorage(),
+            ledger_port=MockLedger(),
+            settings=settings,
+        )
+
+        # Should raise RuntimeError when trying to escalate in offline mode
+        with pytest.raises(RuntimeError, match="Highlight concept refinement requires online mode"):
+            service.plan(
+                doc,
+                tmp_path / "plan.enc",
+                allowed_input_roots=[tmp_path],
+                allowed_output_roots=[tmp_path],
+                enable_escalation=True,
+            )
 
 
 class TestLocalLLMConceptAdapterRefinement:
