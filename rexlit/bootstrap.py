@@ -442,6 +442,26 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
         offline_gate=offline_gate,
     )
 
+    # Hybrid concept detection: Pattern adapter (fast) + LLM adapter (refinement)
+    # Per ADR 0008: Pattern pre-filter with LLM escalation for uncertain findings
+    concept_adapter: ConceptPort = PatternConceptAdapter()
+    refinement_adapter: ConceptPort | None = None
+    if active_settings.highlight_lmstudio_api_base:
+        refinement_adapter = LocalLLMConceptAdapter(
+            api_base=active_settings.highlight_lmstudio_api_base,
+            api_key=active_settings.highlight_lmstudio_api_key,
+            model=active_settings.highlight_lmstudio_model,
+        )
+
+    highlight_service = HighlightService(
+        concept_port=concept_adapter,
+        refinement_port=refinement_adapter,
+        storage_port=storage,
+        ledger_port=ledger_for_services,
+        settings=active_settings,
+        offline_gate=offline_gate,
+    )
+
     return ApplicationContainer(
         settings=active_settings,
         pipeline=pipeline,
