@@ -426,9 +426,13 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
 
     # Create privilege adapter (Groq when online, pattern-based otherwise)
     privilege_adapter = _create_privilege_adapter(active_settings)
+
+    # Hybrid concept detection: Pattern adapter (fast) + LLM adapter (refinement)
+    # Per ADR 0008: Pattern pre-filter with LLM escalation for uncertain findings
     concept_adapter: ConceptPort = PatternConceptAdapter()
+    refinement_adapter: ConceptPort | None = None
     if active_settings.highlight_lmstudio_api_base:
-        concept_adapter = LocalLLMConceptAdapter(
+        refinement_adapter = LocalLLMConceptAdapter(
             api_base=active_settings.highlight_lmstudio_api_base,
             api_key=active_settings.highlight_lmstudio_api_key,
             model=active_settings.highlight_lmstudio_model,
@@ -436,6 +440,7 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
 
     highlight_service = HighlightService(
         concept_port=concept_adapter,
+        refinement_port=refinement_adapter,
         storage_port=storage,
         ledger_port=ledger_for_services,
         settings=active_settings,

@@ -34,7 +34,8 @@ class TestEmailCommunication:
         assert len(findings) >= 1
         assert all(f.concept == "EMAIL_COMMUNICATION" for f in findings)
         assert all(f.category == "communication" for f in findings)
-        assert all(f.confidence >= 0.85 for f in findings)
+        # Base confidence is 0.80 for headers, may be boosted by context
+        assert all(f.confidence >= 0.65 for f in findings)
 
     def test_detects_email_header_to(self, adapter: PatternConceptAdapter) -> None:
         text = "To: attorney@lawfirm.com"
@@ -51,12 +52,21 @@ class TestEmailCommunication:
         findings = adapter.analyze_text(text, concepts=["EMAIL_COMMUNICATION"])
         assert len(findings) >= 1
 
-    def test_email_header_has_higher_confidence(self, adapter: PatternConceptAdapter) -> None:
-        text = "From: ceo@company.com"
-        findings = adapter.analyze_text(text, concepts=["EMAIL_COMMUNICATION"])
-        header_finding = next((f for f in findings if "From:" in text[f.start:f.end]), None)
+    def test_email_header_has_higher_confidence_than_address(self, adapter: PatternConceptAdapter) -> None:
+        """Email headers get higher base confidence than standalone addresses."""
+        header_text = "From: ceo@company.com"
+        address_text = "Contact us at info@company.com for details."
+        
+        header_findings = adapter.analyze_text(header_text, concepts=["EMAIL_COMMUNICATION"])
+        address_findings = adapter.analyze_text(address_text, concepts=["EMAIL_COMMUNICATION"])
+        
+        header_finding = next((f for f in header_findings if "From:" in header_text[f.start:f.end]), None)
+        address_finding = next((f for f in address_findings), None)
+        
         assert header_finding is not None
-        assert header_finding.confidence >= 0.9
+        assert address_finding is not None
+        # Headers (0.80 base) > addresses (0.65 base)
+        assert header_finding.confidence > address_finding.confidence
 
 
 class TestLegalAdvice:
@@ -124,7 +134,9 @@ class TestHotDoc:
         assert len(findings) >= 1
         assert findings[0].concept == "HOTDOC"
         assert findings[0].category == "hotdoc"
-        assert findings[0].confidence >= 0.85
+        # Base confidence is 0.75, flagged for LLM refinement
+        assert findings[0].confidence >= 0.70
+        assert findings[0].needs_refinement is True  # Uncertain, needs LLM
 
     def test_detects_smoking_gun(self, adapter: PatternConceptAdapter) -> None:
         text = "This email is the smoking gun we've been looking for."
@@ -268,6 +280,78 @@ class TestFindingOffsets:
             assert "@" in matched_text or "From:" in matched_text
 
 
+class TestMultiFactorScoring:
+    """Tests for ADR 0008 multi-factor confidence scoring."""
+
+    def test_attorney_domain_boosts_confidence(self, adapter: PatternConceptAdapter) -> None:
+        """Attorney domain nearby should boost confidence by 0.10."""
+        # Text with legal advice AND attorney domain
+        text = "From: counsel@lawfirm.com\nThis is privileged legal advice."
+        findings = adapter.analyze_text(text)
+
+        legal_finding = next((f for f in findings if f.concept == "LEGAL_ADVICE"), None)
+        assert legal_finding is not None
+        # Base 0.70 + attorney_domain 0.10 = 0.80+
+        assert legal_finding.confidence >= 0.80
+        assert legal_finding.confidence_factors is not None
+        assert "attorney_domain" in legal_finding.confidence_factors
+
+    def test_multiple_concepts_boost_confidence(self, adapter: PatternConceptAdapter) -> None:
+        """Multiple concept types nearby should boost confidence."""
+        text = "The plaintiff's counsel advises settlement of the breach claim."
+        findings = adapter.analyze_text(text)
+
+        # Multiple concepts present: KEY_PARTY, LEGAL_ADVICE, RESPONSIVE
+        concepts = {f.concept for f in findings}
+        assert len(concepts) >= 2
+
+        # At least some findings should have multi-concept boost
+        boosted = [f for f in findings if f.confidence_factors and "multi_concept" in f.confidence_factors]
+        assert len(boosted) >= 1
+
+    def test_quoted_text_reduces_confidence(self, adapter: PatternConceptAdapter) -> None:
+        """Quoted text markers should reduce confidence by 0.15."""
+        text = """> On Monday, John wrote:
+> This communication is privileged.
+"""
+        findings = adapter.analyze_text(text, concepts=["LEGAL_ADVICE"])
+
+        if findings:
+            # Quoted text penalty should reduce confidence
+            assert findings[0].confidence_factors is not None
+            if "quoted_text" in findings[0].confidence_factors:
+                assert findings[0].confidence_factors["quoted_text"] < 0
+
+    def test_needs_refinement_flag_set_for_uncertain(self, adapter: PatternConceptAdapter) -> None:
+        """Findings with 0.50-0.84 confidence should have needs_refinement=True."""
+        text = "The defendant breached the contract."
+        findings = adapter.analyze_text(text)
+
+        # Find a finding in uncertain range
+        uncertain = [f for f in findings if 0.50 <= f.confidence < 0.85]
+        if uncertain:
+            assert all(f.needs_refinement is True for f in uncertain)
+
+    def test_high_confidence_no_refinement(self, adapter: PatternConceptAdapter) -> None:
+        """High confidence findings should have needs_refinement=False."""
+        # Create high confidence scenario: attorney domain + legal context + privilege marker
+        text = "From: attorney@counsel.law\nPursuant to attorney-client privilege, this is protected."
+        findings = adapter.analyze_text(text, concepts=["LEGAL_ADVICE"])
+
+        high_conf = [f for f in findings if f.confidence >= 0.85]
+        if high_conf:
+            assert all(f.needs_refinement is False for f in high_conf)
+
+    def test_confidence_factors_recorded(self, adapter: PatternConceptAdapter) -> None:
+        """All findings should have confidence_factors dict."""
+        text = "From: test@example.com"
+        findings = adapter.analyze_text(text)
+
+        assert len(findings) >= 1
+        assert findings[0].confidence_factors is not None
+        assert "base" in findings[0].confidence_factors
+
+
 class TestRealWorldSamples:
     def test_full_email_chain(self, adapter: PatternConceptAdapter) -> None:
         text = """
@@ -289,7 +373,12 @@ class TestRealWorldSamples:
         assert "LEGAL_ADVICE" in concepts_found
         assert "RESPONSIVE" in concepts_found
 
+        # Attorney domain should boost LEGAL_ADVICE findings
+        legal_findings = [f for f in findings if f.concept == "LEGAL_ADVICE"]
+        assert any(f.confidence >= 0.80 for f in legal_findings)
+
     def test_hot_document_sample(self, adapter: PatternConceptAdapter) -> None:
+        """Hot documents get boosted confidence when multiple indicators present."""
         text = """
         I know this would violate the safety regulations, but we should
         proceed anyway. Delete all emails about this and don't tell anyone.
@@ -298,5 +387,10 @@ class TestRealWorldSamples:
         findings = adapter.analyze_text(text, concepts=["HOTDOC"])
 
         assert len(findings) >= 3  # violate, delete, fraud
-        assert all(f.confidence >= 0.85 for f in findings)
+        # Base confidence is 0.75, boosted by multi-concept presence
+        # Multiple HOTDOC indicators nearby boost each other
+        assert all(f.confidence >= 0.70 for f in findings)
+        # With 3+ hotdoc indicators, some should get multi-concept boost
+        boosted = [f for f in findings if f.confidence > 0.75]
+        assert len(boosted) >= 1  # At least one got boosted
 

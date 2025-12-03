@@ -1,4 +1,8 @@
-"""Local LLM-backed concept detector (LM Studio/OpenAI-compatible API)."""
+"""Local LLM-backed concept detector (LM Studio/OpenAI-compatible API).
+
+Implements ADR 0008 LLM refinement for uncertain pattern findings.
+Used by HighlightService for confidence escalation (0.50-0.84 → LLM).
+"""
 
 from __future__ import annotations
 
@@ -12,6 +16,11 @@ from rexlit.app.ports.concept import ConceptFinding, ConceptPort
 
 def _hash_snippet(snippet: str) -> str:
     return hashlib.sha256(snippet.encode("utf-8")).hexdigest()
+
+
+def _hash_reasoning(reasoning: str) -> str:
+    """Hash reasoning for privacy-preserving audit (ADR 0008)."""
+    return hashlib.sha256(reasoning.encode("utf-8")).hexdigest()
 
 
 @dataclass
@@ -51,9 +60,19 @@ HEURISTIC_RULES: tuple[_HeuristicRule, ...] = (
 
 
 class LocalLLMConceptAdapter(ConceptPort):
-    """Lightweight concept detector intended for local LM Studio usage.
+    """LLM-backed concept detector for local LM Studio usage.
+
+    Implements two key functions:
+    1. Full analysis: Detect concepts from scratch (analyze_text/analyze_document)
+    2. Refinement: Refine uncertain pattern findings with context (refine_findings)
 
     If LM Studio/OpenAI client is unavailable, falls back to fast heuristics.
+
+    Refinement follows ADR 0008:
+    - Takes findings with 0.50-0.84 confidence
+    - Analyzes surrounding context with LLM
+    - Returns updated confidence scores
+    - Stores reasoning hash for audit (no raw text)
     """
 
     def __init__(
@@ -192,6 +211,147 @@ class LocalLLMConceptAdapter(ConceptPort):
                 )
                 break
         return findings
+
+    def refine_findings(
+        self,
+        text: str,
+        findings: list[ConceptFinding],
+        *,
+        threshold: float = 0.5,
+    ) -> list[ConceptFinding]:
+        """Refine uncertain findings using LLM context analysis.
+
+        Per ADR 0008, this method:
+        1. Extracts context around each finding
+        2. Asks LLM to evaluate if the concept is correctly identified
+        3. Adjusts confidence based on LLM assessment
+        4. Returns findings with updated confidence and reasoning hash
+
+        Args:
+            text: Original text for context extraction
+            findings: Uncertain findings (typically 0.50-0.84 confidence)
+            threshold: Minimum confidence threshold
+
+        Returns:
+            Refined findings with updated confidence scores
+        """
+        if not findings:
+            return findings
+
+        if self._client is None:
+            # No LLM available - return findings unchanged
+            return findings
+
+        refined: list[ConceptFinding] = []
+        for finding in findings:
+            # Extract context window (200 chars before/after)
+            context_start = max(0, finding.start - 200)
+            context_end = min(len(text), finding.end + 200)
+            context = text[context_start:context_end]
+            match_text = text[finding.start : finding.end]
+
+            # Ask LLM to evaluate
+            try:
+                new_confidence, reasoning = self._evaluate_with_llm(
+                    context=context,
+                    match_text=match_text,
+                    concept=finding.concept,
+                    category=finding.category,
+                    original_confidence=finding.confidence,
+                )
+
+                refined.append(
+                    ConceptFinding(
+                        concept=finding.concept,
+                        category=finding.category,
+                        confidence=max(threshold, new_confidence),
+                        start=finding.start,
+                        end=finding.end,
+                        page=finding.page,
+                        snippet_hash=finding.snippet_hash,
+                        reasoning_hash=_hash_reasoning(reasoning) if reasoning else None,
+                        confidence_factors=finding.confidence_factors,
+                        needs_refinement=False,  # Refinement complete
+                    )
+                )
+            except Exception:
+                # On any error, keep original finding
+                refined.append(finding)
+
+        return refined
+
+    def _evaluate_with_llm(
+        self,
+        context: str,
+        match_text: str,
+        concept: str,
+        category: str,
+        original_confidence: float,
+    ) -> tuple[float, str]:
+        """Use LLM to evaluate a finding and return refined confidence.
+
+        Returns:
+            Tuple of (new_confidence, reasoning_text)
+        """
+        if self._client is None:
+            return original_confidence, ""
+
+        prompt = f"""Evaluate whether this text segment correctly identifies a legal concept.
+
+CONTEXT (surrounding text):
+{context}
+
+MATCHED TEXT: "{match_text}"
+DETECTED CONCEPT: {concept}
+DETECTED CATEGORY: {category}
+PATTERN CONFIDENCE: {original_confidence:.2f}
+
+Analyze:
+1. Is "{match_text}" correctly identified as {concept}?
+2. Does the surrounding context support or contradict this classification?
+3. Could this be a false positive (e.g., quoted text, hypothetical, negation)?
+
+Respond with JSON only:
+{{"confidence": 0.XX, "reasoning": "brief explanation without quoting document text"}}"""
+
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model or "lmstudio-concept-model",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a legal document analyst. Evaluate concept detections "
+                            "and return refined confidence scores. Never quote document text "
+                            "in your reasoning (privacy requirement). Respond with JSON only."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.0,
+                max_tokens=200,
+            )
+            content = response.choices[0].message.content or ""
+
+            # Parse JSON response
+            # Handle markdown code blocks if present
+            if "```" in content:
+                content = content.split("```")[1]
+                if content.startswith("json"):
+                    content = content[4:]
+
+            result = json.loads(content.strip())
+            confidence = float(result.get("confidence", original_confidence))
+            reasoning = str(result.get("reasoning", ""))
+
+            # Clamp confidence to valid range
+            confidence = max(0.0, min(1.0, confidence))
+
+            return confidence, reasoning
+
+        except Exception:
+            # On any parsing error, return original confidence
+            return original_confidence, ""
 
     def analyze_text(
         self,
