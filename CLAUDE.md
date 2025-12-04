@@ -27,14 +27,12 @@ pip install -e '.[dev]'
 
 ### Testing
 ```bash
-# Disable accidental plugins from user-level site-packages
-export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
-
 # Run all tests (146 tests, expect 100% passing)
-uv run pytest -v --no-cov
+# Uses --no-cov and disables plugin autoload to reduce noise
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest -v --no-cov
 
 # Run with coverage
-uv run pytest -v
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest -v
 
 # Run specific test suite
 uv run pytest tests/test_index.py -v
@@ -70,6 +68,20 @@ python scripts/benchmark_idl.py --corpus medium --workers 6 --output results.jso
 python scripts/benchmark_idl.py --corpus medium --baseline benchmarks/medium-baseline.json
 ```
 
+#### Test Data Submodule (Optional)
+```bash
+# Initialize the sample-docs submodule for end-to-end CLI smoke tests
+scripts/setup-test-data.sh
+
+# After setup, the tiny corpus is at rexlit/docs/sample-docs/
+# Run CLI smoke tests against it:
+rexlit ingest ./rexlit/docs/sample-docs --manifest out/manifest.jsonl
+rexlit index build ./rexlit/docs/sample-docs --index-dir out/index --workers 6
+rexlit index search out/index --query "contract"
+```
+
+**Convention:** Keep large test fixtures under `tests/data/` and avoid adding them elsewhere in the repo.
+
 ### Linting and Type Checking
 ```bash
 # Run all quality checks
@@ -86,11 +98,11 @@ lint-imports
 
 ### Running RexLit CLI
 ```bash
-# Ingest documents
-rexlit ingest ./sample-docs --manifest out/manifest.jsonl
+# Ingest documents (uses sample-docs submodule)
+rexlit ingest ./rexlit/docs/sample-docs --manifest out/manifest.jsonl
 
 # Build index (with parallel processing)
-rexlit index build ./sample-docs --index-dir out/index --workers 6
+rexlit index build ./rexlit/docs/sample-docs --index-dir out/index --workers 6
 
 # Search
 rexlit index search out/index --query "privileged AND contract"
@@ -297,7 +309,7 @@ Benchmarks (8 cores):
 - **Security**: 13 path traversal regression tests + document endpoint access control
 - **Performance**: `benchmark_metadata.py` for metadata cache validation
 - **Determinism**: Verify identical outputs across multiple runs
-- **Use `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest -v --no-cov`** for faster development iteration
+- **Default test command**: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest -v --no-cov` (disables plugin noise, skips coverage for faster iteration)
 
 ### Web API Testing (Node/Bun)
 
@@ -376,7 +388,7 @@ Always use `deterministic_sort_paths()` or `deterministic_sort()` from `rexlit.u
 
 ## Security Considerations
 
-- **Path Traversal**: Always use `resolve_safe_path()` when handling user-provided paths
+- **Path Traversal**: Always use `resolve_safe_path()` from `rexlit.utils.path_safety` when touching user-provided paths. This helper resolves symlinks and validates against the allowed root boundary.
 - **Symlinks**: Follow only if explicitly allowed and validated against root boundary
 - **Online Mode**: Network operations must check `require_online()` gate
 - **Audit Trail**: Log all significant operations with SHA-256 hash chain
