@@ -56,3 +56,6 @@ rexlit/docs/idl-fixtures/
 # Runtime artifacts (development)
 /index/
 audit.meta
+
+# API temporary data
+api/.tmp-rexlit-home/
