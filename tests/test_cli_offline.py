@@ -29,3 +29,13 @@ def test_cli_offline_hybrid_search_refuses(temp_dir: Path) -> None:
     )  # fmt: off
     assert result.exit_code == 2
     assert "requires online mode" in result.stdout.lower()
+
+
+def test_cli_offline_dense_search_refuses(temp_dir: Path) -> None:
+    """Dense search mode requires online mode (ADR-0001)."""
+    runner = CliRunner()
+    result = runner.invoke(
+        app, ["--data-dir", str(temp_dir / "data"), "index", "search", "q", "--mode", "dense"]
+    )  # fmt: off
+    assert result.exit_code == 2
+    assert "requires online mode" in result.stdout.lower()

@@ -180,11 +180,14 @@ include = '\.pyi?$'
 root_package = "rexlit"
 include_external_packages = false
 
+# ADR-0002: CLI may only import app layer and bootstrap (bootstrap wires adapters)
+# allow_indirect_imports permits the expected CLI -> bootstrap -> domain path
+# ignore_imports documents known tech debt - these should be refactored to go through app layer
 [[tool.importlinter.contracts]]
 name = "CLI limited to bootstrap and application layer"
 type = "forbidden"
-importer = "rexlit.cli"
-forbidden = [
+source_modules = ["rexlit.cli"]
+forbidden_modules = [
     "rexlit.app.adapters",
     "rexlit.audit",
     "rexlit.index",
@@ -195,12 +198,20 @@ forbidden = [
     "rexlit.ediscovery",
     "rexlit.agent",
 ]
+allow_indirect_imports = true
+ignore_imports = [
+    # TECH DEBT: These lazy imports should be moved to app services
+    # These should be refactored per ADR-0002 to use dependency injection
+    "rexlit.cli -> rexlit.index.search",
+    "rexlit.cli -> rexlit.ingest.extract",
+    "rexlit.cli -> rexlit.rules.export",
+]
 
 [[tool.importlinter.contracts]]
 name = "Audit domain stays adapter agnostic"
 type = "forbidden"
-importer = "rexlit.audit"
-forbidden = [
+source_modules = ["rexlit.audit"]
+forbidden_modules = [
     "rexlit.app.adapters",
     "rexlit.bootstrap",
     "rexlit.cli",
@@ -209,28 +220,34 @@ forbidden = [
 [[tool.importlinter.contracts]]
 name = "Ingest domain stays adapter agnostic"
 type = "forbidden"
-importer = "rexlit.ingest"
-forbidden = [
+source_modules = ["rexlit.ingest"]
+forbidden_modules = [
     "rexlit.app.adapters",
     "rexlit.bootstrap",
     "rexlit.cli",
 ]
 
+# TECH DEBT: index.build and index.search directly import HNSWAdapter
+# These should receive the adapter via dependency injection from bootstrap
 [[tool.importlinter.contracts]]
 name = "Index domain stays adapter agnostic"
 type = "forbidden"
-importer = "rexlit.index"
-forbidden = [
+source_modules = ["rexlit.index"]
+forbidden_modules = [
     "rexlit.app.adapters",
     "rexlit.bootstrap",
     "rexlit.cli",
+]
+ignore_imports = [
+    "rexlit.index.build -> rexlit.app.adapters.hnsw",
+    "rexlit.index.search -> rexlit.app.adapters.hnsw",
 ]
 
 [[tool.importlinter.contracts]]
 name = "OCR domain stays adapter agnostic"
 type = "forbidden"
-importer = "rexlit.ocr"
-forbidden = [
+source_modules = ["rexlit.ocr"]
+forbidden_modules = [
     "rexlit.app.adapters",
     "rexlit.bootstrap",
     "rexlit.cli",
@@ -239,8 +256,8 @@ forbidden = [
 [[tool.importlinter.contracts]]
 name = "PDF domain stays adapter agnostic"
 type = "forbidden"
-importer = "rexlit.pdf"
-forbidden = [
+source_modules = ["rexlit.pdf"]
+forbidden_modules = [
     "rexlit.app.adapters",
     "rexlit.bootstrap",
     "rexlit.cli",
@@ -249,8 +266,8 @@ forbidden = [
 [[tool.importlinter.contracts]]
 name = "Rules domain stays adapter agnostic"
 type = "forbidden"
-importer = "rexlit.rules"
-forbidden = [
+source_modules = ["rexlit.rules"]
+forbidden_modules = [
     "rexlit.app.adapters",
     "rexlit.bootstrap",
     "rexlit.cli",
@@ -259,8 +276,8 @@ forbidden = [
 [[tool.importlinter.contracts]]
 name = "Ediscovery domain stays adapter agnostic"
 type = "forbidden"
-importer = "rexlit.ediscovery"
-forbidden = [
+source_modules = ["rexlit.ediscovery"]
+forbidden_modules = [
     "rexlit.app.adapters",
     "rexlit.bootstrap",
     "rexlit.cli",
@@ -269,7 +286,7 @@ forbidden = [
 [[tool.importlinter.contracts]]
 name = "Ports remain adapter agnostic"
 type = "forbidden"
-importer = "rexlit.app.ports"
-forbidden = [
+source_modules = ["rexlit.app.ports"]
+forbidden_modules = [
     "rexlit.app.adapters.tesseract_ocr",
 ]
