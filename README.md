@@ -597,6 +597,8 @@ uv run pytest tests/test_app_adapters.py::test_sequential_bates_planner -v
 
 ## Documentation
 
+- [`docs/INSTALL.md`](docs/INSTALL.md) – Installation guide and troubleshooting.
+- [`docs/FEATURE_FLAGS.md`](docs/FEATURE_FLAGS.md) – Environment variables and configuration.
 - `CLI-GUIDE.md` – Detailed command reference and workflows.
 - `ARCHITECTURE.md` – System design, components, and data flows.
 - `SECURITY.md` – Security posture, path traversal defenses, threat model.

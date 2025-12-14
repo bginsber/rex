@@ -16,17 +16,17 @@ See ADR 0008 for design rationale and privacy controls.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
 import difflib
 import hashlib
 import shutil
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Sequence
-
-from rexlit.utils.methods import sanitize_argv
+from typing import TYPE_CHECKING, Any, Literal
 
 from rexlit.app.ports.privilege_reasoning import PolicyDecision
+from rexlit.utils.methods import sanitize_argv
 
 if TYPE_CHECKING:
     from rexlit.app.ports.ledger import LedgerPort
@@ -71,7 +71,7 @@ class PrivilegePolicyMetadata:
 class PrivilegePolicyManager:
     """Manage privilege policy templates, ensuring offline-safe updates."""
 
-    def __init__(self, settings: "Settings", ledger: "LedgerPort" | None = None) -> None:
+    def __init__(self, settings: Settings, ledger: LedgerPort | None = None) -> None:
         self._settings = settings
         self._ledger = ledger
 

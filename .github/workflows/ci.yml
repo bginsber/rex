@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -e '.[dev]'
+
+      - name: Lint imports (ADR-0002)
+        run: lint-imports
+
+      - name: Type check
+        # Non-blocking until pre-existing type errors are fixed
+        continue-on-error: true
+        run: mypy rexlit/ --ignore-missing-imports
+
+      - name: Lint
+        # Non-blocking until pre-existing lint errors are fixed
+        continue-on-error: true
+        run: ruff check .
+
+      - name: Format check
+        # Non-blocking until pre-existing format issues are fixed
+        continue-on-error: true
+        run: black --check .
+
+      - name: Test
+        run: pytest -v --no-cov

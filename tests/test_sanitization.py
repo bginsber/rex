@@ -1,7 +1,6 @@
 """Tests for manifest sanitization utilities."""
 
 import json
-from pathlib import Path
 
 import pytest
 

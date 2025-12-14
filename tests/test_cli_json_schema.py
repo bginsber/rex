@@ -10,10 +10,6 @@ This enables:
 1. API consumers to detect breaking changes
 2. Migration paths for schema evolution
 3. Debugging via producer/timestamp metadata
-
-NOTE: These tests use pytest.xfail() for missing schema implementation.
-When CLI JSON wrapping is implemented, tests will unexpectedly pass (xpass),
-signaling that the xfail markers should be removed.
 """
 
 from __future__ import annotations
@@ -68,20 +64,17 @@ class TestCLIJsonSchemaVersioning:
         except json.JSONDecodeError as e:
             pytest.fail(f"Invalid JSON in search output: {e}")
 
-        # For list outputs, schema metadata should be in wrapper object
-        if isinstance(output, list):
-            pytest.xfail(
-                "ADR-0004 violation: List output lacks schema wrapper. "
-                "CLI JSON outputs should be wrapped with schema_id, schema_version, producer, produced_at."
-            )
+        # Should be wrapped object, not raw list
+        assert isinstance(output, dict), "Search output should be wrapped dict, not list"
 
         missing = REQUIRED_SCHEMA_FIELDS - set(output.keys())
         assert not missing, f"Missing schema fields in search output: {missing}"
         assert output["schema_id"] == "search_results"
         assert isinstance(output["schema_version"], int)
+        assert "results" in output, "Search output should contain 'results' key"
 
     def test_index_metadata_json_has_schema_metadata(self, temp_dir: Path) -> None:
-        """index metadata --json output should include schema metadata."""
+        """index get --json output should include schema metadata."""
         # Create and index a document
         docs = temp_dir / "docs"
         docs.mkdir()
@@ -108,25 +101,20 @@ class TestCLIJsonSchemaVersioning:
         except json.JSONDecodeError as e:
             pytest.fail(f"Invalid JSON in search output: {e}")
 
-        if not search_results:
+        # Search results are now wrapped
+        assert isinstance(search_results, dict), "Search output should be wrapped dict"
+        results = search_results.get("results", [])
+        if not results:
             pytest.skip("No search results to test metadata")
 
-        # Handle both list and wrapped formats
-        if isinstance(search_results, list):
-            doc_hash = search_results[0].get("sha256") or search_results[0].get("document_hash")
-        else:
-            results = search_results.get("results", [])
-            if not results:
-                pytest.skip("No search results to test metadata")
-            doc_hash = results[0].get("sha256") or results[0].get("document_hash")
-
+        doc_hash = results[0].get("sha256") or results[0].get("document_hash")
         if not doc_hash:
             pytest.skip("Could not extract document hash from search results")
 
-        # Fetch metadata
+        # Fetch metadata using 'index get' command
         result = runner.invoke(
             app,
-            ["--data-dir", str(temp_dir / "data"), "index", "metadata", doc_hash, "--json"],
+            ["--data-dir", str(temp_dir / "data"), "index", "get", doc_hash, "--json"],
         )
         if result.exit_code != 0:
             pytest.skip(f"Metadata fetch failed (exit {result.exit_code}): {result.stdout or result.stderr}")
@@ -137,41 +125,36 @@ class TestCLIJsonSchemaVersioning:
             pytest.fail(f"Invalid JSON in metadata output: {e}")
 
         missing = REQUIRED_SCHEMA_FIELDS - set(output.keys())
-        if missing:
-            pytest.xfail(
-                f"ADR-0004 violation: Missing schema fields in metadata output: {missing}. "
-                "CLI JSON outputs should include schema_id, schema_version, producer, produced_at."
-            )
-
+        assert not missing, f"Missing schema fields in metadata output: {missing}"
         assert output["schema_id"] == "document_metadata"
         assert isinstance(output["schema_version"], int)
 
     def test_audit_log_json_has_schema_metadata(self, temp_dir: Path) -> None:
-        """audit log --json output should include schema metadata."""
+        """audit show --json output should include schema metadata."""
         runner = CliRunner()
 
         result = runner.invoke(
             app,
-            ["--data-dir", str(temp_dir / "data"), "audit", "log", "--json"],
+            ["--data-dir", str(temp_dir / "data"), "audit", "show", "--json"],
         )
 
-        # May return empty list if no audit entries
-        if result.exit_code != 0:
-            pytest.skip(f"Audit log command failed: {result.stdout}")
+        # May return no output if no audit ledger exists
+        if result.exit_code != 0 or "No audit ledger" in result.stdout:
+            pytest.skip("Audit ledger not available")
 
         try:
             output = json.loads(result.stdout)
         except json.JSONDecodeError as e:
             pytest.fail(f"Invalid JSON in audit output: {e}")
 
-        if isinstance(output, list):
-            pytest.xfail(
-                "ADR-0004 violation: List output lacks schema wrapper. "
-                "CLI JSON outputs should be wrapped with schema_id, schema_version, producer, produced_at."
-            )
+        # Should be wrapped object, not raw list
+        assert isinstance(output, dict), "Audit output should be wrapped dict, not list"
 
         missing = REQUIRED_SCHEMA_FIELDS - set(output.keys())
         assert not missing, f"Missing schema fields in audit output: {missing}"
+        assert output["schema_id"] == "audit_log"
+        assert isinstance(output["schema_version"], int)
+        assert "entries" in output, "Audit output should contain 'entries' key"
 
     def test_privilege_classify_json_has_schema_metadata(self, temp_dir: Path) -> None:
         """privilege classify --json output should include schema metadata."""
@@ -198,14 +181,10 @@ class TestCLIJsonSchemaVersioning:
             pytest.fail(f"Invalid JSON in classify output: {e}")
 
         missing = REQUIRED_SCHEMA_FIELDS - set(output.keys())
-        if missing:
-            pytest.xfail(
-                f"ADR-0004 violation: Missing schema fields in classify output: {missing}. "
-                "CLI JSON outputs should include schema_id, schema_version, producer, produced_at."
-            )
-
+        assert not missing, f"Missing schema fields in classify output: {missing}"
         assert output["schema_id"] == "privilege_decision"
         assert isinstance(output["schema_version"], int)
+        assert "document" in output, "Privilege output should contain 'document' key"
 
 
 class TestSchemaVersionConsistency:

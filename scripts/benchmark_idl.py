@@ -11,7 +11,7 @@ import statistics
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from rexlit import __version__ as REXLIT_VERSION
 from rexlit.index.build import build_index
@@ -150,7 +150,7 @@ def _compare_to_baseline(current: dict[str, Any], baseline: dict[str, Any]) -> d
         if not base_metric:
             continue
 
-        diffs: dict[str, Dict[str, Any]] = {}
+        diffs: dict[str, dict[str, Any]] = {}
         for key, value in current_metric.items():
             if key in ("operation",) or not isinstance(value, (int, float)):
                 continue

@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
 DEV_DIR = SCRIPT_ROOT / "dev"

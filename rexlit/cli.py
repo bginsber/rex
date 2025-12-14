@@ -16,9 +16,9 @@ from rexlit.app.ports.stamp import BatesStampRequest
 from rexlit.app.privilege_service import PrivilegePolicyManager
 from rexlit.bootstrap import bootstrap_application
 from rexlit.config import get_settings, set_settings
+from rexlit.index.search import search_by_hash
 from rexlit.utils.methods import sanitize_argv
 from rexlit.utils.offline import OfflineModeGate
-from rexlit.index.search import search_by_hash
 from rexlit.utils.paths import validate_input_root, validate_output_root
 
 if TYPE_CHECKING:
@@ -615,7 +615,6 @@ def index_search(
     ] = None,
 ) -> None:
     """Search the index."""
-    import json
 
     container = bootstrap_application()
     # Log sanitized CLI invocation
@@ -682,7 +681,18 @@ def index_search(
         raise typer.Exit(code=1) from exc
 
     if json_output:
-        typer.echo(json.dumps([r.model_dump(mode="json") for r in results], indent=2))
+        from rexlit.utils.cli_output import json_response
+
+        typer.echo(
+            json_response(
+                "search_results",
+                1,
+                query=query,
+                mode=mode_normalized,
+                total_hits=len(results),
+                results=[r.model_dump(mode="json") for r in results],
+            )
+        )
         return
 
     if not results:
@@ -721,7 +731,6 @@ def index_get(
     ] = False,
 ) -> None:
     """Retrieve document metadata by SHA-256 hash."""
-    import json
 
     container = bootstrap_application()
     try:
@@ -747,7 +756,15 @@ def index_get(
         payload["file_path"] = payload.get("path")
 
     if json_output:
-        typer.echo(json.dumps(payload, indent=2))
+        from rexlit.utils.cli_output import json_response
+
+        typer.echo(
+            json_response(
+                "document_metadata",
+                1,
+                **payload,
+            )
+        )
         return
 
     typer.echo(f"Path: {payload.get('file_path')}")
@@ -982,6 +999,65 @@ def bates_stamp(
         typer.echo(f"  Output directory: {output_root}")
     else:
         typer.echo(f"  Output file: {destination}")
+
+
+@bates_app.command("verify")
+def bates_verify(
+    plan: Annotated[
+        Path | None,
+        typer.Argument(help="Path to bates_plan.jsonl (defaults to data dir)"),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output results as JSON"),
+    ] = False,
+) -> None:
+    """Verify Bates registry integrity.
+
+    Checks the Bates plan file for:
+    - Required fields (document, sha256, bates_id)
+    - Duplicate Bates IDs or SHA-256 hashes
+    - Missing source files
+    - Hash mismatches (file modified after planning)
+    """
+    container = bootstrap_application()
+
+    from rexlit.utils.bates_verify import verify_bates_registry
+
+    if plan is None:
+        plan_path = container.settings.get_data_dir() / "bates" / "bates_plan.jsonl"
+    else:
+        plan_path = plan.resolve()
+
+    is_valid, errors = verify_bates_registry(plan_path)
+
+    if json_output:
+        from rexlit.utils.cli_output import json_response
+
+        typer.echo(
+            json_response(
+                "bates_verification",
+                1,
+                plan_path=str(plan_path),
+                valid=is_valid,
+                error_count=len(errors),
+                errors=errors,
+            )
+        )
+    else:
+        if is_valid:
+            typer.secho(f"Bates registry verified: {plan_path}", fg=typer.colors.GREEN)
+        else:
+            typer.secho(
+                f"Bates registry verification failed ({len(errors)} errors):",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            for error in errors:
+                typer.echo(f"  - {error}", err=True)
+
+    if not is_valid:
+        raise typer.Exit(code=1)
 
 
 # Production subcommand
@@ -1529,7 +1605,6 @@ def audit_show(
     ] = None,
 ) -> None:
     """Show audit ledger entries."""
-    import json
 
     container = bootstrap_application()
 
@@ -1547,7 +1622,16 @@ def audit_show(
         entries = entries[-tail:]
 
     if json_output:
-        typer.echo(json.dumps([e.model_dump(mode="json") for e in entries], indent=2))
+        from rexlit.utils.cli_output import json_response
+
+        typer.echo(
+            json_response(
+                "audit_log",
+                1,
+                total_entries=len(entries),
+                entries=[e.model_dump(mode="json") for e in entries],
+            )
+        )
     else:
         for entry in entries:
             typer.echo(f"{entry.timestamp} | {entry.operation} | {entry.inputs}")
@@ -1928,7 +2012,6 @@ def privilege_classify(
         rexlit privilege classify email001.txt
         rexlit privilege classify --threshold 0.80 --reasoning-effort high doc.pdf
     """
-    import json
 
     from rexlit.app.privilege_service import PrivilegeReviewService
     from rexlit.bootstrap import _create_privilege_reasoning_adapter
@@ -2003,7 +2086,16 @@ def privilege_classify(
 
     # Output results
     if json_output:
-        typer.echo(json.dumps(decision.model_dump(mode="json"), indent=2))
+        from rexlit.utils.cli_output import json_response
+
+        typer.echo(
+            json_response(
+                "privilege_decision",
+                1,
+                document=str(file_path),
+                **decision.model_dump(mode="json"),
+            )
+        )
     else:
         if decision.labels:
             label_str = ", ".join(decision.labels)

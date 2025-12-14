@@ -5,18 +5,19 @@ from __future__ import annotations
 from .bates import SequentialBatesPlanner
 from .dedupe import HashDeduper
 from .discovery import IngestDiscoveryAdapter
+from .groq_privilege import GroqPrivilegeAdapter
 from .hnsw import HNSWAdapter
 from .kanon2 import Kanon2Adapter
-from .pack import ZipPackager
-from .pdf_stamper import PDFStamperAdapter
-from .groq_privilege import GroqPrivilegeAdapter
 from .local_llm_concept_adapter import LocalLLMConceptAdapter
+from .null_concept_adapter import NullConceptAdapter
+from .pack import ZipPackager
 from .pattern_concept_adapter import PatternConceptAdapter
+from .pdf_stamper import PDFStamperAdapter
 from .privilege_patterns import PrivilegePatternsAdapter
 from .privilege_safeguard import PrivilegeSafeguardAdapter
 from .redaction import JSONLineRedactionPlanner, PassthroughRedactionApplier
 from .storage import FileSystemStorageAdapter
-from .null_concept_adapter import NullConceptAdapter
+
 try:
     from .tesseract_ocr import TesseractOCRAdapter
 except ModuleNotFoundError as _tesseract_err:  # pragma: no cover - optional dependency

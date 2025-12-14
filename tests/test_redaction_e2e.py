@@ -7,8 +7,8 @@ from pathlib import Path
 import fitz  # type: ignore[import]
 import pytest
 
-from rexlit.app.adapters.pii_regex import PIIRegexAdapter
 from rexlit.app.adapters.pdf_stamper import PDFStamperAdapter
+from rexlit.app.adapters.pii_regex import PIIRegexAdapter
 from rexlit.app.adapters.storage import FileSystemStorageAdapter
 from rexlit.app.redaction_service import RedactionService
 from rexlit.audit.ledger import AuditLedger

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
-from rexlit.app.ports.pii import PIIFinding, PIIPort
+from rexlit.app.ports.pii import PIIFinding
 from rexlit.ingest.extract import extract_document
 
 

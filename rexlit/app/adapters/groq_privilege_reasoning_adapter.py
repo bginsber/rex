@@ -16,10 +16,13 @@ import hashlib
 import logging
 import os
 from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 
 from rexlit.app.adapters.groq_privilege import GroqPrivilegeAdapter
-from rexlit.app.ports.privilege_reasoning import PolicyDecision, PrivilegeReasoningPort, RedactionSpan
+from rexlit.app.ports.privilege_reasoning import (
+    PolicyDecision,
+    RedactionSpan,
+)
 
 logger = logging.getLogger(__name__)
 

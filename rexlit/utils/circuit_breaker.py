@@ -14,8 +14,9 @@ See: https://martinfowler.com/bliki/CircuitBreaker.html
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Literal, TypeVar
+from typing import Literal, TypeVar
 
 T = TypeVar("T")
 

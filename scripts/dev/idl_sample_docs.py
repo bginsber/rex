@@ -37,9 +37,10 @@ import argparse
 import hashlib
 import json
 import sys
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Mapping
+from typing import Any
 
 try:
     from datasets import IterableDataset, load_dataset
@@ -51,7 +52,12 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from idl_fixtures.utils import MANIFEST_FILENAME, filters_help, parse_filter_args, validate_corpus  # noqa: E402
+from idl_fixtures.utils import (  # noqa: E402
+    MANIFEST_FILENAME,
+    filters_help,
+    parse_filter_args,
+    validate_corpus,
+)
 
 IDL_DATASET_NAME = "pixparse/idl-wds"
 

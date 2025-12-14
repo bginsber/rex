@@ -4,14 +4,13 @@ Script to fetch JUUL Labs email documents from the Industry Documents Library
 using the IDL Solr API, following the tutorial approach.
 """
 
-import requests
+import argparse
 import json
 import time
+
 import pandas as pd
-from pathlib import Path
-import argparse
-from typing import List, Dict, Any
-import urllib.parse
+import requests
+
 
 class IndustryDocsSearch:
     """Client for the Industry Documents Library Solr API."""
@@ -37,7 +36,7 @@ class IndustryDocsSearch:
         actual_batch_size = 100
 
         print(f"Querying for up to {n} documents with query: {q}")
-        print(f"Note: API returns maximum 100 documents per request")
+        print("Note: API returns maximum 100 documents per request")
 
         start = 0
         total_collected = 0

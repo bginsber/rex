@@ -9,10 +9,10 @@ Usage:
     # Create .env file with your API key
     echo "GROQ_API_KEY=gsk_your_key_here" > .env
     echo "REXLIT_ONLINE=1" >> .env
-    
+
     # Run test
     python test_groq_with_env.py
-    
+
     # Clean up
     rm .env
 """
@@ -30,9 +30,10 @@ else:
     # We're in project root, add rex/ to path
     sys.path.insert(0, str(script_dir / "rex"))
 
-from rexlit.app.adapters.groq_privilege import GroqPrivilegeAdapter
-from rexlit.app.adapters.groq_privilege_reasoning_adapter import GroqPrivilegeReasoningAdapter
-from rexlit.config import Settings
+from rexlit.app.adapters.groq_privilege import GroqPrivilegeAdapter  # noqa: E402
+from rexlit.app.adapters.groq_privilege_reasoning_adapter import (  # noqa: E402
+    GroqPrivilegeReasoningAdapter,
+)
 
 
 def load_env_file(env_path: Path = Path(".env")) -> dict[str, str]:
@@ -55,7 +56,7 @@ def test_groq_adapter():
     print("Groq Privilege Adapter Test (using .env file)")
     print("=" * 70)
     print()
-    
+
     # Check for .env file
     env_path = Path(".env")
     if not env_path.exists():
@@ -66,35 +67,35 @@ def test_groq_adapter():
         print("  REXLIT_ONLINE=1")
         print()
         return False
-    
+
     # Load .env file
     env_vars = load_env_file(env_path)
-    
+
     # Set environment variables
     for key, value in env_vars.items():
         os.environ[key] = value
         print(f"✓ Loaded {key}")
-    
+
     print()
-    
+
     # Check for required variables
     groq_key = os.getenv("GROQ_API_KEY")
     if not groq_key:
         print("❌ GROQ_API_KEY not found in .env file")
         return False
-    
+
     if not groq_key.startswith("gsk_"):
         print("⚠️  Warning: Groq API keys typically start with 'gsk_'")
-    
+
     online = os.getenv("REXLIT_ONLINE", "0")
     if online != "1":
         print("⚠️  Warning: REXLIT_ONLINE not set to 1, enabling for this test")
         os.environ["REXLIT_ONLINE"] = "1"
-    
+
     print()
     print("Testing GroqPrivilegeReasoningAdapter...")
     print()
-    
+
     # Test document
     test_text = """From: jennifer.smith@cooley.com
 To: john.doe@company.com
@@ -109,16 +110,16 @@ implications. Please keep this privileged and confidential.
 Best regards,
 Jennifer Smith, Esq.
 Cooley LLP"""
-    
+
     try:
         # Create Groq adapter
         groq_adapter = GroqPrivilegeAdapter(api_key=groq_key)
         print("✓ GroqPrivilegeAdapter created")
-        
+
         # Create reasoning adapter wrapper
         reasoning_adapter = GroqPrivilegeReasoningAdapter(groq_adapter)
         print("✓ GroqPrivilegeReasoningAdapter created")
-        
+
         # Test classification
         print()
         print("Classifying test document...")
@@ -127,7 +128,7 @@ Cooley LLP"""
             threshold=0.75,
             reasoning_effort="dynamic",
         )
-        
+
         print()
         print("=" * 70)
         print("Results:")
@@ -141,17 +142,17 @@ Cooley LLP"""
         print(f"Model Version: {decision.model_version}")
         print(f"Policy Version: {decision.policy_version}")
         print()
-        
+
         if decision.is_privileged:
             print("✅ SUCCESS: Privilege detected correctly!")
         else:
             print("⚠️  No privilege detected (may be correct depending on policy)")
-        
+
         if decision.error_message:
             print(f"⚠️  Error: {decision.error_message}")
-        
+
         return True
-        
+
     except Exception as e:
         print(f"❌ Error: {e}")
         import traceback

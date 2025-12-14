@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from rexlit.app.ports.privilege import PrivilegeFinding, PrivilegePort
+from rexlit.app.ports.privilege import PrivilegeFinding
 from rexlit.ingest.extract import extract_document
 
 
