@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from rexlit.app.ports.concept import ConceptFinding, ConceptPort
 
@@ -412,7 +412,7 @@ Respond with JSON only:
         concepts: list[str] | None = None,
         threshold: float = 0.5,
     ) -> list[ConceptFinding]:
-        with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+        with open(path, encoding="utf-8", errors="ignore") as handle:
             text = handle.read()
         return self.analyze_text(text, concepts=concepts, threshold=threshold)
 

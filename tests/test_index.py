@@ -866,7 +866,7 @@ def test_search_by_hash_matches_exact_hash(temp_dir: Path) -> None:
     Without this, Tantivy tokenizes hashes and search_by_hash fails.
     """
     from rexlit.utils.hashing import compute_sha256_file
-    
+
     # Set up a tiny corpus
     docs_dir = temp_dir / "docs"
     docs_dir.mkdir()

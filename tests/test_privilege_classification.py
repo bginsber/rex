@@ -4,13 +4,13 @@ Note: These tests require gpt-oss-safeguard-20b model to be installed.
 They will be skipped if the model is not available.
 """
 
-import pytest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
+
+import pytest
 
 from rexlit.app.ports.privilege_reasoning import (
     PolicyDecision,
-    PrivilegeReasoningPort,
     RedactionSpan,
 )
 from rexlit.app.privilege_service import PrivilegeReviewService

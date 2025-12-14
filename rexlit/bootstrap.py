@@ -23,7 +23,6 @@ from rexlit.app.adapters import (
     JSONLineRedactionPlanner,
     Kanon2Adapter,
     LocalLLMConceptAdapter,
-    NullConceptAdapter,
     PatternConceptAdapter,
     PDFStamperAdapter,
     PrivilegePatternsAdapter,
@@ -35,15 +34,15 @@ from rexlit.app.adapters.pii_regex import PIIRegexAdapter
 from rexlit.app.audit_service import AuditService
 from rexlit.app.ports import (
     BatesPlannerPort,
-    DeduperPort,
     ConceptPort,
+    DeduperPort,
     DiscoveryPort,
     EmbeddingPort,
     IndexPort,
     LedgerPort,
     OCRPort,
-    PIIPort,
     PackPort,
+    PIIPort,
     PrivilegePort,
     RedactionPlannerPort,
     StampPort,
@@ -592,7 +591,6 @@ def _create_privilege_reasoning_adapter(
         GroqPrivilegeReasoningAdapter,
     )
     from rexlit.app.adapters.privilege_safeguard import PrivilegeSafeguardAdapter
-    from rexlit.app.ports.privilege_reasoning import PrivilegeReasoningPort
 
     logger = logging.getLogger(__name__)
 

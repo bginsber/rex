@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -20,6 +21,7 @@ _logger = logging.getLogger(__name__)
 from rexlit.app.ports import LedgerPort, StoragePort
 from rexlit.app.ports.concept import ConceptFinding, ConceptPort
 from rexlit.config import Settings, get_settings
+from rexlit.utils.layout import map_highlight_boxes
 from rexlit.utils.offline import OfflineModeGate
 from rexlit.utils.paths import validate_input_root, validate_output_root
 from rexlit.utils.plans import (
@@ -28,8 +30,6 @@ from rexlit.utils.plans import (
     validate_highlight_plan_entry,
     write_highlight_plan_entry,
 )
-from rexlit.utils.layout import map_highlight_boxes
-
 
 DEFAULT_CATEGORY_COLORS: dict[str, str] = {
     "communication": "cyan",

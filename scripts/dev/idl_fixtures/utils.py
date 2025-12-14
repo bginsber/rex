@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Iterable, Mapping
 
 MANIFEST_FILENAME = "manifest.jsonl"
 
@@ -57,10 +57,10 @@ def filters_help() -> str:
     return ", ".join(f"{name}: {spec.description}" for name, spec in sorted(VALID_FILTERS.items()))
 
 
-def parse_filter_args(filters: Iterable[str] | None) -> Dict[str, object]:
+def parse_filter_args(filters: Iterable[str] | None) -> dict[str, object]:
     """Parse CLI filter arguments using the VALID_FILTERS mapping."""
 
-    parsed: Dict[str, object] = {}
+    parsed: dict[str, object] = {}
     if not filters:
         return parsed
 

@@ -1,6 +1,5 @@
 """Tests for PrivilegePatternsAdapter."""
 
-import pytest
 
 from rexlit.app.adapters.privilege_patterns import PrivilegePatternsAdapter
 

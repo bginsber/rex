@@ -64,7 +64,7 @@ def validate_policy(adapter: GroqPrivilegeAdapter, test_set: list[dict], thresho
                 print(f"✓ TP (conf={confidence:.2%})")
             elif not detected_privileged and not expected_privileged:
                 results["true_negatives"] += 1
-                print(f"✓ TN")
+                print("✓ TN")
             elif detected_privileged and not expected_privileged:
                 results["false_positives"] += 1
                 print(f"❌ FP (conf={confidence:.2%}) - {case['notes']}")
@@ -210,9 +210,9 @@ def main():
         return 1
 
     # Initialize adapter
-    print(f"Initializing Groq adapter...")
+    print("Initializing Groq adapter...")
     print(f"  Policy: {policy_path}")
-    print(f"  Model: openai/gpt-oss-safeguard-20b")
+    print("  Model: openai/gpt-oss-safeguard-20b")
 
     try:
         adapter = GroqPrivilegeAdapter(api_key=api_key, policy_path=policy_path)

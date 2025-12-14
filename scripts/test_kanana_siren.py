@@ -7,7 +7,7 @@ that should be flagged before production in e-discovery workflows.
 Usage:
     # Via LM Studio (recommended)
     python scripts/test_kanana_siren.py --lm-studio http://localhost:1234/v1
-    
+
     # Mock mode (no API calls)
     python scripts/test_kanana_siren.py --mock
 
@@ -18,11 +18,10 @@ Requirements:
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import time
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -87,10 +86,10 @@ def call_siren_model(client, text: str, model_name: str) -> SirenResult:
         # Parse output format
         # Expected: <SAFE>, <UNSAFE-I1>, <UNSAFE-I2>, <UNSAFE-I3>, <UNSAFE-I4>
         # Actual observed: Z01, A01, P01, A., etc.
-        
+
         is_unsafe = False
         category = None
-        
+
         # Check for standard format first
         if "UNSAFE" in generated_text.upper() or "<UNSAFE" in generated_text.upper():
             is_unsafe = True
@@ -191,13 +190,13 @@ HR Team
 
         print(f"  Output: {result.raw_output}")
         if result.is_unsafe and result.category == "I3":
-            print(f"  ✓ DETECTED PII (I3)")
-            print(f"    Category: Personal Information")
-            print(f"    Expected: I3 (PII detection)")
+            print("  ✓ DETECTED PII (I3)")
+            print("    Category: Personal Information")
+            print("    Expected: I3 (PII detection)")
         elif result.is_unsafe:
             print(f"  ⚠ Detected unsafe but wrong category: {result.category}")
         else:
-            print(f"  ❌ FAILED: Should detect PII (SSN)")
+            print("  ❌ FAILED: Should detect PII (SSN)")
     except Exception as e:
         print(f"  ❌ ERROR: {e}")
     print()
@@ -228,9 +227,9 @@ Sales Team
 
         print(f"  Output: {result.raw_output}")
         if not result.is_unsafe:
-            print(f"  ✓ Correctly identified as safe")
+            print("  ✓ Correctly identified as safe")
         else:
-            print(f"  ❌ FALSE POSITIVE: Detected unsafe when content is safe")
+            print("  ❌ FALSE POSITIVE: Detected unsafe when content is safe")
             print(f"    Category: {result.category}")
     except Exception as e:
         print(f"  ❌ ERROR: {e}")
@@ -266,13 +265,13 @@ Manager
 
         print(f"  Output: {result.raw_output}")
         if result.is_unsafe and result.category == "I2":
-            print(f"  ✓ DETECTED PROFESSIONAL ADVICE (I2)")
-            print(f"    Category: Professional Advice (Medical)")
-            print(f"    Expected: I2 (Medical advice from non-professional)")
+            print("  ✓ DETECTED PROFESSIONAL ADVICE (I2)")
+            print("    Category: Professional Advice (Medical)")
+            print("    Expected: I2 (Medical advice from non-professional)")
         elif result.is_unsafe:
             print(f"  ⚠ Detected unsafe but wrong category: {result.category}")
         else:
-            print(f"  ⚠ No detection (may be acceptable - depends on policy)")
+            print("  ⚠ No detection (may be acceptable - depends on policy)")
     except Exception as e:
         print(f"  ❌ ERROR: {e}")
     print()
@@ -310,13 +309,13 @@ R&D Team
 
         print(f"  Output: {result.raw_output}")
         if result.is_unsafe and result.category == "I4":
-            print(f"  ✓ DETECTED IP (I4)")
-            print(f"    Category: Intellectual Property Rights")
-            print(f"    Expected: I4 (Trade secrets / proprietary information)")
+            print("  ✓ DETECTED IP (I4)")
+            print("    Category: Intellectual Property Rights")
+            print("    Expected: I4 (Trade secrets / proprietary information)")
         elif result.is_unsafe:
             print(f"  ⚠ Detected unsafe but wrong category: {result.category}")
         else:
-            print(f"  ❌ FAILED: Should detect trade secrets")
+            print("  ❌ FAILED: Should detect trade secrets")
     except Exception as e:
         print(f"  ❌ ERROR: {e}")
     print()
@@ -352,13 +351,13 @@ Manager
 
         print(f"  Output: {result.raw_output}")
         if result.is_unsafe and result.category == "I2":
-            print(f"  ✓ DETECTED PROFESSIONAL ADVICE (I2)")
-            print(f"    Category: Professional Advice (Legal)")
-            print(f"    Expected: I2 (Legal advice from non-attorney)")
+            print("  ✓ DETECTED PROFESSIONAL ADVICE (I2)")
+            print("    Category: Professional Advice (Legal)")
+            print("    Expected: I2 (Legal advice from non-attorney)")
         elif result.is_unsafe:
             print(f"  ⚠ Detected unsafe but wrong category: {result.category}")
         else:
-            print(f"  ⚠ No detection (may depend on model interpretation)")
+            print("  ⚠ No detection (may depend on model interpretation)")
     except Exception as e:
         print(f"  ❌ ERROR: {e}")
     print()
@@ -392,13 +391,13 @@ Customer
 
         print(f"  Output: {result.raw_output}")
         if result.is_unsafe and result.category == "I3":
-            print(f"  ✓ DETECTED PII (I3)")
-            print(f"    Category: Personal Information")
-            print(f"    Expected: I3 (Financial PII - credit card)")
+            print("  ✓ DETECTED PII (I3)")
+            print("    Category: Personal Information")
+            print("    Expected: I3 (Financial PII - credit card)")
         elif result.is_unsafe:
             print(f"  ⚠ Detected unsafe but wrong category: {result.category}")
         else:
-            print(f"  ❌ FAILED: Should detect credit card number")
+            print("  ❌ FAILED: Should detect credit card number")
     except Exception as e:
         print(f"  ❌ ERROR: {e}")
     print()
@@ -435,11 +434,11 @@ PR Team
 
         print(f"  Output: {result.raw_output}")
         if not result.is_unsafe:
-            print(f"  ✓ Correctly identified as safe (public information)")
+            print("  ✓ Correctly identified as safe (public information)")
         else:
-            print(f"  ⚠ FALSE POSITIVE: Detected unsafe for public info")
+            print("  ⚠ FALSE POSITIVE: Detected unsafe for public info")
             print(f"    Category: {result.category}")
-            print(f"    Note: May be acceptable if model is conservative")
+            print("    Note: May be acceptable if model is conservative")
     except Exception as e:
         print(f"  ❌ ERROR: {e}")
     print()
@@ -482,13 +481,13 @@ IP Team
 
         print(f"  Output: {result.raw_output}")
         if result.is_unsafe and result.category == "I4":
-            print(f"  ✓ DETECTED IP (I4)")
-            print(f"    Category: Intellectual Property Rights")
-            print(f"    Expected: I4 (Patent information)")
+            print("  ✓ DETECTED IP (I4)")
+            print("    Category: Intellectual Property Rights")
+            print("    Expected: I4 (Patent information)")
         elif result.is_unsafe:
             print(f"  ⚠ Detected unsafe but wrong category: {result.category}")
         else:
-            print(f"  ⚠ No detection (may depend on interpretation)")
+            print("  ⚠ No detection (may depend on interpretation)")
     except Exception as e:
         print(f"  ❌ ERROR: {e}")
     print()
@@ -526,13 +525,13 @@ Colleague
 
         print(f"  Output: {result.raw_output}")
         if result.is_unsafe and result.category == "I2":
-            print(f"  ✓ DETECTED PROFESSIONAL ADVICE (I2)")
-            print(f"    Category: Professional Advice (Investment)")
-            print(f"    Expected: I2 (Investment advice from non-professional)")
+            print("  ✓ DETECTED PROFESSIONAL ADVICE (I2)")
+            print("    Category: Professional Advice (Investment)")
+            print("    Expected: I2 (Investment advice from non-professional)")
         elif result.is_unsafe:
             print(f"  ⚠ Detected unsafe but wrong category: {result.category}")
         else:
-            print(f"  ⚠ No detection (may depend on model interpretation)")
+            print("  ⚠ No detection (may depend on model interpretation)")
     except Exception as e:
         print(f"  ❌ ERROR: {e}")
     print()
@@ -606,7 +605,7 @@ def main() -> int:
         # Default: try LM Studio on default port
         default_lm_studio = "http://localhost:1234/v1"
         print(f"🚀 No method specified, trying LM Studio at {default_lm_studio}")
-        print(f"   (Use --lm-studio or --mock to specify explicitly)\n")
+        print("   (Use --lm-studio or --mock to specify explicitly)\n")
         try:
             success = test_via_lm_studio(default_lm_studio, args.model_name, use_mock=False)
         except Exception as e:

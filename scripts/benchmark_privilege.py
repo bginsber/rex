@@ -42,7 +42,7 @@ def benchmark_groq(sample_text: str, iterations: int = 10) -> dict:
     if not policy_path.exists():
         raise FileNotFoundError(f"Policy not found: {policy_path}")
 
-    print(f"Initializing Groq adapter...")
+    print("Initializing Groq adapter...")
     adapter = GroqPrivilegeAdapter(api_key=api_key, policy_path=policy_path)
 
     print(f"Running {iterations} iterations...")
@@ -153,7 +153,7 @@ Cooley LLP
 
     print()
     print("Comparison to self-hosted:")
-    print(f"  Self-hosted (estimated): 10-30s per doc (~0.03-0.1 docs/sec)")
+    print("  Self-hosted (estimated): 10-30s per doc (~0.03-0.1 docs/sec)")
     print(f"  Groq speedup: ~{(15.0 / mean_latency):.0f}x faster")
     print()
 

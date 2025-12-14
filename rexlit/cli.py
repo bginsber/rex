@@ -16,9 +16,9 @@ from rexlit.app.ports.stamp import BatesStampRequest
 from rexlit.app.privilege_service import PrivilegePolicyManager
 from rexlit.bootstrap import bootstrap_application
 from rexlit.config import get_settings, set_settings
+from rexlit.index.search import search_by_hash
 from rexlit.utils.methods import sanitize_argv
 from rexlit.utils.offline import OfflineModeGate
-from rexlit.index.search import search_by_hash
 from rexlit.utils.paths import validate_input_root, validate_output_root
 
 if TYPE_CHECKING:
@@ -615,7 +615,6 @@ def index_search(
     ] = None,
 ) -> None:
     """Search the index."""
-    import json
 
     container = bootstrap_application()
     # Log sanitized CLI invocation
@@ -732,7 +731,6 @@ def index_get(
     ] = False,
 ) -> None:
     """Retrieve document metadata by SHA-256 hash."""
-    import json
 
     container = bootstrap_application()
     try:
@@ -1607,7 +1605,6 @@ def audit_show(
     ] = None,
 ) -> None:
     """Show audit ledger entries."""
-    import json
 
     container = bootstrap_application()
 
@@ -2015,7 +2012,6 @@ def privilege_classify(
         rexlit privilege classify email001.txt
         rexlit privilege classify --threshold 0.80 --reasoning-effort high doc.pdf
     """
-    import json
 
     from rexlit.app.privilege_service import PrivilegeReviewService
     from rexlit.bootstrap import _create_privilege_reasoning_adapter

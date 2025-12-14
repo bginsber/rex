@@ -1,6 +1,5 @@
 """Tests for detection control and MIME-type gating."""
 
-import pytest
 
 from rexlit.utils.detection_control import should_detect_document
 

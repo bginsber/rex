@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Iterable
 
 from rexlit.app.ports.concept import ConceptFinding, ConceptPort
 
@@ -363,7 +362,7 @@ class PatternConceptAdapter(ConceptPort):
             return self._analyze_pdf(file_path, concepts, threshold)
 
         # Plain text / other formats - single page
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as handle:
+        with open(file_path, encoding="utf-8", errors="ignore") as handle:
             text = handle.read()
         return self.analyze_text(text, concepts=concepts, threshold=threshold, page=1)
 
@@ -401,7 +400,7 @@ class PatternConceptAdapter(ConceptPort):
                 path,
                 e,
             )
-            with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+            with open(path, encoding="utf-8", errors="ignore") as handle:
                 text = handle.read()
             return self.analyze_text(text, concepts=concepts, threshold=threshold, page=1)
 

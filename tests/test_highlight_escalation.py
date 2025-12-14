@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from rexlit.app.adapters.pattern_concept_adapter import PatternConceptAdapter
 from rexlit.app.adapters.local_llm_concept_adapter import LocalLLMConceptAdapter
+from rexlit.app.adapters.pattern_concept_adapter import PatternConceptAdapter
 from rexlit.app.highlight_service import HighlightService
 from rexlit.app.ports.concept import ConceptFinding
 from rexlit.config import Settings

@@ -13,8 +13,8 @@ Usage:
 import os
 import sys
 import time
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 
 # Add parent directory to path so we can import rexlit
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -175,19 +175,19 @@ Juul Labs
         print(f"  Findings: {len(findings)}")
         if findings:
             f = findings[0]
-            print(f"  ✓ DETECTED PRIVILEGE")
+            print("  ✓ DETECTED PRIVILEGE")
             print(f"    Rule: {f.rule}")
             print(f"    Match Type: {f.match_type}")
             print(f"    Confidence: {f.confidence:.2%}")
             print(f"    Snippet: {f.snippet[:100]}...")
             if f.confidence >= 0.90:
-                print(f"    ✓ HIGH confidence (≥90%)")
+                print("    ✓ HIGH confidence (≥90%)")
             elif f.confidence >= 0.75:
-                print(f"    ✓ GOOD confidence (≥75%)")
+                print("    ✓ GOOD confidence (≥75%)")
             else:
-                print(f"    ⚠ LOW confidence (<75%)")
+                print("    ⚠ LOW confidence (<75%)")
         else:
-            print(f"  ❌ FAILED: Expected privilege detection but got none")
+            print("  ❌ FAILED: Expected privilege detection but got none")
     except Exception as e:
         print(f"  ❌ ERROR: {e}")
     print()
@@ -214,12 +214,12 @@ Sales Team
         findings = analyze_text(adapter, business_email, 2, use_mock)
         print(f"  Findings: {len(findings)}")
         if findings:
-            print(f"  ❌ FALSE POSITIVE: Detected privilege when there is none")
+            print("  ❌ FALSE POSITIVE: Detected privilege when there is none")
             f = findings[0]
             print(f"    Confidence: {f.confidence:.2%}")
             print(f"    Snippet: {f.snippet[:100]}...")
         else:
-            print(f"  ✓ Correctly identified as non-privileged")
+            print("  ✓ Correctly identified as non-privileged")
     except Exception as e:
         print(f"  ❌ ERROR: {e}")
     print()
@@ -260,14 +260,14 @@ advise the sender immediately.
         print(f"  Findings: {len(findings)}")
         if findings:
             f = findings[0]
-            print(f"  Detected potential privilege (edge case)")
+            print("  Detected potential privilege (edge case)")
             print(f"    Confidence: {f.confidence:.2%}")
             if f.confidence < 0.75:
-                print(f"    ✓ Correctly flagged for human review (low confidence)")
+                print("    ✓ Correctly flagged for human review (low confidence)")
             else:
-                print(f"    ⚠ May be false positive - confidence seems high")
+                print("    ⚠ May be false positive - confidence seems high")
         else:
-            print(f"  ✓ Correctly identified as non-privileged")
+            print("  ✓ Correctly identified as non-privileged")
     except Exception as e:
         print(f"  ❌ ERROR: {e}")
     print()
@@ -302,16 +302,16 @@ Sarah Chen, Litigation Counsel
         print(f"  Findings: {len(findings)}")
         if findings:
             f = findings[0]
-            print(f"  ✓ DETECTED PRIVILEGE")
+            print("  ✓ DETECTED PRIVILEGE")
             print(f"    Rule: {f.rule}")
             print(f"    Confidence: {f.confidence:.2%}")
             print(f"    Snippet: {f.snippet[:100]}...")
             if f.confidence >= 0.85:
-                print(f"    ✓ HIGH confidence")
+                print("    ✓ HIGH confidence")
             else:
-                print(f"    ⚠ Lower than expected confidence")
+                print("    ⚠ Lower than expected confidence")
         else:
-            print(f"  ❌ FAILED: Expected work product detection")
+            print("  ❌ FAILED: Expected work product detection")
     except Exception as e:
         print(f"  ❌ ERROR: {e}")
     print()
@@ -352,13 +352,13 @@ Juul Labs
         print(f"  Findings: {len(findings)}")
         if findings:
             f = findings[0]
-            print(f"  ✓ DETECTED IMPLICIT PRIVILEGE")
+            print("  ✓ DETECTED IMPLICIT PRIVILEGE")
             print(f"    Rule: {f.rule}")
             print(f"    Confidence: {f.confidence:.2%}")
             if f.confidence < 0.75:
-                print(f"    ⚠ Lower confidence - may require human review")
+                print("    ⚠ Lower confidence - may require human review")
         else:
-            print(f"  ⚠ No privilege detected (possible false negative)")
+            print("  ⚠ No privilege detected (possible false negative)")
     except Exception as e:
         print(f"  ❌ ERROR: {e}")
     print()
@@ -391,12 +391,12 @@ General Counsel
         print(f"  Findings: {len(findings)}")
         if findings:
             f = findings[0]
-            print(f"  ✓ DETECTED PRIVILEGE SECTION")
+            print("  ✓ DETECTED PRIVILEGE SECTION")
             print(f"    Rule: {f.rule}")
             print(f"    Confidence: {f.confidence:.2%}")
-            print(f"    Note: Email contains both waived and protected content")
+            print("    Note: Email contains both waived and protected content")
         else:
-            print(f"  ⚠ No privilege detected (possible issue with mixed content)")
+            print("  ⚠ No privilege detected (possible issue with mixed content)")
     except Exception as e:
         print(f"  ❌ ERROR: {e}")
     print()
@@ -436,14 +436,14 @@ Director, Regulatory Affairs
         print(f"  Findings: {len(findings)}")
         if findings:
             f = findings[0]
-            print(f"  ⚠ Detected potential privilege claim")
+            print("  ⚠ Detected potential privilege claim")
             print(f"    Confidence: {f.confidence:.2%}")
             if f.confidence < 0.50:
-                print(f"    ✓ Low confidence - appropriate (mixed business/legal content)")
+                print("    ✓ Low confidence - appropriate (mixed business/legal content)")
             else:
-                print(f"    ⚠ May be overconfident - decision partly business-driven")
+                print("    ⚠ May be overconfident - decision partly business-driven")
         else:
-            print(f"  ✓ Correctly identified as non-privileged (business decision)")
+            print("  ✓ Correctly identified as non-privileged (business decision)")
     except Exception as e:
         print(f"  ❌ ERROR: {e}")
     print()
@@ -486,11 +486,11 @@ Operations Director
         print(f"  Findings: {len(findings)}")
         if findings:
             f = findings[0]
-            print(f"  ✓ DETECTED ATTORNEY COMMUNICATION")
+            print("  ✓ DETECTED ATTORNEY COMMUNICATION")
             print(f"    Confidence: {f.confidence:.2%}")
-            print(f"    Issue: Forwarded to non-lawyers may affect privilege status")
+            print("    Issue: Forwarded to non-lawyers may affect privilege status")
         else:
-            print(f"  ⚠ No privilege detected")
+            print("  ⚠ No privilege detected")
     except Exception as e:
         print(f"  ❌ ERROR: {e}")
     print()
@@ -534,13 +534,13 @@ Synchrogenix (on behalf of Juul Labs)
         print(f"  Findings: {len(findings)}")
         if findings:
             f = findings[0]
-            print(f"  ✓ DETECTED EXPLICIT PRIVILEGE NOTICE")
+            print("  ✓ DETECTED EXPLICIT PRIVILEGE NOTICE")
             print(f"    Rule: {f.rule}")
             print(f"    Confidence: {f.confidence:.2%}")
             if f.confidence >= 0.90:
-                print(f"    ✓ HIGH confidence (explicit notice + substance)")
+                print("    ✓ HIGH confidence (explicit notice + substance)")
         else:
-            print(f"  ❌ FAILED: Should detect explicit privilege notice")
+            print("  ❌ FAILED: Should detect explicit privilege notice")
     except Exception as e:
         print(f"  ❌ ERROR: {e}")
     print()
@@ -628,7 +628,7 @@ def main():
 
         if not policy_path.exists():
             print(f"❌ Policy not found: {policy_path}")
-            print(f"   Try: python test_groq_privilege.py --mock")
+            print("   Try: python test_groq_privilege.py --mock")
             return False
 
         print(f"✓ Using policy: {policy_name}")

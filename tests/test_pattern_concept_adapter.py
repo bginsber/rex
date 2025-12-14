@@ -56,13 +56,13 @@ class TestEmailCommunication:
         """Email headers get higher base confidence than standalone addresses."""
         header_text = "From: ceo@company.com"
         address_text = "Contact us at info@company.com for details."
-        
+
         header_findings = adapter.analyze_text(header_text, concepts=["EMAIL_COMMUNICATION"])
         address_findings = adapter.analyze_text(address_text, concepts=["EMAIL_COMMUNICATION"])
-        
+
         header_finding = next((f for f in header_findings if "From:" in header_text[f.start:f.end]), None)
         address_finding = next((f for f in address_findings), None)
-        
+
         assert header_finding is not None
         assert address_finding is not None
         # Headers (0.80 base) > addresses (0.65 base)

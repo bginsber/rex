@@ -1,6 +1,5 @@
 """Detection control and gating utilities for PII/privilege filtering."""
 
-from typing import Optional
 
 # MIME types eligible for PII/privilege detection
 DETECTABLE_MIME_TYPES = {
@@ -50,7 +49,7 @@ def should_detect_document(
     extension: str,
     size_bytes: int,
     max_size: int = DEFAULT_MAX_DETECTION_SIZE_BYTES,
-) -> tuple[bool, Optional[str]]:
+) -> tuple[bool, str | None]:
     """Determine if a document should be scanned for PII/privilege.
 
     Args:

@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from rexlit.utils.bates_verify import verify_bates_registry
 from rexlit.cli import app
+from rexlit.utils.bates_verify import verify_bates_registry
 from rexlit.utils.hashing import compute_sha256_file
 
 
