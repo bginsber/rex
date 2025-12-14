@@ -39,4 +39,4 @@ jobs:
         run: black --check .
 
       - name: Test
-        run: PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -v --no-cov
+        run: pytest -v --no-cov
