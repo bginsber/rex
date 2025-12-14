@@ -168,20 +168,17 @@ class TestVerifyBatesRegistry:
         assert not is_valid
         assert any("Hash mismatch" in e for e in errors)
 
-    def test_missing_required_field_detected(self, temp_dir: Path) -> None:
-        """Records missing required fields should be reported."""
+    def test_missing_bates_id_field_detected(self, temp_dir: Path) -> None:
+        """Records missing bates_id field should be reported."""
         docs = temp_dir / "docs"
         docs.mkdir()
         doc = docs / "doc.txt"
         doc.write_text("Content")
 
         plan_path = temp_dir / "bates_plan.jsonl"
-
-        # Missing bates_id
         record = {
             "document": str(doc),
             "sha256": compute_sha256_file(doc),
-            # "bates_id" is missing
         }
         with plan_path.open("w") as f:
             f.write(json.dumps(record) + "\n")
@@ -189,6 +186,39 @@ class TestVerifyBatesRegistry:
         is_valid, errors = verify_bates_registry(plan_path)
         assert not is_valid
         assert any("'bates_id'" in e for e in errors)
+
+    def test_missing_sha256_field_detected(self, temp_dir: Path) -> None:
+        """Records missing sha256 field should be reported."""
+        docs = temp_dir / "docs"
+        docs.mkdir()
+        doc = docs / "doc.txt"
+        doc.write_text("Content")
+
+        plan_path = temp_dir / "bates_plan.jsonl"
+        record = {
+            "document": str(doc),
+            "bates_id": "RXL-000001",
+        }
+        with plan_path.open("w") as f:
+            f.write(json.dumps(record) + "\n")
+
+        is_valid, errors = verify_bates_registry(plan_path)
+        assert not is_valid
+        assert any("'sha256'" in e for e in errors)
+
+    def test_missing_document_field_detected(self, temp_dir: Path) -> None:
+        """Records missing document field should be reported."""
+        plan_path = temp_dir / "bates_plan.jsonl"
+        record = {
+            "sha256": "a" * 64,
+            "bates_id": "RXL-000001",
+        }
+        with plan_path.open("w") as f:
+            f.write(json.dumps(record) + "\n")
+
+        is_valid, errors = verify_bates_registry(plan_path)
+        assert not is_valid
+        assert any("'document'" in e for e in errors)
 
     def test_invalid_json_detected(self, temp_dir: Path) -> None:
         """Invalid JSON lines should be reported."""
@@ -293,6 +323,38 @@ class TestBatesVerifyCLI:
         # The test should pass - valid is True if no errors
         if result.exit_code == 0:
             assert output["valid"] is True
+
+    def test_verify_json_output_when_invalid(self, temp_dir: Path) -> None:
+        """CLI --json output should include errors when verification fails."""
+        # Create plan with missing file reference
+        bates_dir = temp_dir / "data" / "bates"
+        bates_dir.mkdir(parents=True)
+        plan_path = bates_dir / "bates_plan.jsonl"
+        record = {
+            "document": str(temp_dir / "nonexistent.txt"),
+            "sha256": "a" * 64,
+            "bates_id": "RXL-000001",
+        }
+        with plan_path.open("w") as f:
+            f.write(json.dumps(record) + "\n")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            app,
+            ["--data-dir", str(temp_dir / "data"), "bates", "verify", "--json"],
+        )
+        assert result.exit_code == 1
+
+        try:
+            output = json.loads(result.output)
+        except json.JSONDecodeError:
+            pytest.fail(f"Invalid JSON output: {result.output}")
+
+        assert output["schema_id"] == "bates_verification"
+        assert output["valid"] is False
+        assert "errors" in output
+        assert len(output["errors"]) >= 1
+        assert any("not found" in e.lower() for e in output["errors"])
 
     def test_verify_missing_plan_file(self, temp_dir: Path) -> None:
         """CLI should fail gracefully when no plan file exists."""

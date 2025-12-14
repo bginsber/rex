@@ -90,11 +90,16 @@ def verify_bates_registry(plan_path: Path) -> tuple[bool, list[str]]:
                         f"Line {line_num}: File not found - {doc_path} (Bates: {bates_id})"
                     )
                 else:
-                    actual_hash = compute_sha256_file(file_path)
-                    if actual_hash != sha256:
+                    try:
+                        actual_hash = compute_sha256_file(file_path)
+                        if actual_hash != sha256:
+                            errors.append(
+                                f"Line {line_num}: Hash mismatch for {doc_path} "
+                                f"(expected {sha256[:12]}..., got {actual_hash[:12]}...)"
+                            )
+                    except (PermissionError, OSError) as e:
                         errors.append(
-                            f"Line {line_num}: Hash mismatch for {doc_path} "
-                            f"(expected {sha256[:12]}..., got {actual_hash[:12]}...)"
+                            f"Line {line_num}: Cannot read {doc_path} - {e}"
                         )
 
     except OSError as e:

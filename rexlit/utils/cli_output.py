@@ -31,15 +31,11 @@ def json_response(
         JSON string with schema metadata and payload.
 
     Example:
-        >>> json_response("search_results", 1, query="test", results=[])
-        {
-          "schema_id": "search_results",
-          "schema_version": 1,
-          "producer": "rexlit-0.2.0",
-          "produced_at": "2025-12-12T10:30:00+00:00",
-          "query": "test",
-          "results": []
-        }
+        >>> output = json_response("search_results", 1, query="test", results=[])
+        >>> isinstance(output, str)
+        True
+        >>> "schema_id" in output and "producer" in output
+        True
     """
     stamp = build_schema_stamp(schema_id=schema_id, schema_version=schema_version)
     wrapped = {

@@ -9,8 +9,6 @@ RexLit configuration is controlled through environment variables and CLI flags. 
 | `REXLIT_HOME` | `~/.local/share/rexlit` | Base data directory for indexes, manifests, and audit logs |
 | `REXLIT_ONLINE` | `false` | Enable network features (dense search, LLM privilege classification) |
 | `REXLIT_WORKERS` | `cpu_count - 1` | Parallel worker count for indexing |
-| `REXLIT_BATCH_SIZE` | `100` | Documents per batch during indexing |
-| `REXLIT_LOG_LEVEL` | `INFO` | Python logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 
 ## Directory Structure
 
