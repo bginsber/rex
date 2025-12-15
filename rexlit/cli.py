@@ -2258,6 +2258,219 @@ def privilege_explain(
         typer.echo(f"  {decision.error_message}")
         typer.echo()
 
+@app.command("doctor")
+def doctor(
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output results as JSON"),
+    ] = False,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", "-v", help="Show additional diagnostic information"),
+    ] = False,
+) -> None:
+    """Run health checks and report system status.
+
+    Verifies that RexLit is properly configured and can run core operations.
+    Useful for troubleshooting first-run issues and validating production setups.
+
+    Example:
+        rexlit doctor
+        rexlit doctor --json
+        rexlit doctor --verbose
+    """
+    import shutil
+    import platform
+    from rexlit import __version__
+    from rexlit.config import get_settings
+
+    checks: list[dict[str, str | bool]] = []
+    all_passed = True
+
+    def add_check(name: str, passed: bool, message: str, suggestion: str = "") -> None:
+        nonlocal all_passed
+        if not passed:
+            all_passed = False
+        checks.append({
+            "name": name,
+            "passed": passed,
+            "message": message,
+            "suggestion": suggestion,
+        })
+
+    # 1. Python version
+    py_version = platform.python_version()
+    py_ok = sys.version_info >= (3, 11)
+    add_check(
+        "python_version",
+        py_ok,
+        f"Python {py_version}",
+        "RexLit requires Python 3.11+" if not py_ok else "",
+    )
+
+    # 2. RexLit version
+    add_check(
+        "rexlit_installed",
+        True,
+        f"RexLit {__version__}",
+        "",
+    )
+
+    # 3. Data directory
+    try:
+        settings = get_settings()
+        data_dir = settings.get_data_dir()
+        data_dir_exists = data_dir.exists()
+        data_dir_writable = data_dir_exists and data_dir.is_dir()
+        if data_dir_writable:
+            try:
+                test_file = data_dir / ".doctor_test"
+                test_file.touch()
+                test_file.unlink()
+            except (PermissionError, OSError):
+                data_dir_writable = False
+
+        add_check(
+            "data_directory",
+            data_dir_writable,
+            f"Data directory: {data_dir}" + (" (writable)" if data_dir_writable else ""),
+            f"Create or fix permissions: mkdir -p {data_dir}" if not data_dir_writable else "",
+        )
+    except Exception as e:
+        add_check(
+            "data_directory",
+            False,
+            f"Failed to resolve data directory: {e}",
+            "Check REXLIT_HOME or REXLIT_DATA_DIR environment variables",
+        )
+        settings = None
+
+    # 4. Index status
+    if settings:
+        try:
+            index_dir = settings.get_index_dir()
+            index_exists = index_dir.exists() and (index_dir / "meta.json").exists()
+            if index_exists:
+                # Count indexed documents via metadata cache
+                cache_path = index_dir / ".metadata_cache.json"
+                if cache_path.exists():
+                    import json as _json
+                    try:
+                        cache = _json.loads(cache_path.read_text(encoding="utf-8"))
+                        doc_count = cache.get("total_documents", "unknown")
+                        add_check(
+                            "search_index",
+                            True,
+                            f"Search index: {doc_count} documents indexed",
+                            "",
+                        )
+                    except Exception:
+                        add_check("search_index", True, "Search index exists", "")
+                else:
+                    add_check("search_index", True, "Search index exists (no metadata cache)", "")
+            else:
+                add_check(
+                    "search_index",
+                    False,
+                    "No search index found",
+                    "Build with: rexlit index build <documents-path>",
+                )
+        except Exception as e:
+            add_check("search_index", False, f"Index check failed: {e}", "")
+
+    # 5. Audit ledger
+    if settings:
+        try:
+            audit_path = settings.get_audit_path()
+            audit_ok = audit_path.exists() and audit_path.stat().st_size > 0
+            if audit_ok:
+                # Try to verify integrity
+                container = bootstrap_application(settings)
+                valid, error = container.audit_service.verify()
+                if valid:
+                    add_check("audit_ledger", True, f"Audit ledger: {audit_path} (verified)", "")
+                else:
+                    add_check(
+                        "audit_ledger",
+                        False,
+                        f"Audit ledger integrity failed: {error}",
+                        "Regenerate audit ledger from trusted manifests",
+                    )
+            else:
+                add_check(
+                    "audit_ledger",
+                    True,  # Not having an audit log is OK for first run
+                    "No audit ledger yet (will be created on first operation)",
+                    "",
+                )
+        except Exception as e:
+            add_check("audit_ledger", False, f"Audit check failed: {e}", "")
+
+    # 6. Tesseract OCR (optional)
+    tesseract_path = shutil.which("tesseract")
+    if tesseract_path:
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["tesseract", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            version_line = result.stdout.split("\n")[0] if result.stdout else "unknown"
+            add_check("tesseract_ocr", True, f"Tesseract: {version_line}", "")
+        except Exception:
+            add_check("tesseract_ocr", True, f"Tesseract found: {tesseract_path}", "")
+    else:
+        add_check(
+            "tesseract_ocr",
+            True,  # Optional, so still "pass" but with note
+            "Tesseract not installed (OCR features unavailable)",
+            "Install with: brew install tesseract (macOS) or apt install tesseract-ocr",
+        )
+
+    # 7. API connectivity check hint (if verbose)
+    if verbose and settings:
+        add_check(
+            "api_hint",
+            True,
+            "API: Start with 'cd api && REXLIT_HOME=$PWD bun run index.ts'",
+            "",
+        )
+
+    # Output results
+    if json_output:
+        import json as _json
+        from rexlit.utils.cli_output import json_response
+
+        typer.echo(
+            json_response(
+                "doctor_report",
+                1,
+                all_passed=all_passed,
+                checks=checks,
+            )
+        )
+    else:
+        typer.echo()
+        typer.secho("🩺 RexLit Doctor", fg=typer.colors.CYAN, bold=True)
+        typer.secho("=" * 40, fg=typer.colors.CYAN)
+        typer.echo()
+
+        for check in checks:
+            icon = "✓" if check["passed"] else "✗"
+            color = typer.colors.GREEN if check["passed"] else typer.colors.RED
+            typer.secho(f"  {icon} {check['message']}", fg=color)
+            if check.get("suggestion") and not check["passed"]:
+                typer.secho(f"    → {check['suggestion']}", fg=typer.colors.YELLOW)
+
+        typer.echo()
+        if all_passed:
+            typer.secho("All checks passed! ✓", fg=typer.colors.GREEN, bold=True)
+        else:
+            typer.secho("Some checks failed. See suggestions above.", fg=typer.colors.RED)
+            raise typer.Exit(code=1)
+
 
 if __name__ == "__main__":
     app()

@@ -348,7 +348,7 @@ describe('input validation and API responses', () => {
     )
     expect(response.status).toBe(400)
     const data = await response.json()
-    expect(data.error).toContain('Either hash or path is required')
+    expect(data.error.message).toContain('Either hash or path is required')
   })
 
   test('classify rejects invalid threshold type', async () => {
@@ -362,7 +362,7 @@ describe('input validation and API responses', () => {
     )
     expect(response.status).toBe(400)
     const data = await response.json()
-    expect(data.error).toContain('threshold must be a number')
+    expect(data.error.message).toContain('threshold must be a number')
   })
 
   test('classify rejects non-string path inputs', async () => {
@@ -376,7 +376,7 @@ describe('input validation and API responses', () => {
     )
     expect(response.status).toBe(400)
     const data = await response.json()
-    expect(data.error).toContain('Either hash or path is required')
+    expect(data.error.message).toContain('Either hash or path is required')
   })
 
   test('classify rejects threshold below zero', async () => {
@@ -520,7 +520,7 @@ describe('input validation and API responses', () => {
 
   test('classify surfaces sanitized path traversal error', async () => {
     setRunRexlitImplementation(async () => {
-      throw new Error(`${REXLIT_HOME}/secret/leak`) 
+      throw new Error(`${REXLIT_HOME}/secret/leak`)
     })
     const app = createApp()
     const response = await app.handle(
@@ -531,7 +531,7 @@ describe('input validation and API responses', () => {
       })
     )
     const data = await response.json()
-    expect(data.error.includes('[REXLIT_HOME]')).toBe(true)
+    expect(data.error.message.includes('[REXLIT_HOME]')).toBe(true)
   })
 
   test('sanitizeErrorMessage scrubs external paths', () => {
@@ -612,7 +612,7 @@ describe('input validation and API responses', () => {
 
     expect(response.status).not.toBe(200)
     const payload = await response.json()
-    expect(payload.error).toContain('Path traversal detected')
+    expect(payload.error.message).toContain('Path traversal detected')
     rmSync(outsideDir, { recursive: true, force: true })
   })
 
@@ -727,6 +727,6 @@ describe('input validation and API responses', () => {
     )
     expect(response.status).toBe(400)
     const data = await response.json()
-    expect(data.error).toContain('hash must be provided as a string')
+    expect(data.error.message).toContain('hash must be provided as a string')
   })
 })

@@ -74,6 +74,7 @@ export const REXLIT_HOME = resolve(
 const REXLIT_HOME_REALPATH = resolveRealPathAllowMissing(REXLIT_HOME)
 const HIGHLIGHTS_PLAN_PATH = Bun.env.HIGHLIGHTS_PLAN_PATH ?? join(REXLIT_HOME, 'highlights', 'highlights.enc')
 const HIGHLIGHTS_CACHE_DIR = Bun.env.HIGHLIGHTS_CACHE_DIR ?? join(REXLIT_HOME, 'highlights', 'cache')
+const HIGHLIGHT_HASH_PATTERN = /^[0-9a-f]{64}$/i
 
 // CLI health status (set during startup check)
 export let cliHealthy = false
@@ -127,6 +128,24 @@ export interface HighlightData {
   color_legend: Record<string, string>
 }
 
+class InvalidHighlightHashError extends Error {
+  constructor(message = 'Invalid highlight hash') {
+    super(message)
+    this.name = 'InvalidHighlightHashError'
+  }
+}
+
+function sanitizeHighlightHash(hash: string): string {
+  if (typeof hash !== 'string') {
+    throw new InvalidHighlightHashError()
+  }
+  const normalized = hash.trim()
+  if (!HIGHLIGHT_HASH_PATTERN.test(normalized)) {
+    throw new InvalidHighlightHashError()
+  }
+  return normalized.toLowerCase()
+}
+
 async function runRexlitHighlights(args: string[], options: RunOptions = {}): Promise<string> {
   const proc = Bun.spawn([REXLIT_BIN, 'highlight', ...args], {
     stdout: 'pipe',
@@ -165,7 +184,8 @@ async function runRexlitHighlights(args: string[], options: RunOptions = {}): Pr
 }
 
 async function getCachedHighlight(hash: string, format: 'json' | 'heatmap'): Promise<HighlightData | unknown> {
-  const cachePath = join(HIGHLIGHTS_CACHE_DIR, `${hash}.${format}.json`)
+  const sanitizedHash = sanitizeHighlightHash(hash)
+  const cachePath = join(HIGHLIGHTS_CACHE_DIR, `${sanitizedHash}.${format}.json`)
   if (existsSync(cachePath)) {
     return JSON.parse(readFileSync(cachePath, { encoding: 'utf-8' }))
   }
@@ -288,8 +308,8 @@ async function runRexlitNative(
       const errorInfo = detectCliErrorType(stderr)
       if (errorInfo) {
         const detailedError = new Error(errorInfo.message)
-        ;(detailedError as any).cliErrorType = errorInfo.type
-        ;(detailedError as any).rawStderr = stderr.trim()
+          ; (detailedError as any).cliErrorType = errorInfo.type
+          ; (detailedError as any).rawStderr = stderr.trim()
         throw detailedError
       }
 
@@ -379,14 +399,66 @@ export function sanitizeErrorMessage(message: string) {
   })
 }
 
-export function jsonError(message: string, status = 500) {
-  return new Response(
-    JSON.stringify({ error: sanitizeErrorMessage(message) }),
-    {
-      status,
-      headers: { 'Content-Type': 'application/json' }
-    }
-  )
+/**
+ * Error code to HTTP status mapping for stable exit codes
+ */
+export const ERROR_CODES = {
+  VALIDATION_ERROR: 400,
+  INVALID_HASH: 400,
+  PATH_TRAVERSAL: 400,
+  DOCUMENT_NOT_FOUND: 404,
+  POLICY_NOT_FOUND: 404,
+  RESOURCE_NOT_FOUND: 404,
+  CLI_ERROR: 500,
+  INTERNAL_ERROR: 500,
+  TIMEOUT: 504,
+} as const
+
+export type ErrorCode = keyof typeof ERROR_CODES
+
+/**
+ * Generate a request ID if not provided
+ */
+export function generateRequestId(): string {
+  return `req_${randomUUID().replace(/-/g, '').slice(0, 16)}`
+}
+
+/**
+ * Standardized error response with code, message, and tracking
+ */
+export function jsonError(
+  message: string,
+  status = 500,
+  options: {
+    code?: ErrorCode
+    requestId?: string
+    details?: Record<string, unknown>
+  } = {}
+) {
+  const errorCode = options.code ?? (status >= 500 ? 'INTERNAL_ERROR' : 'VALIDATION_ERROR')
+  const requestId = options.requestId ?? generateRequestId()
+  const timestamp = new Date().toISOString()
+
+  const body: Record<string, unknown> = {
+    error: {
+      code: errorCode,
+      message: sanitizeErrorMessage(message),
+    },
+    request_id: requestId,
+    timestamp,
+  }
+
+  if (options.details) {
+    ; (body.error as Record<string, unknown>).details = options.details
+  }
+
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Request-ID': requestId,
+    },
+  })
 }
 
 function parsePolicyStage(value: string | number | undefined): number {
@@ -397,29 +469,29 @@ function parsePolicyStage(value: string | number | undefined): number {
   return stageNumber
 }
 
-function handlePolicyError(error: unknown) {
+function handlePolicyError(error: unknown, requestId?: string) {
   const message = error instanceof Error ? error.message : String(error)
   const normalized = message.toLowerCase()
 
   if (normalized.includes('stage must be')) {
-    return jsonError(message, 400)
+    return jsonError(message, 400, { code: 'VALIDATION_ERROR', requestId })
   }
   if (normalized.includes('text is required')) {
-    return jsonError(message, 400)
+    return jsonError(message, 400, { code: 'VALIDATION_ERROR', requestId })
   }
   if (normalized.includes('policy template is empty')) {
-    return jsonError(message, 400)
+    return jsonError(message, 400, { code: 'VALIDATION_ERROR', requestId })
   }
   if (normalized.includes('path traversal detected')) {
-    return jsonError(message, 400)
+    return jsonError(message, 400, { code: 'PATH_TRAVERSAL', requestId })
   }
   if (normalized.includes('document not found') || normalized.includes('policy template missing')) {
-    return jsonError(message, 404)
+    return jsonError(message, 404, { code: 'RESOURCE_NOT_FOUND', requestId })
   }
   if (normalized.includes('timed out')) {
-    return jsonError(message, 504)
+    return jsonError(message, 504, { code: 'TIMEOUT', requestId })
   }
-  return jsonError(message, 500)
+  return jsonError(message, 500, { code: 'CLI_ERROR', requestId })
 }
 
 export async function resolveDocumentPath(body: PrivilegeRequestBody) {
@@ -516,7 +588,7 @@ function sanitizePatternMatches(value: unknown): PatternMatch[] {
 export function buildStageStatus(decision: PolicyDecision): StageStatus[] {
   const reasoningEffort =
     typeof decision?.reasoning_effort === 'string' &&
-    ALLOWED_REASONING_EFFORTS.has(decision.reasoning_effort as ReasoningEffort)
+      ALLOWED_REASONING_EFFORTS.has(decision.reasoning_effort as ReasoningEffort)
       ? (decision.reasoning_effort as ReasoningEffort)
       : 'medium'
 
@@ -536,10 +608,10 @@ export function buildStageStatus(decision: PolicyDecision): StageStatus[] {
 
   const responsive = Array.isArray(decision?.labels)
     ? decision.labels.some(
-        (label) =>
-          typeof label === 'string' &&
-          label.toUpperCase().includes('RESPONSIVE')
-      )
+      (label) =>
+        typeof label === 'string' &&
+        label.toUpperCase().includes('RESPONSIVE')
+    )
     : false
 
   stages.push({
@@ -623,21 +695,25 @@ export function createApp() {
     .use(cors())
     .get('/api/health', () => ({ status: 'ok' }))
     .get('/api/highlights/:hash', async ({ params }) => {
-      const { hash } = params
       try {
-        const data = await getCachedHighlight(hash, 'json')
+        const data = await getCachedHighlight(params.hash, 'json')
         return data as HighlightData
       } catch (error) {
+        if (error instanceof InvalidHighlightHashError) {
+          return jsonError(error.message, 400)
+        }
         console.error('Highlight export failed', error)
         return jsonError('Highlight export failed', 500)
       }
     })
     .get('/api/highlights/:hash/heatmap', async ({ params }) => {
-      const { hash } = params
       try {
-        const data = await getCachedHighlight(hash, 'heatmap')
+        const data = await getCachedHighlight(params.hash, 'heatmap')
         return data
       } catch (error) {
+        if (error instanceof InvalidHighlightHashError) {
+          return jsonError(error.message, 400)
+        }
         console.error('Highlight heatmap export failed', error)
         return jsonError('Highlight heatmap export failed', 500)
       }
@@ -798,181 +874,181 @@ export function createApp() {
     })
 
     .post(
-    '/api/privilege/classify',
-    async ({ body }: { body: PrivilegeRequestBody | undefined }) => {
-      try {
-        const payload: PrivilegeRequestBody = body ?? {}
-        const filePath = await resolveDocumentPath(payload)
-        const args = ['privilege', 'classify', filePath, '--json']
+      '/api/privilege/classify',
+      async ({ body }: { body: PrivilegeRequestBody | undefined }) => {
+        try {
+          const payload: PrivilegeRequestBody = body ?? {}
+          const filePath = await resolveDocumentPath(payload)
+          const args = ['privilege', 'classify', filePath, '--json']
 
-        let threshold: number | undefined
-        if (payload?.threshold !== undefined) {
-          const parsed = Number(payload.threshold)
-          if (!Number.isFinite(parsed)) {
-            return jsonError(
-              'threshold must be a number between 0.0 and 1.0',
-              400
-            )
+          let threshold: number | undefined
+          if (payload?.threshold !== undefined) {
+            const parsed = Number(payload.threshold)
+            if (!Number.isFinite(parsed)) {
+              return jsonError(
+                'threshold must be a number between 0.0 and 1.0',
+                400
+              )
+            }
+            if (parsed < 0 || parsed > 1) {
+              return jsonError(
+                'threshold must be a number between 0.0 and 1.0',
+                400
+              )
+            }
+            threshold = parsed
+            args.push('--threshold', parsed.toString())
           }
-          if (parsed < 0 || parsed > 1) {
-            return jsonError(
-              'threshold must be a number between 0.0 and 1.0',
-              400
-            )
-          }
-          threshold = parsed
-          args.push('--threshold', parsed.toString())
-        }
 
-        const effortRaw =
-          typeof payload?.reasoning_effort === 'string'
-            ? (payload.reasoning_effort.toLowerCase() as ReasoningEffort)
-            : undefined
-        if (effortRaw) {
-          if (!ALLOWED_REASONING_EFFORTS.has(effortRaw)) {
-            return jsonError(
-              'reasoning_effort must be one of low, medium, high, or dynamic',
-              400
-            )
+          const effortRaw =
+            typeof payload?.reasoning_effort === 'string'
+              ? (payload.reasoning_effort.toLowerCase() as ReasoningEffort)
+              : undefined
+          if (effortRaw) {
+            if (!ALLOWED_REASONING_EFFORTS.has(effortRaw)) {
+              return jsonError(
+                'reasoning_effort must be one of low, medium, high, or dynamic',
+                400
+              )
+            }
+            args.push('--reasoning-effort', effortRaw)
           }
-          args.push('--reasoning-effort', effortRaw)
-        }
 
-        const decision = (await runRexlit(args, {
-          timeoutMs: 2 * 60 * 1000
-        })) as PrivilegeCliDecision
-        const patternMatches = sanitizePatternMatches(
-          decision?.pattern_matches
-        )
+          const decision = (await runRexlit(args, {
+            timeoutMs: 2 * 60 * 1000
+          })) as PrivilegeCliDecision
+          const patternMatches = sanitizePatternMatches(
+            decision?.pattern_matches
+          )
 
-        return {
-          decision,
-          stages: buildStageStatus(decision),
-          pattern_matches: patternMatches,
-          source: {
-            hash: typeof payload?.hash === 'string' ? payload.hash : undefined,
-            path: filePath,
-            threshold,
-            reasoning_effort: effortRaw
+          return {
+            decision,
+            stages: buildStageStatus(decision),
+            pattern_matches: patternMatches,
+            source: {
+              hash: typeof payload?.hash === 'string' ? payload.hash : undefined,
+              path: filePath,
+              threshold,
+              reasoning_effort: effortRaw
+            }
           }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          const normalized = message.toLowerCase()
+          if (normalized.includes('either hash or path is required')) {
+            return jsonError(message, 400)
+          }
+          if (normalized.includes('hash must be provided as a string')) {
+            return jsonError(message, 400)
+          }
+          if (normalized.includes('path traversal detected')) {
+            return jsonError(message, 400)
+          }
+          if (normalized.includes('document not found')) {
+            return jsonError(message, 404)
+          }
+          if (normalized.includes('timed out')) {
+            return jsonError(message, 504)
+          }
+          return jsonError(message, 500)
         }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        const normalized = message.toLowerCase()
-        if (normalized.includes('either hash or path is required')) {
-          return jsonError(message, 400)
-        }
-        if (normalized.includes('hash must be provided as a string')) {
-          return jsonError(message, 400)
-        }
-        if (normalized.includes('path traversal detected')) {
-          return jsonError(message, 400)
-        }
-        if (normalized.includes('document not found')) {
-          return jsonError(message, 404)
-        }
-        if (normalized.includes('timed out')) {
-          return jsonError(message, 504)
-        }
-        return jsonError(message, 500)
       }
-    }
-  )
+    )
     .post(
-    '/api/privilege/explain',
-    async ({ body }: { body: PrivilegeRequestBody | undefined }) => {
-      try {
-        const payload: PrivilegeRequestBody = body ?? {}
-        const filePath = await resolveDocumentPath(payload)
-        const args = ['privilege', 'explain', filePath, '--json']
-        const effortRaw =
-          typeof payload?.reasoning_effort === 'string'
-            ? (payload.reasoning_effort.toLowerCase() as ReasoningEffort)
-            : undefined
-        if (effortRaw) {
-          if (!ALLOWED_REASONING_EFFORTS.has(effortRaw)) {
-            return jsonError(
-              'reasoning_effort must be one of low, medium, high, or dynamic',
-              400
-            )
+      '/api/privilege/explain',
+      async ({ body }: { body: PrivilegeRequestBody | undefined }) => {
+        try {
+          const payload: PrivilegeRequestBody = body ?? {}
+          const filePath = await resolveDocumentPath(payload)
+          const args = ['privilege', 'explain', filePath, '--json']
+          const effortRaw =
+            typeof payload?.reasoning_effort === 'string'
+              ? (payload.reasoning_effort.toLowerCase() as ReasoningEffort)
+              : undefined
+          if (effortRaw) {
+            if (!ALLOWED_REASONING_EFFORTS.has(effortRaw)) {
+              return jsonError(
+                'reasoning_effort must be one of low, medium, high, or dynamic',
+                400
+              )
+            }
+            args.push('--reasoning-effort', effortRaw)
           }
-          args.push('--reasoning-effort', effortRaw)
-        }
-        const decision = (await runRexlit(
-          args,
-          { timeoutMs: 3 * 60 * 1000 }
-        )) as PrivilegeCliDecision
-        const patternMatches = sanitizePatternMatches(
-          decision?.pattern_matches
-        )
+          const decision = (await runRexlit(
+            args,
+            { timeoutMs: 3 * 60 * 1000 }
+          )) as PrivilegeCliDecision
+          const patternMatches = sanitizePatternMatches(
+            decision?.pattern_matches
+          )
 
-        return {
-          decision,
-          stages: buildStageStatus(decision),
-          pattern_matches: patternMatches,
-          source: {
-            hash: typeof payload?.hash === 'string' ? payload.hash : undefined,
-            path: filePath,
-            reasoning_effort: effortRaw
+          return {
+            decision,
+            stages: buildStageStatus(decision),
+            pattern_matches: patternMatches,
+            source: {
+              hash: typeof payload?.hash === 'string' ? payload.hash : undefined,
+              path: filePath,
+              reasoning_effort: effortRaw
+            }
           }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          const normalized = message.toLowerCase()
+          if (normalized.includes('either hash or path is required')) {
+            return jsonError(message, 400)
+          }
+          if (normalized.includes('hash must be provided as a string')) {
+            return jsonError(message, 400)
+          }
+          if (normalized.includes('path traversal detected')) {
+            return jsonError(message, 400)
+          }
+          if (normalized.includes('document not found')) {
+            return jsonError(message, 404)
+          }
+          if (normalized.includes('timed out')) {
+            return jsonError(message, 504)
+          }
+          return jsonError(message, 500)
         }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        const normalized = message.toLowerCase()
-        if (normalized.includes('either hash or path is required')) {
-          return jsonError(message, 400)
-        }
-        if (normalized.includes('hash must be provided as a string')) {
-          return jsonError(message, 400)
-        }
-        if (normalized.includes('path traversal detected')) {
-          return jsonError(message, 400)
-        }
-        if (normalized.includes('document not found')) {
-          return jsonError(message, 404)
-        }
-        if (normalized.includes('timed out')) {
-          return jsonError(message, 504)
-        }
-        return jsonError(message, 500)
       }
-    }
-  )
+    )
     .post('/api/reviews/:hash', async ({ params, body, headers }) => {
-    const decision = body?.decision
-    if (!decision) {
-      return new Response(
-        JSON.stringify({ error: 'decision is required' }),
-        { status: 400 }
-      )
-    }
+      const decision = body?.decision
+      if (!decision) {
+        return new Response(
+          JSON.stringify({ error: 'decision is required' }),
+          { status: 400 }
+        )
+      }
 
-    await runRexlit([
-      'audit',
-      'log',
-      '--operation',
-      'PRIVILEGE_DECISION',
-      '--details',
-      JSON.stringify({
-        doc_id: params.hash,
-        decision,
-        reviewer: headers['x-user-id'] ?? 'unknown',
-        interface: 'web'
-      })
-    ])
+      await runRexlit([
+        'audit',
+        'log',
+        '--operation',
+        'PRIVILEGE_DECISION',
+        '--details',
+        JSON.stringify({
+          doc_id: params.hash,
+          decision,
+          reviewer: headers['x-user-id'] ?? 'unknown',
+          interface: 'web'
+        })
+      ])
 
-    return { success: true }
-  })
+      return { success: true }
+    })
     .get('/api/stats', async () => {
-    const cachePath = join(REXLIT_HOME, 'index', '.metadata_cache.json')
-    const file = Bun.file(cachePath)
-    if (!(await file.exists())) {
-      return new Response(
-        JSON.stringify({ error: 'cache not found' }),
-        { status: 404 }
-      )
-    }
-    return await file.json()
+      const cachePath = join(REXLIT_HOME, 'index', '.metadata_cache.json')
+      const file = Bun.file(cachePath)
+      if (!(await file.exists())) {
+        return new Response(
+          JSON.stringify({ error: 'cache not found' }),
+          { status: 404 }
+        )
+      }
+      return await file.json()
     })
 }
 

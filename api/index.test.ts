@@ -19,21 +19,23 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { rm } from 'node:fs/promises'
 
 const POLICY_TEST_HOME = join(process.cwd(), '.tmp-rexlit-home')
-await rm(POLICY_TEST_HOME, { recursive: true, force: true }).catch(() => {})
+await rm(POLICY_TEST_HOME, { recursive: true, force: true }).catch(() => { })
 mkdirSync(POLICY_TEST_HOME, { recursive: true })
 Bun.env.REXLIT_HOME = POLICY_TEST_HOME
 const {
   app,
   __setRunRexlitImplementation,
   ensureWithinRoot,
+  jsonError,
+  sanitizeErrorMessage,
   resolveDocumentPath,
   REXLIT_HOME
 } = await import('./index')
 
 // Test helper to create mock process
 function createMockProcess(stdout: string, stderr: string, exitCode: number, delay: number = 0) {
-  const killFn = mock(() => {})
-  
+  const killFn = mock(() => { })
+
   return {
     stdout: {
       text: async () => {
@@ -111,7 +113,7 @@ describe('Security Boundaries - Path Traversal Protection', () => {
     it('should handle edge cases with trailing slashes', () => {
       const validWithSlash = join(root, 'documents', 'test.pdf') + sep
       expect(() => ensureWithinRoot(validWithSlash)).not.toThrow()
-      
+
       const invalidWithSlash = '/etc/passwd' + sep
       expect(() => ensureWithinRoot(invalidWithSlash)).toThrow('Path traversal detected')
     })
@@ -120,7 +122,7 @@ describe('Security Boundaries - Path Traversal Protection', () => {
       // Paths with . and .. should be normalized
       const normalizedPath = join(root, 'documents', '..', 'documents', 'test.pdf')
       expect(() => ensureWithinRoot(normalizedPath)).not.toThrow()
-      
+
       // But should still catch escapes
       const escapePath = join(root, 'documents', '..', '..', 'etc', 'passwd')
       expect(() => ensureWithinRoot(escapePath)).toThrow('Path traversal detected')
@@ -140,7 +142,7 @@ describe('Security Boundaries - Path Traversal Protection', () => {
     it('should handle Unicode and special characters', () => {
       const unicodePath = join(root, 'documents', 'test-测试.pdf')
       expect(() => ensureWithinRoot(unicodePath)).not.toThrow()
-      
+
       const maliciousUnicode = '/etc/passwd-测试'
       expect(() => ensureWithinRoot(maliciousUnicode)).toThrow('Path traversal detected')
     })
@@ -262,7 +264,7 @@ describe('Security Boundaries - Timeout Protection', () => {
 
   it('should timeout after specified duration', async () => {
     const mockProc = createMockProcess('{"result": "ok"}', '', 0, 2000)
-    
+
     await expect(
       runRexlit(['test', '--json'], { timeoutMs: 100 }, mockProc)
     ).rejects.toThrow(/timed out/)
@@ -273,7 +275,7 @@ describe('Security Boundaries - Timeout Protection', () => {
   it('should clear timeout on successful completion', async () => {
     const mockProc = createMockProcess('{"result": "ok"}', '', 0, 10)
     await runRexlit(['test', '--json'], { timeoutMs: 5000 }, mockProc)
-    
+
     // Verify timeout was cleared (no error thrown)
     expect(mockProc.kill).not.toHaveBeenCalled()
   })
@@ -315,7 +317,7 @@ describe('Security Boundaries - Timeout Protection', () => {
 describe('Security Boundaries - Input Validation', () => {
   function validateThreshold(threshold: unknown): number | null {
     if (threshold === undefined) return null
-    
+
     const parsed = Number(threshold)
     if (!Number.isFinite(parsed)) {
       throw new Error('threshold must be a number between 0.0 and 1.0')
@@ -331,14 +333,14 @@ describe('Security Boundaries - Input Validation', () => {
     if (typeof effort !== 'string') {
       throw new Error('reasoning_effort must be one of low, medium, high, or dynamic')
     }
-    
+
     const normalized = effort.toLowerCase()
     const allowed = new Set(['low', 'medium', 'high', 'dynamic'])
-    
+
     if (!allowed.has(normalized)) {
       throw new Error('reasoning_effort must be one of low, medium, high, or dynamic')
     }
-    
+
     return normalized
   }
 
@@ -423,74 +425,47 @@ describe('Security Boundaries - Input Validation', () => {
 })
 
 describe('Security Boundaries - Error Message Sanitization', () => {
-  function sanitizeErrorMessage(msg: string): string {
-    // Remove file paths
-    const pathPattern = /\/[^\s]+/g
-    let sanitized = msg.replace(pathPattern, '[path]')
-    
-    // Remove absolute paths
-    sanitized = sanitized.replace(/[A-Z]:\\[^\s]+/g, '[path]')
-    
-    // Remove common sensitive patterns
-    sanitized = sanitized.replace(/\/etc\/[^\s]+/g, '[path]')
-    sanitized = sanitized.replace(/\/root\/[^\s]+/g, '[path]')
-    sanitized = sanitized.replace(/\/home\/[^\s]+/g, '[path]')
-    
-    return sanitized
-  }
-
-  function jsonError(message: string, status = 500) {
-    const sanitized = sanitizeErrorMessage(message)
-    return new Response(
-      JSON.stringify({ error: sanitized }),
-      {
-        status,
-        headers: { 'Content-Type': 'application/json' }
-      }
-    )
-  }
-
   it('should sanitize file paths in error messages', () => {
     const error = jsonError('File not found: /etc/passwd')
     expect(error.status).toBe(500)
-    
+
     return error.json().then((data: any) => {
-      expect(data.error).toBe('File not found: [path]')
-      expect(data.error).not.toContain('/etc/passwd')
+      expect(data.error.message).toBe('File not found: [path]')
+      expect(data.error.message).not.toContain('/etc/passwd')
     })
   })
 
   it('should sanitize multiple paths in error messages', () => {
     const error = jsonError('Paths: /etc/passwd and /root/.ssh/id_rsa')
-    
+
     return error.json().then((data: any) => {
-      expect(data.error).toBe('Paths: [path] and [path]')
-      expect(data.error).not.toMatch(/\/etc\/passwd|\/root\/\.ssh/)
+      expect(data.error.message).toBe('Paths: [path] and [path]')
+      expect(data.error.message).not.toMatch(/\/etc\/passwd|\/root\/\.ssh/)
     })
   })
 
   it('should sanitize Windows paths', () => {
     const error = jsonError('File: C:\\Windows\\System32\\config\\sam')
-    
+
     return error.json().then((data: any) => {
-      expect(data.error).toBe('File: [path]')
-      expect(data.error).not.toContain('C:\\Windows')
+      expect(data.error.message).toBe('File: [path]')
+      expect(data.error.message).not.toContain('C:\\Windows')
     })
   })
 
   it('should preserve non-path error messages', () => {
     const error = jsonError('Invalid input provided')
-    
+
     return error.json().then((data: any) => {
-      expect(data.error).toBe('Invalid input provided')
+      expect(data.error.message).toBe('Invalid input provided')
     })
   })
 
   it('should handle empty error messages', () => {
     const error = jsonError('')
-    
+
     return error.json().then((data: any) => {
-      expect(data.error).toBe('')
+      expect(data.error.message).toBe('Unexpected error')
     })
   })
 
@@ -506,7 +481,7 @@ describe('Security Boundaries - Pattern Match Filtering', () => {
   function filterPatternMatches(matches: any[]): any[] {
     return matches.map(match => {
       const filtered: any = {}
-      
+
       // Only include safe fields
       if (match.rule) filtered.rule = match.rule
       if (typeof match.confidence === 'number') filtered.confidence = match.confidence
@@ -515,7 +490,7 @@ describe('Security Boundaries - Pattern Match Filtering', () => {
         filtered.snippet = match.snippet
       }
       if (match.stage) filtered.stage = match.stage
-      
+
       // Explicitly exclude filesystem-related fields
       delete filtered.path
       delete filtered.file_path
@@ -523,7 +498,7 @@ describe('Security Boundaries - Pattern Match Filtering', () => {
       delete filtered.filepath
       delete filtered.directory
       delete filtered.dir
-      
+
       return filtered
     })
   }
@@ -532,7 +507,7 @@ describe('Security Boundaries - Pattern Match Filtering', () => {
     const matches = [
       { rule: 'attorney_domain', confidence: 0.9, snippet: 'Email from attorney@law.com' }
     ]
-    
+
     const filtered = filterPatternMatches(matches)
     expect(filtered[0]).toEqual({
       rule: 'attorney_domain',
@@ -552,7 +527,7 @@ describe('Security Boundaries - Pattern Match Filtering', () => {
         dir: '/tmp'
       }
     ]
-    
+
     const filtered = filterPatternMatches(matches)
     expect(filtered[0]).not.toHaveProperty('path')
     expect(filtered[0]).not.toHaveProperty('file_path')
@@ -576,7 +551,7 @@ describe('Security Boundaries - Pattern Match Filtering', () => {
         snippet: 'Safe text without paths'
       }
     ]
-    
+
     const filtered = filterPatternMatches(matches)
     // When snippet contains '/', it's not added to filtered object
     expect(filtered[0].snippet).toBeUndefined()
@@ -595,7 +570,7 @@ describe('Security Boundaries - Pattern Match Filtering', () => {
     const matches = [
       { path: '/etc/passwd', file_path: '/root/.ssh/id_rsa' }
     ]
-    
+
     const filtered = filterPatternMatches(matches)
     expect(filtered[0]).toEqual({})
   })
@@ -604,7 +579,7 @@ describe('Security Boundaries - Pattern Match Filtering', () => {
     const matches = [
       { rule: 'test', stage: 'privilege', path: '/etc/passwd' }
     ]
-    
+
     const filtered = filterPatternMatches(matches)
     expect(filtered[0].stage).toBe('privilege')
     expect(filtered[0]).not.toHaveProperty('path')
@@ -674,7 +649,7 @@ describe('Policy API Endpoints', () => {
 
     expect(response.status).toBe(400)
     const payload = await response.json()
-    expect(payload.error).toContain('stage must be')
+    expect(payload.error.message).toContain('stage must be')
   })
 
   it('applies policy updates from request body', async () => {
@@ -729,7 +704,7 @@ describe('Policy API Endpoints', () => {
 
     expect(response.status).toBe(400)
     const payload = await response.json()
-    expect(payload.error).toContain('text is required')
+    expect(payload.error.message).toContain('text is required')
   })
 
   it('validates policy stage content', async () => {
@@ -783,8 +758,8 @@ describe('Security Boundaries - Stage Status Building', () => {
 
     const responsive = Array.isArray(decision?.labels)
       ? decision.labels.some((label: string) =>
-          typeof label === 'string' && label.toUpperCase().includes('RESPONSIVE')
-        )
+        typeof label === 'string' && label.toUpperCase().includes('RESPONSIVE')
+      )
       : false
 
     stages.push({
@@ -819,7 +794,7 @@ describe('Security Boundaries - Stage Status Building', () => {
       needs_review: true,
       labels: ['PRIVILEGED:ACP']
     }
-    
+
     const stages = buildStageStatus(decision)
     expect(stages[0]).toMatchObject({
       stage: 'privilege',
@@ -835,7 +810,7 @@ describe('Security Boundaries - Stage Status Building', () => {
       reasoning_effort: 'low',
       needs_review: false
     }
-    
+
     const stages = buildStageStatus(decision)
     expect(stages[0].mode).toBe('pattern')
     expect(stages[0].notes).toContain('Pattern heuristic')
@@ -851,7 +826,7 @@ describe('Security Boundaries - Stage Status Building', () => {
   it('should handle null/undefined decision', () => {
     const stages1 = buildStageStatus(null)
     const stages2 = buildStageStatus(undefined)
-    
+
     expect(stages1).toHaveLength(3)
     expect(stages2).toHaveLength(3)
   })
@@ -860,7 +835,7 @@ describe('Security Boundaries - Stage Status Building', () => {
     const decision = {
       labels: ['RESPONSIVE', 'PRIVILEGED:ACP']
     }
-    
+
     const stages = buildStageStatus(decision)
     expect(stages[1].status).toBe('completed')
     expect(stages[1].mode).toBe('llm')
@@ -873,7 +848,7 @@ describe('Security Boundaries - Stage Status Building', () => {
         { start: 20, end: 30 }
       ]
     }
-    
+
     const stages = buildStageStatus(decision)
     expect(stages[2].status).toBe('completed')
     expect(stages[2].redaction_spans).toBe(2)
@@ -882,5 +857,5 @@ describe('Security Boundaries - Stage Status Building', () => {
 })
 
 afterAll(async () => {
-  await rm(POLICY_TEST_HOME, { recursive: true, force: true }).catch(() => {})
+  await rm(POLICY_TEST_HOME, { recursive: true, force: true }).catch(() => { })
 })
