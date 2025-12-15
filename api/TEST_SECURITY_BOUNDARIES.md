@@ -212,8 +212,8 @@ const response = await fetch('/api/privilege/classify', {
 // Expected: 400 Bad Request with sanitized error
 expect(response.status).toBe(400)
 const data = await response.json()
-expect(data.error).not.toContain('/etc/passwd')
-expect(data.error).toContain('[path]')
+expect(data.error.message).not.toContain('/etc/passwd')
+expect(data.error.message).toContain('[path]')
 ```
 
 ### Scenario 2: Timeout Attack
@@ -244,7 +244,7 @@ const response = await fetch('/api/privilege/classify', {
 // Expected: 400 Bad Request
 expect(response.status).toBe(400)
 const data = await response.json()
-expect(data.error).toContain('threshold must be a number between 0.0 and 1.0')
+expect(data.error.message).toContain('threshold must be a number between 0.0 and 1.0')
 ```
 
 ## Test Execution

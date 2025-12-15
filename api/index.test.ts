@@ -26,6 +26,8 @@ const {
   app,
   __setRunRexlitImplementation,
   ensureWithinRoot,
+  jsonError,
+  sanitizeErrorMessage,
   resolveDocumentPath,
   REXLIT_HOME
 } = await import('./index')
@@ -423,40 +425,13 @@ describe('Security Boundaries - Input Validation', () => {
 })
 
 describe('Security Boundaries - Error Message Sanitization', () => {
-  function sanitizeErrorMessage(msg: string): string {
-    // Remove file paths
-    const pathPattern = /\/[^\s]+/g
-    let sanitized = msg.replace(pathPattern, '[path]')
-
-    // Remove absolute paths
-    sanitized = sanitized.replace(/[A-Z]:\\[^\s]+/g, '[path]')
-
-    // Remove common sensitive patterns
-    sanitized = sanitized.replace(/\/etc\/[^\s]+/g, '[path]')
-    sanitized = sanitized.replace(/\/root\/[^\s]+/g, '[path]')
-    sanitized = sanitized.replace(/\/home\/[^\s]+/g, '[path]')
-
-    return sanitized
-  }
-
-  function jsonError(message: string, status = 500) {
-    const sanitized = sanitizeErrorMessage(message)
-    return new Response(
-      JSON.stringify({ error: sanitized }),
-      {
-        status,
-        headers: { 'Content-Type': 'application/json' }
-      }
-    )
-  }
-
   it('should sanitize file paths in error messages', () => {
     const error = jsonError('File not found: /etc/passwd')
     expect(error.status).toBe(500)
 
     return error.json().then((data: any) => {
-      expect(data.error).toBe('File not found: [path]')
-      expect(data.error).not.toContain('/etc/passwd')
+      expect(data.error.message).toBe('File not found: [path]')
+      expect(data.error.message).not.toContain('/etc/passwd')
     })
   })
 
@@ -464,8 +439,8 @@ describe('Security Boundaries - Error Message Sanitization', () => {
     const error = jsonError('Paths: /etc/passwd and /root/.ssh/id_rsa')
 
     return error.json().then((data: any) => {
-      expect(data.error).toBe('Paths: [path] and [path]')
-      expect(data.error).not.toMatch(/\/etc\/passwd|\/root\/\.ssh/)
+      expect(data.error.message).toBe('Paths: [path] and [path]')
+      expect(data.error.message).not.toMatch(/\/etc\/passwd|\/root\/\.ssh/)
     })
   })
 
@@ -473,8 +448,8 @@ describe('Security Boundaries - Error Message Sanitization', () => {
     const error = jsonError('File: C:\\Windows\\System32\\config\\sam')
 
     return error.json().then((data: any) => {
-      expect(data.error).toBe('File: [path]')
-      expect(data.error).not.toContain('C:\\Windows')
+      expect(data.error.message).toBe('File: [path]')
+      expect(data.error.message).not.toContain('C:\\Windows')
     })
   })
 
@@ -482,7 +457,7 @@ describe('Security Boundaries - Error Message Sanitization', () => {
     const error = jsonError('Invalid input provided')
 
     return error.json().then((data: any) => {
-      expect(data.error).toBe('Invalid input provided')
+      expect(data.error.message).toBe('Invalid input provided')
     })
   })
 
@@ -490,7 +465,7 @@ describe('Security Boundaries - Error Message Sanitization', () => {
     const error = jsonError('')
 
     return error.json().then((data: any) => {
-      expect(data.error).toBe('')
+      expect(data.error.message).toBe('Unexpected error')
     })
   })
 

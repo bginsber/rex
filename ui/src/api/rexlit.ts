@@ -12,8 +12,36 @@ import type {
 
 const API_ROOT = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api'
 
-interface ErrorResponse {
-  error: string
+type ApiErrorBody =
+  | {
+      error: string
+    }
+  | {
+      error: {
+        code?: string
+        message?: string
+        details?: unknown
+      }
+      request_id?: string
+      timestamp?: string
+    }
+
+function extractApiErrorMessage(data: unknown): string | null {
+  if (!data || typeof data !== 'object') {
+    return null
+  }
+  const record = data as Record<string, unknown>
+  const error = record.error
+  if (typeof error === 'string' && error.trim()) {
+    return error
+  }
+  if (error && typeof error === 'object') {
+    const message = (error as Record<string, unknown>).message
+    if (typeof message === 'string' && message.trim()) {
+      return message
+    }
+  }
+  return null
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {
@@ -21,8 +49,9 @@ async function handleResponse<T>(response: Response): Promise<T> {
     let message = `Request failed with ${response.status}`
     try {
       const data = (await response.clone().json()) as unknown
-      if (data && typeof (data as ErrorResponse).error === 'string') {
-        message = (data as ErrorResponse).error
+      const extracted = extractApiErrorMessage(data)
+      if (extracted) {
+        message = extracted
       } else if (data) {
         message = JSON.stringify(data)
       }
