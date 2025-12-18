@@ -335,6 +335,7 @@ class PrivilegeReviewService:
         safeguard_adapter: PrivilegeReasoningPort,
         ledger_port: LedgerPort | None = None,
         *,
+        pattern_adapter: Any | None = None,
         pattern_skip_threshold: float = 0.85,
         pattern_escalate_threshold: float = 0.50,
         enable_responsiveness: bool = False,
@@ -345,6 +346,7 @@ class PrivilegeReviewService:
         Args:
             safeguard_adapter: Safeguard LLM adapter for deep reasoning
             ledger_port: Optional audit ledger for logging decisions
+            pattern_adapter: Optional pattern-based privilege detector for fast pre-filtering
             pattern_skip_threshold: Confidence above which to skip LLM (default: 0.85)
             pattern_escalate_threshold: Confidence above which to use LLM (default: 0.50)
             enable_responsiveness: Enable Stage 2 (responsiveness classification)
@@ -352,6 +354,7 @@ class PrivilegeReviewService:
         """
         self.safeguard = safeguard_adapter
         self.ledger = ledger_port
+        self.pattern_adapter = pattern_adapter
         self.pattern_skip_threshold = pattern_skip_threshold
         self.pattern_escalate_threshold = pattern_escalate_threshold
         self.enable_responsiveness = enable_responsiveness
@@ -403,12 +406,57 @@ class PrivilegeReviewService:
         """Stage 1: Privilege classification (ACP/WP/CI).
 
         Smart escalation strategy:
-        1. Pattern pre-filter (fast heuristics)
-        2. Escalate to LLM if uncertain
-        3. Skip LLM if pattern confidence is high
+        1. Pattern pre-filter (fast heuristics) - skip LLM if confidence >= 0.85
+        2. Escalate to LLM with high effort if pattern confidence 0.50-0.84
+        3. Use LLM with medium effort if pattern confidence < 0.50 or no patterns
         """
-        # For now, always use safeguard (pattern adapter to be added later)
-        # TODO: Add pattern pre-filter with PrivilegePatternsAdapter
+        # Pattern pre-filter: fast offline path when pattern adapter is available
+        if not force_llm and self.pattern_adapter is not None:
+            try:
+                pattern_findings = self.pattern_adapter.analyze_text(
+                    text, threshold=self.pattern_escalate_threshold
+                )
+                if pattern_findings:
+                    # Get the highest confidence finding
+                    max_confidence = max(f.confidence for f in pattern_findings)
+
+                    # High-confidence patterns: skip LLM entirely (offline fast path)
+                    if max_confidence >= self.pattern_skip_threshold:
+                        # Build labels from pattern findings
+                        labels = []
+                        if any(f.match_type == "keyword" for f in pattern_findings):
+                            labels.append("PRIVILEGED:PATTERN_KEYWORD")
+                        if any(f.match_type == "name" for f in pattern_findings):
+                            labels.append("PRIVILEGED:ATTORNEY_NAME")
+                        if any(f.match_type == "domain" for f in pattern_findings):
+                            labels.append("PRIVILEGED:ATTORNEY_DOMAIN")
+
+                        return PolicyDecision(
+                            labels=labels or ["PRIVILEGED:PATTERN"],
+                            confidence=max_confidence,
+                            needs_review=False,
+                            reasoning_summary=f"Pattern match ({len(pattern_findings)} findings, max conf {max_confidence:.2f})",
+                            reasoning_hash=hashlib.sha256(
+                                f"pattern:{','.join(f.rule for f in pattern_findings)}".encode()
+                            ).hexdigest(),
+                            reasoning_effort="low",  # Pattern-only, no LLM
+                            model_version="pattern-v1",
+                            policy_version="pattern-v1",
+                        )
+
+                    # Medium-confidence patterns: escalate to LLM with high effort
+                    if max_confidence >= self.pattern_escalate_threshold:
+                        decision = self.safeguard.classify_privilege(
+                            text,
+                            threshold=threshold,
+                            reasoning_effort="high",
+                        )
+                        return decision
+            except Exception:
+                # Pattern adapter failed, fall through to LLM
+                pass
+
+        # No pattern adapter, patterns below threshold, or force_llm: use safeguard
         reasoning_effort = "medium" if not force_llm else "high"
 
         decision = self.safeguard.classify_privilege(
@@ -422,49 +470,70 @@ class PrivilegeReviewService:
     def _classify_responsiveness(
         self,
         doc_id: str,
-        text: str,
+        text: str,  # noqa: ARG002 - reserved for future implementation
         base_decision: PolicyDecision,
     ) -> PolicyDecision:
         """Stage 2: Responsiveness classification (RESPONSIVE/HOTDOC).
 
-        This stage uses a separate policy template focused on responsiveness
-        criteria (e.g., relevance to litigation topics, HOTDOC scoring).
+        NOT YET IMPLEMENTED - This is a placeholder that passes through
+        the base decision unchanged.
 
-        TODO: Implement with separate safeguard call using responsiveness policy.
+        When implemented, this stage will use a separate policy template
+        focused on responsiveness criteria (e.g., relevance to litigation
+        topics, HOTDOC scoring).
+
+        Implementation plan:
+        1. Load responsiveness policy template from config
+        2. Call safeguard with focused responsiveness prompt
+        3. Merge RESPONSIVE/HOTDOC labels into base_decision
+        4. Log to audit trail with stage="responsiveness"
         """
-        # Placeholder: In full implementation, this would:
-        # 1. Load responsiveness policy template
-        # 2. Call safeguard with focused prompt
-        # 3. Merge labels into base_decision
-        # 4. Log to audit trail
-
+        # Log that stage was skipped (not implemented)
         if self.ledger is not None:
-            self._log_decision(doc_id, base_decision, stage="responsiveness")
+            self.ledger.log(
+                operation="privilege.responsiveness.skipped",
+                doc_id=doc_id,
+                labels=base_decision.labels,
+                confidence=base_decision.confidence,
+                reason="Stage 2 (responsiveness) is not yet implemented",
+            )
 
         return base_decision
 
     def _detect_redactions(
         self,
         doc_id: str,
-        text: str,
+        text: str,  # noqa: ARG002 - reserved for future implementation
         base_decision: PolicyDecision,
     ) -> PolicyDecision:
         """Stage 3: Redaction span detection (CPI, trade secrets, etc.).
 
-        This stage uses a separate policy template focused on identifying
-        specific text spans requiring redaction.
+        NOT YET IMPLEMENTED - This is a placeholder that passes through
+        the base decision unchanged.
 
-        TODO: Implement with separate safeguard call using redaction policy.
+        When implemented, this stage will use a separate policy template
+        focused on identifying specific text spans requiring redaction.
+
+        Note: PII-based redaction is available through the redaction planner
+        which uses PIIPort for SSN, email, phone, and credit card detection.
+        This stage is for LLM-based privilege redaction (trade secrets, CPI).
+
+        Implementation plan:
+        1. Load redaction policy template from config
+        2. Call safeguard with span detection prompt
+        3. Parse redaction_spans from LLM output
+        4. Merge spans into base_decision.redaction_spans
+        5. Log to audit trail with stage="redaction"
         """
-        # Placeholder: In full implementation, this would:
-        # 1. Load redaction policy template
-        # 2. Call safeguard with span detection prompt
-        # 3. Parse redaction_spans from output
-        # 4. Merge into base_decision
-        # 5. Log to audit trail
-
+        # Log that stage was skipped (not implemented)
         if self.ledger is not None:
-            self._log_decision(doc_id, base_decision, stage="redaction")
+            self.ledger.log(
+                operation="privilege.redaction.skipped",
+                doc_id=doc_id,
+                labels=base_decision.labels,
+                confidence=base_decision.confidence,
+                reason="Stage 3 (LLM redaction detection) is not yet implemented. Use PII-based redaction plans.",
+            )
 
         return base_decision
 

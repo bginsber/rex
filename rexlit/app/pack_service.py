@@ -123,12 +123,10 @@ class PackService:
                     except Exception:
                         pass  # Text file is optional
 
-            # Check for page count from PDF metadata (if available)
-            # This is a best-effort extraction
+            # Extract actual page count from PDF
             if doc.doctype == "pdf":
-                # Placeholder: would need PDF inspection to get actual page count
-                # For now we estimate based on file size (rough heuristic)
-                total_pages += max(1, doc.size // 50000)
+                page_count = self._get_pdf_page_count(doc_path)
+                total_pages += page_count
 
             # Check for redaction plans
             redaction_plan = doc_path.with_suffix(".redaction-plan.enc")
@@ -539,3 +537,27 @@ class PackService:
             lines.append("")
 
         return "\n".join(lines) + "\n"
+
+    def _get_pdf_page_count(self, path: Path) -> int:
+        """Get the actual page count from a PDF file.
+
+        Uses PyMuPDF (fitz) if available, falls back to size-based estimate.
+
+        Args:
+            path: Path to the PDF file
+
+        Returns:
+            Number of pages in the PDF
+        """
+        try:
+            import fitz  # PyMuPDF
+
+            with fitz.open(str(path)) as doc:
+                return len(doc)
+        except ImportError:
+            # PyMuPDF not available, fall back to size-based estimate
+            logger.debug("PyMuPDF not available, estimating page count for %s", path)
+            return max(1, path.stat().st_size // 50000)
+        except Exception as exc:
+            logger.warning("Failed to get page count for %s: %s", path, exc)
+            return 1

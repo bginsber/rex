@@ -309,10 +309,6 @@ def ingest_run(
         Path | None,
         typer.Option("--manifest", "-m", help="Output manifest file (JSONL)"),
     ] = None,
-    watch: Annotated[
-        bool,
-        typer.Option("--watch", "-w", help="Watch directory for new documents"),
-    ] = False,
     recursive: Annotated[
         bool,
         typer.Option("--recursive", "-r", help="Recursively scan directories"),
@@ -497,8 +493,6 @@ def ingest_run(
         container.report_service.write_methods_appendix(appendix_path, appendix)
         typer.secho(f"Methods appendix written to {appendix_path}", fg=typer.colors.BLUE)
 
-    if watch:
-        typer.secho("Watch mode not yet implemented", fg=typer.colors.YELLOW)
 
 
 # Index subcommand
