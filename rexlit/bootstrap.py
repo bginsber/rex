@@ -584,6 +584,25 @@ def _create_privilege_adapter(settings: Settings) -> PrivilegePort:
     return PrivilegePatternsAdapter(profile=privilege_profile.get("privilege", {}))
 
 
+def _create_pattern_adapter(settings: Settings) -> PrivilegePatternsAdapter:
+    """Create pattern-based privilege adapter for fast pre-filtering.
+
+    This adapter is used for the fast offline pattern matching path in
+    PrivilegeReviewService. It's always created regardless of online mode,
+    since pattern matching is used as a pre-filter before LLM escalation.
+
+    Args:
+        settings: Application settings
+
+    Returns:
+        PrivilegePatternsAdapter configured with privilege profile
+    """
+    from rexlit.utils.profiles import load_profile
+
+    privilege_profile = load_profile(None, settings)
+    return PrivilegePatternsAdapter(profile=privilege_profile.get("privilege", {}))
+
+
 def _create_privilege_reasoning_adapter(
     settings: Settings,
     *,

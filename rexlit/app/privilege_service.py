@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import difflib
 import hashlib
+import logging
 import shutil
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -30,8 +31,11 @@ from rexlit.utils.methods import sanitize_argv
 
 if TYPE_CHECKING:
     from rexlit.app.ports.ledger import LedgerPort
+    from rexlit.app.ports.privilege import PrivilegePort
     from rexlit.app.ports.privilege_reasoning import PrivilegeReasoningPort
     from rexlit.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 STAGE_LABELS: dict[int, str] = {
@@ -335,7 +339,7 @@ class PrivilegeReviewService:
         safeguard_adapter: PrivilegeReasoningPort,
         ledger_port: LedgerPort | None = None,
         *,
-        pattern_adapter: Any | None = None,
+        pattern_adapter: PrivilegePort | None = None,
         pattern_skip_threshold: float = 0.85,
         pattern_escalate_threshold: float = 0.50,
         enable_responsiveness: bool = False,
@@ -452,9 +456,9 @@ class PrivilegeReviewService:
                             reasoning_effort="high",
                         )
                         return decision
-            except Exception:
+            except Exception as exc:
                 # Pattern adapter failed, fall through to LLM
-                pass
+                logger.debug("Pattern adapter failed, falling through to LLM: %s", exc)
 
         # No pattern adapter, patterns below threshold, or force_llm: use safeguard
         reasoning_effort = "medium" if not force_llm else "high"
