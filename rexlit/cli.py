@@ -309,10 +309,6 @@ def ingest_run(
         Path | None,
         typer.Option("--manifest", "-m", help="Output manifest file (JSONL)"),
     ] = None,
-    watch: Annotated[
-        bool,
-        typer.Option("--watch", "-w", help="Watch directory for new documents"),
-    ] = False,
     recursive: Annotated[
         bool,
         typer.Option("--recursive", "-r", help="Recursively scan directories"),
@@ -497,8 +493,6 @@ def ingest_run(
         container.report_service.write_methods_appendix(appendix_path, appendix)
         typer.secho(f"Methods appendix written to {appendix_path}", fg=typer.colors.BLUE)
 
-    if watch:
-        typer.secho("Watch mode not yet implemented", fg=typer.colors.YELLOW)
 
 
 # Index subcommand
@@ -2014,7 +2008,7 @@ def privilege_classify(
     """
 
     from rexlit.app.privilege_service import PrivilegeReviewService
-    from rexlit.bootstrap import _create_privilege_reasoning_adapter
+    from rexlit.bootstrap import _create_pattern_adapter, _create_privilege_reasoning_adapter
 
     container = bootstrap_application()
 
@@ -2048,10 +2042,14 @@ def privilege_classify(
         typer.secho(f"❌ Failed to initialize privilege adapter: {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
 
+    # Initialize pattern adapter for fast pre-filtering
+    pattern_adapter = _create_pattern_adapter(container.settings)
+
     # Initialize service
     service = PrivilegeReviewService(
         safeguard_adapter=adapter,
         ledger_port=container.ledger_port,
+        pattern_adapter=pattern_adapter,
         pattern_skip_threshold=container.settings.privilege_pattern_skip_threshold,
         pattern_escalate_threshold=container.settings.privilege_pattern_escalate_threshold,
     )
@@ -2139,7 +2137,7 @@ def privilege_explain(
     import json
 
     from rexlit.app.privilege_service import PrivilegeReviewService
-    from rexlit.bootstrap import _create_privilege_reasoning_adapter
+    from rexlit.bootstrap import _create_pattern_adapter, _create_privilege_reasoning_adapter
 
     container = bootstrap_application()
 
@@ -2173,10 +2171,16 @@ def privilege_explain(
         typer.secho(f"❌ Failed to initialize privilege adapter: {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
 
+    # Initialize pattern adapter for fast pre-filtering
+    pattern_adapter = _create_pattern_adapter(container.settings)
+
     # Initialize service
     service = PrivilegeReviewService(
         safeguard_adapter=adapter,
         ledger_port=container.ledger_port,
+        pattern_adapter=pattern_adapter,
+        pattern_skip_threshold=container.settings.privilege_pattern_skip_threshold,
+        pattern_escalate_threshold=container.settings.privilege_pattern_escalate_threshold,
     )
 
     # Read document text

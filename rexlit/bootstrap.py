@@ -50,6 +50,7 @@ from rexlit.app.ports import (
     VectorStorePort,
 )
 from rexlit.app.ports.ocr import OCRResult
+from rexlit.app.ports.privilege_reasoning import PrivilegeReasoningPort
 from rexlit.audit.ledger import AuditLedger
 from rexlit.config import Settings, get_settings
 from rexlit.index.build import DenseDocument, build_dense_index, build_index
@@ -119,18 +120,35 @@ class NoOpLedger:
         return (True, None)
 
 
+class IndexNotConfiguredError(RuntimeError):
+    """Raised when index operations are attempted without a configured index."""
+
+    pass
+
+
 class StubIndexAdapter(IndexPort):
-    """Placeholder index adapter used until Tantivy wiring lands."""
+    """Placeholder index adapter that provides clear errors when index is not configured.
+
+    This adapter is used during bootstrap when no index has been built yet.
+    All operations raise IndexNotConfiguredError with actionable instructions.
+    """
 
     def add_document(
         self, path: str, text: str, metadata: dict[str, Any]
     ) -> None:  # pragma: no cover - stub
-        raise RuntimeError("Search indexing not yet implemented for offline bootstrap.")
+        raise IndexNotConfiguredError(
+            "No search index configured. "
+            "Run 'rexlit index build <path>' to create an index first."
+        )
 
     def search(  # type: ignore[override]
         self, query: str, *, limit: int = 10, filters: dict[str, Any] | None = None
     ) -> list[TantivySearchResult]:
-        raise RuntimeError("Search indexing not yet implemented for offline bootstrap.")
+        raise IndexNotConfiguredError(
+            "No search index available. "
+            "Run 'rexlit index build <path>' to create an index, "
+            "then 'rexlit index search <query>' to search."
+        )
 
     def get_custodians(self) -> set[str]:
         return set()
@@ -372,22 +390,24 @@ def bootstrap_application(settings: Settings | None = None) -> ApplicationContai
     storage = FileSystemStorageAdapter()
     discovery = IngestDiscoveryAdapter()
     deduper = HashDeduper()
-    redaction_planner = JSONLineRedactionPlanner(settings=active_settings)
-    bates_planner = SequentialBatesPlanner(settings=active_settings)
-    pack_adapter = ZipPackager(active_settings.get_data_dir() / "packs")
-    bates_stamper = PDFStamperAdapter()
-    rules_dir = Path(__file__).resolve().parent / "rules"
-    rules_engine = RulesEngine(rules_dir)
 
     ledger = _create_ledger(active_settings)
     ledger_for_services: LedgerPort = ledger or NoOpLedger()  # type: ignore[assignment]
 
+    # PII adapter must be created before redaction_planner to enable PII detection
     pii_adapter = PIIRegexAdapter(
         profile={
             "enabled_patterns": ["SSN", "EMAIL", "PHONE", "CREDIT_CARD"],
             "domain_whitelist": [],
         }
     )
+
+    redaction_planner = JSONLineRedactionPlanner(settings=active_settings, pii_port=pii_adapter)
+    bates_planner = SequentialBatesPlanner(settings=active_settings)
+    pack_adapter = ZipPackager(active_settings.get_data_dir() / "packs")
+    bates_stamper = PDFStamperAdapter()
+    rules_dir = Path(__file__).resolve().parent / "rules"
+    rules_engine = RulesEngine(rules_dir)
 
     pipeline = M1Pipeline(
         settings=active_settings,
@@ -558,6 +578,25 @@ def _create_privilege_adapter(settings: Settings) -> PrivilegePort:
                 logger.warning("Failed to initialize Groq adapter, falling back to pattern-based: %s", e)
 
     # Fall back to pattern-based adapter
+    from rexlit.utils.profiles import load_profile
+
+    privilege_profile = load_profile(None, settings)
+    return PrivilegePatternsAdapter(profile=privilege_profile.get("privilege", {}))
+
+
+def _create_pattern_adapter(settings: Settings) -> PrivilegePatternsAdapter:
+    """Create pattern-based privilege adapter for fast pre-filtering.
+
+    This adapter is used for the fast offline pattern matching path in
+    PrivilegeReviewService. It's always created regardless of online mode,
+    since pattern matching is used as a pre-filter before LLM escalation.
+
+    Args:
+        settings: Application settings
+
+    Returns:
+        PrivilegePatternsAdapter configured with privilege profile
+    """
     from rexlit.utils.profiles import load_profile
 
     privilege_profile = load_profile(None, settings)
