@@ -15,6 +15,7 @@ from .pattern_concept_adapter import PatternConceptAdapter
 from .pdf_stamper import PDFStamperAdapter
 from .privilege_patterns import PrivilegePatternsAdapter
 from .privilege_safeguard import PrivilegeSafeguardAdapter
+from .sidecar_probe_adapter import SidecarProbeAdapter
 from .redaction import JSONLineRedactionPlanner, PassthroughRedactionApplier
 from .storage import FileSystemStorageAdapter
 
@@ -44,6 +45,7 @@ __all__ = [
     "PrivilegeSafeguardAdapter",
     "PrivilegePatternsAdapter",
     "GroqPrivilegeAdapter",
+    "SidecarProbeAdapter",
     "NullConceptAdapter",
     "LocalLLMConceptAdapter",
     "PatternConceptAdapter",
