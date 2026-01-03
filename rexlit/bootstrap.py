@@ -612,9 +612,10 @@ def _create_privilege_reasoning_adapter(
     """Create appropriate privilege reasoning adapter based on settings.
 
     Priority:
-    1. Groq Cloud (if online and GROQ_API_KEY available)
-    2. PrivilegeSafeguardAdapter (self-hosted, requires model_path)
-    3. None (if neither available)
+    1. SidecarProbeAdapter (if online and REXLIT_PROBE_SIDECAR_URL configured)
+    2. Groq Cloud (if online and GROQ_API_KEY available)
+    3. PrivilegeSafeguardAdapter (self-hosted, requires model_path)
+    4. None (if none available)
 
     Args:
         settings: Application settings
@@ -630,10 +631,43 @@ def _create_privilege_reasoning_adapter(
         GroqPrivilegeReasoningAdapter,
     )
     from rexlit.app.adapters.privilege_safeguard import PrivilegeSafeguardAdapter
+    from rexlit.app.adapters.sidecar_probe_adapter import SidecarProbeAdapter
 
     logger = logging.getLogger(__name__)
 
-    # Try Groq adapter first when online and API key is configured
+    # Try sidecar probe adapter first when online and URL is configured
+    if settings.online and settings.probe_sidecar_url:
+        try:
+            sidecar = SidecarProbeAdapter(
+                base_url=settings.probe_sidecar_url,
+                timeout_seconds=settings.probe_sidecar_timeout_seconds,
+            )
+            # Verify sidecar is reachable
+            health = sidecar.health_check()
+            if health.get("status") in ("healthy", "degraded", None):
+                # None status means response came back but status field missing - still OK
+                model_loaded = health.get("model_loaded", False)
+                probe_loaded = health.get("probe_loaded", False)
+                logger.info(
+                    "Using sidecar probe adapter at %s (model_loaded=%s, probe_loaded=%s)",
+                    settings.probe_sidecar_url,
+                    model_loaded,
+                    probe_loaded,
+                )
+                return sidecar
+            else:
+                logger.warning(
+                    "Sidecar at %s not healthy: %s. Falling back.",
+                    settings.probe_sidecar_url,
+                    health.get("error", "unknown"),
+                )
+                sidecar.close()
+        except Exception as e:
+            logger.warning(
+                "Failed to initialize sidecar adapter: %s. Falling back.", e
+            )
+
+    # Try Groq adapter when online and API key is configured
     if settings.online:
         groq_api_key = settings.get_groq_api_key()
         if groq_api_key:

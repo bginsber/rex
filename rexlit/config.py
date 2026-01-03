@@ -207,6 +207,18 @@ class Settings(BaseSettings):
         description="Pattern confidence above which to escalate to LLM",
     )
 
+    # Sidecar probe settings (for neural privilege classification)
+    probe_sidecar_url: str | None = Field(
+        default=None,
+        description="URL of neural probe sidecar API (e.g., http://gpu-server:8000)",
+    )
+
+    probe_sidecar_timeout_seconds: float = Field(
+        default=10.0,
+        ge=1.0,
+        description="Timeout for sidecar API requests (seconds)",
+    )
+
     _api_key_cache: dict[str, str | None] = PrivateAttr(default_factory=dict)
     _resolved_data_dir: Path | None = PrivateAttr(default=None)
     _data_dir_warning_emitted: bool = PrivateAttr(default=False)
